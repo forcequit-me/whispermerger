@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WhisperMerger</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>WhisperMerger</h1>
+    <span class="sub">word-level transcripts, local GPU</span>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="transcribe">Transcribe &amp; Merge</button>
+      <button class="tab-btn" data-tab="edit">Edit Transcript</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ Transcribe & Merge ============ -->
+    <section id="tab-transcribe" class="tab active">
+      <div class="panel">
+        <h2>Input</h2>
+        <div id="dropzone" class="dropzone">
+          Drop audio / multi-track video here, or click to choose.
+          <input id="file-input" type="file" multiple class="hidden" />
+        </div>
+        <div id="sources"></div>
+      </div>
+
+      <div class="panel" id="options-panel" style="display:none">
+        <h2>Merge options</h2>
+        <div class="row">
+          <label class="field"><span>Backchannel</span>
+            <select id="opt-backchannel">
+              <option value="parenthetical">parenthetical</option>
+              <option value="separate">separate line</option>
+              <option value="skip">skip</option>
+            </select>
+          </label>
+          <label class="field"><span>Backchannel max words</span>
+            <input id="opt-bc-words" type="number" value="4" min="1" /></label>
+          <label class="field"><span>Overlap min (s)</span>
+            <input id="opt-overlap" type="number" value="2" step="0.5" /></label>
+          <label class="field"><span>Bleed window (s)</span>
+            <input id="opt-bleed-win" type="number" value="1" step="0.5" /></label>
+          <label class="field"><span>Bleed similarity</span>
+            <input id="opt-bleed-sim" type="number" value="0.7" step="0.05" min="0" max="1" /></label>
+          <div class="spacer"></div>
+          <button id="run-btn" class="primary">Transcribe &amp; Merge</button>
+        </div>
+      </div>
+
+      <div class="panel progress-wrap" id="progress-wrap">
+        <h2>Progress</h2>
+        <div class="bar"><div id="progress-bar"></div></div>
+        <div class="progress-msg" id="progress-msg"></div>
+      </div>
+
+      <div class="panel" id="result-panel" style="display:none">
+        <h2>Transcript</h2>
+        <div id="editor-transcribe"></div>
+      </div>
+    </section>
+
+    <!-- ============ Edit Transcript ============ -->
+    <section id="tab-edit" class="tab">
+      <div class="panel">
+        <h2>Load transcript (WhisperMerger JSON)</h2>
+        <div id="dropzone-edit" class="dropzone">
+          Drop a transcript .json here, or click to choose.
+          <input id="file-input-edit" type="file" accept=".json" class="hidden" />
+        </div>
+        <details style="margin-top:10px">
+          <summary class="muted">or paste JSON</summary>
+          <textarea id="json-in" class="json-in" placeholder='{"version":"1.0","segments":[...]}'></textarea>
+          <div style="margin-top:8px"><button id="json-load" class="ghost">Load pasted JSON</button>
+            <span id="json-err" class="err"></span></div>
+        </details>
+      </div>
+      <div class="panel" id="edit-panel" style="display:none">
+        <h2>Transcript</h2>
+        <div id="editor-edit"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

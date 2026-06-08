@@ -1,0 +1,16 @@
+# App dependencies.
+# torch + torchaudio are installed separately from the cu124 index — see Docs/SETUP.md.
+# Install with the constraints file to keep torch pinned:
+#   pip install -r backend/requirements.txt -c backend/constraints.txt
+
+whisperx==3.4.2          # pinned: 3.4.2 needs torch>=2.5.1 (keeps 2.6.0); 3.8.x forces torch 2.8
+transformers<5           # transformers 5.x uses torch.float8_e8m0fnu (torch 2.7+); stay on 4.x for torch 2.6
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart         # FastAPI file uploads
+numpy
+pytest
+httpx                    # FastAPI TestClient (tests)
+setuptools<81           # ctranslate2 4.4.0 imports pkg_resources, removed in setuptools 81
+nvidia-cudnn-cu12==8.9.7.29  # ctranslate2 4.4.0 needs cuDNN 8; torch bundles cuDNN 9 (see transcribe._ensure_cuda_dlls)

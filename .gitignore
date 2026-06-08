@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# App runtime
+backend/tmp/
+
+# Note: model caches live outside the repo
+#   ~/.cache/huggingface  (faster-whisper large-v3, wav2vec2 align)
+#   ~/.cache/torch

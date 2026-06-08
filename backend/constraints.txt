@@ -1,0 +1,4 @@
+# Pins so whisperx's transitive deps cannot bump the working CUDA torch.
+# Must be installed first from the cu124 index (see Docs/SETUP.md).
+torch==2.6.0+cu124
+torchaudio==2.6.0+cu124
