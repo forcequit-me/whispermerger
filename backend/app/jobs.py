@@ -7,6 +7,7 @@ WhisperX transcription is blocking/GPU-bound, so a thread (not asyncio) is the r
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -34,11 +35,20 @@ class Job:
     message: str = ""
     result: Optional[MergedOutput] = None
     error: Optional[str] = None
+    started_at: float = 0.0
+    finished_at: float = 0.0
     _thread: Optional[threading.Thread] = field(default=None, repr=False)
 
     def _set_progress(self, fraction: float, message: str) -> None:
         self.progress = max(0.0, min(1.0, fraction))
         self.message = message
+
+    @property
+    def elapsed(self) -> float:
+        """Total wall time across all stages (extraction + transcription + merge)."""
+        if not self.started_at:
+            return 0.0
+        return (self.finished_at or time.time()) - self.started_at
 
 
 class JobRegistry:
@@ -59,12 +69,15 @@ class JobRegistry:
     def run(self, job: Job, work: Callable[[ProgressCb], MergedOutput]) -> None:
         """Run `work` in a background thread, streaming progress into the job."""
         def _target() -> None:
+            job.started_at = time.time()
             job.status = JobStatus.RUNNING
             try:
                 job.result = work(job._set_progress)
-                job._set_progress(1.0, "done")
+                job.finished_at = time.time()
+                job._set_progress(1.0, f"done in {job.elapsed:.0f}s")
                 job.status = JobStatus.DONE
             except Exception as exc:  # surface failure via the job, not a crashed thread
+                job.finished_at = time.time()
                 job.error = str(exc)
                 job.status = JobStatus.ERROR
 

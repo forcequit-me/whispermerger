@@ -111,7 +111,7 @@ Priority key: **P0** is required for the first usable v1, **P1** is in v1 scope 
 | ID | Requirement | Priority |
 |---|---|---|
 | FR-TK-1 | Represent every input through one Input Source model (Section 9.1), so audio files and video files share the same data structure. | P0 |
-| FR-TK-2 | Pre-fill track labels by OBS convention when an input looks like an OBS recording: Track 1 defaults to "Mic", Track 2 defaults to "Desktop". Labels stay editable. | P0 |
+| FR-TK-2 | Pre-fill track labels generically: Track 1 → "Speaker 1", Track 2 → "Speaker 2", and so on. Labels stay editable. (Originally specced as the OBS Mic/Desktop convention; changed to generic per-speaker defaults.) | P0 |
 | FR-TK-3 | Provide a per-track audition button. On file load, extract a 5 to 10 second sample per track. A play control next to each track lets the user listen and confirm the label. | P1 |
 | FR-TK-4 | Render the track selector only when an input exposes more than one audio stream. | P0 |
 
@@ -218,7 +218,7 @@ The same structure drives both. The UI renders the track selector only when an i
     "duration": 18253.4,
     "tracks": [
       { "track_index": 0, "speaker": "Max" },
-      { "track_index": 1, "speaker": "Desktop" }
+      { "track_index": 1, "speaker": "Sam" }
     ]
   }],
   "segments": [

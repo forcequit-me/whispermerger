@@ -63,8 +63,8 @@ def test_transcribe_flow(client, two_stream_file, monkeypatch):
 
     r = client.post("/api/transcribe", json={
         "sources": [{"file_id": file_id, "sequence": 0, "tracks": [
-            {"track_index": 0, "speaker": "Mic", "selected": True},
-            {"track_index": 1, "speaker": "Desktop", "selected": True}]}]})
+            {"track_index": 0, "speaker": "Speaker 1", "selected": True},
+            {"track_index": 1, "speaker": "Speaker 2", "selected": True}]}]})
     job_id = r.json()["job_id"]
 
     deadline = time.time() + 5
@@ -75,9 +75,11 @@ def test_transcribe_flow(client, two_stream_file, monkeypatch):
             break
         time.sleep(0.02)
     assert status == "done"
+    final = client.get(f"/api/progress/{job_id}").json()
+    assert final["elapsed"] >= 0 and "done in" in final["message"]
 
     res = client.get(f"/api/result/{job_id}").json()
-    assert {s["speaker"] for s in res["segments"]} == {"Mic", "Desktop"}
+    assert {s["speaker"] for s in res["segments"]} == {"Speaker 1", "Speaker 2"}
 
 
 def test_audition_returns_audio(client, two_stream_file):
@@ -175,6 +177,7 @@ def test_batch_flow_writes_outputs(client, two_stream_file, tmp_path, monkeypatc
     body = client.get(f"/api/batch/{batch_id}").json()
     assert body["status"] == "done"
     assert body["projects"][0]["status"] == "done"
+    assert body["elapsed"] >= 0 and body["projects"][0]["elapsed"] >= 0
     assert (tmp_path / "Perf Poser" / "Perf Poser.srt").exists()
 
 

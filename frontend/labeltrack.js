@@ -304,7 +304,7 @@ async function runTranscribe() {
 function poll(jobId, btn) {
   const tick = async () => {
     const p = await (await fetch(`/api/progress/${jobId}`)).json();
-    $("#label-status").textContent = p.message || p.status;
+    $("#label-status").textContent = (p.message || p.status) + (p.elapsed ? " · " + window.fmtElapsed(p.elapsed) : "");
     if (p.status === "done") {
       const merged = await (await fetch(`/api/result/${jobId}`)).json();
       $("#label-result-panel").style.display = "";

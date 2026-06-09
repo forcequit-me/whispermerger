@@ -33,6 +33,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
 - **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing; SRT splits lines on real
   word timestamps (toggleable subtitle limits).
 - **Caching** — WhisperX output is cached by file hash + model, so re-runs skip transcription.
+- **Stage-aware progress + timing** — jobs and batches report the current stage (Extracting ·
+  Transcribing · Merging, per track) and total elapsed wall time, so a long run never looks stuck.
+- **Storage-clean** — extracted audio is deleted right after use, and the working dir is wiped on
+  startup; only the small transcription cache persists. Nothing piles up.
 
 ## Requirements
 
@@ -54,7 +58,11 @@ python -m uvicorn app.main:app --port 8756
 ```
 
 Then open **http://localhost:8756**. First transcription downloads the models (~3 GB) and
-loads them into VRAM (~30–60 s) before running at ~15–25× realtime.
+loads them into VRAM (~30–60 s) before running.
+
+**Performance (real-world):** a 56 GB / 1h51m OBS recording with **4 audio tracks** transcribed
+end-to-end (extract → transcribe+align → merge) in **~10 minutes** on an RTX 3080 Ti — ~7.4 h of
+track-audio, ~11,860 words. Comfortably beats the 12–20 min / 5 h target.
 
 ## Using it
 

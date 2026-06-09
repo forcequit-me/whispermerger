@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -44,6 +45,14 @@ class ProjectStatus:
     message: str = ""
     output_dir: Optional[str] = None
     error: Optional[str] = None
+    started_at: float = 0.0
+    finished_at: float = 0.0
+
+    @property
+    def elapsed(self) -> float:
+        if not self.started_at:
+            return 0.0
+        return (self.finished_at or time.time()) - self.started_at
 
 
 @dataclass
@@ -51,6 +60,8 @@ class BatchStatus:
     id: str
     status: Status = Status.QUEUED
     projects: list[ProjectStatus] = field(default_factory=list)
+    started_at: float = 0.0
+    finished_at: float = 0.0
 
     @property
     def progress(self) -> float:
@@ -58,6 +69,12 @@ class BatchStatus:
         if not self.projects:
             return 0.0
         return sum(p.progress for p in self.projects) / len(self.projects)
+
+    @property
+    def elapsed(self) -> float:
+        if not self.started_at:
+            return 0.0
+        return (self.finished_at or time.time()) - self.started_at
 
 
 def _safe_name(name: str) -> str:
@@ -86,6 +103,7 @@ def run_batch(
 ) -> None:
     """Process every project in order, exporting each to disk. Mutates `batch` in place."""
     for project, ps in zip(projects, batch.projects):
+        ps.started_at = time.time()
         ps.status = Status.RUNNING
         try:
             merged = run_merge_pipeline(
@@ -97,10 +115,12 @@ def run_batch(
             base = _safe_name(project.name)
             export_all(merged, parent / base, base)
             ps.output_dir = str(parent / base)
+            ps.finished_at = time.time()
             ps.progress = 1.0
-            ps.message = "done"
+            ps.message = f"done in {ps.elapsed:.0f}s"
             ps.status = Status.DONE
         except Exception as exc:  # record + continue to the next project
+            ps.finished_at = time.time()
             ps.error = str(exc)
             ps.status = Status.ERROR
 
@@ -128,9 +148,11 @@ class BatchRegistry:
 
     def run(self, batch: BatchStatus, work: Callable[[], None]) -> None:
         def _target() -> None:
+            batch.started_at = time.time()
             batch.status = Status.RUNNING
             try:
                 work()
             finally:
+                batch.finished_at = time.time()
                 batch.status = Status.DONE  # per-project errors are tracked individually
         threading.Thread(target=_target, daemon=True).start()

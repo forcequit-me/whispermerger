@@ -43,6 +43,22 @@ def extract_sample(src: str | Path, track_index: int, dest: str | Path,
     return dest
 
 
+def extract_tracks(src: str | Path, track_indices: list[int], dest_dir: str | Path) -> dict[int, Path]:
+    """Extract several audio tracks in ONE ffmpeg pass (reads the source file once) to
+    mono/16k/pcm_s16le. Returns {track_index: wav_path}. Much faster than one read per track
+    on large multi-track files."""
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    args = ["ffmpeg", "-y", "-i", str(src)]
+    outs: dict[int, Path] = {}
+    for ti in track_indices:
+        dest = dest_dir / f"track_{ti}.wav"
+        args += ["-map", f"0:a:{ti}", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(dest)]
+        outs[ti] = dest
+    subprocess.run(args, check=True, capture_output=True)
+    return outs
+
+
 def concat_wavs(wav_paths: list[str | Path], dest: str | Path) -> tuple[float, list[float]]:
     """Concatenate mono/16k wavs (in order) into one combined wav. Returns
     (total_duration, boundaries) where boundaries[i] is the start time of file i."""

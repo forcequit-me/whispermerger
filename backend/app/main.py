@@ -5,6 +5,7 @@ Run: `uvicorn app.main:app --port 8756` from the backend/ directory.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -24,6 +25,19 @@ UPLOAD_DIR = BACKEND_DIR / "tmp" / "uploads"
 CACHE_DIR = BACKEND_DIR / "tmp" / "cache"
 
 
+def _clear_working_dir(path: Path) -> None:
+    """Wipe regenerable working artifacts (extracted tracks, combined wavs, preview clips,
+    audition samples) at startup so they don't accumulate. The WhisperX output cache lives
+    in a separate dir and is preserved (it's the valuable re-run cache)."""
+    if not path.exists():
+        return
+    for item in path.iterdir():
+        try:
+            shutil.rmtree(item) if item.is_dir() else item.unlink()
+        except OSError:
+            pass
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="WhisperMerger")
 
@@ -35,6 +49,7 @@ def create_app() -> FastAPI:
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _clear_working_dir(UPLOAD_DIR)   # drop last session's temp audio; keep the cache
 
     # Shared state, reached in routes via request.app.state.
     app.state.jobs = JobRegistry()

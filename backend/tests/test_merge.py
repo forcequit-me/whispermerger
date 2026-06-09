@@ -106,7 +106,7 @@ def test_bleed_flagged_on_similar_text():
     text = "lets go ahead and merge this branch now"
     a = wx(seg(0.0, 3.0, text))
     b = wx(seg(0.1, 3.1, text))  # near-identical, tiny window -> bleed
-    out = merge([a, b], ["Mic", "Desktop"])
+    out = merge([a, b], ["Speaker 1", "Speaker 2"])
     assert all("bleed_suspected" in s.flags for s in out.segments)
     assert all("overlap" not in s.flags for s in out.segments)  # bleed wins precedence
 
@@ -115,11 +115,11 @@ def test_bleed_preferred_uses_rms_hook():
     text = "lets go ahead and merge this branch now"
     a = wx(seg(0.0, 3.0, text))
     b = wx(seg(0.1, 3.1, text))
-    # Mic is louder than Desktop -> Mic gets "preferred"
-    rms = {"Mic": 0.9, "Desktop": 0.2}
-    out = merge([a, b], ["Mic", "Desktop"], rms_fn=lambda spk, s, e: rms[spk])
-    mic = [s for s in out.segments if s.speaker == "Mic"][0]
-    desk = [s for s in out.segments if s.speaker == "Desktop"][0]
+    # Speaker 1 is louder than Speaker 2 -> Speaker 1 gets "preferred"
+    rms = {"Speaker 1": 0.9, "Speaker 2": 0.2}
+    out = merge([a, b], ["Speaker 1", "Speaker 2"], rms_fn=lambda spk, s, e: rms[spk])
+    mic = [s for s in out.segments if s.speaker == "Speaker 1"][0]
+    desk = [s for s in out.segments if s.speaker == "Speaker 2"][0]
     assert "preferred" in mic.flags
     assert "preferred" not in desk.flags
 

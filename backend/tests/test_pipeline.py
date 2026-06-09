@@ -29,10 +29,10 @@ def test_pipeline_extracts_transcribes_merges(two_stream_file):
     src = InputSource(
         filename=two_stream_file.name,
         duration=2.0,
-        tracks=[Track(track_index=0, speaker="Mic"), Track(track_index=1, speaker="Desktop")],
+        tracks=[Track(track_index=0, speaker="Speaker 1"), Track(track_index=1, speaker="Speaker 2")],
     )
     out = run_merge_pipeline([PreparedSource(str(two_stream_file), src)], _stub_transcribe)
-    assert {s.speaker for s in out.segments} == {"Mic", "Desktop"}
+    assert {s.speaker for s in out.segments} == {"Speaker 1", "Speaker 2"}
     assert len(out.sources) == 1
 
 
@@ -40,11 +40,11 @@ def test_pipeline_skips_unselected_tracks(two_stream_file):
     src = InputSource(
         filename=two_stream_file.name,
         duration=2.0,
-        tracks=[Track(track_index=0, speaker="Mic"),
-                Track(track_index=1, speaker="Desktop", selected=False)],
+        tracks=[Track(track_index=0, speaker="Speaker 1"),
+                Track(track_index=1, speaker="Speaker 2", selected=False)],
     )
     out = run_merge_pipeline([PreparedSource(str(two_stream_file), src)], _stub_transcribe)
-    assert {s.speaker for s in out.segments} == {"Mic"}
+    assert {s.speaker for s in out.segments} == {"Speaker 1"}
 
 
 def test_pipeline_sequential_offsets(two_stream_file):

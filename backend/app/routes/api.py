@@ -73,6 +73,7 @@ class ProgressResponse(BaseModel):
     status: str
     progress: float
     message: str
+    elapsed: float = 0.0
     error: str | None = None
 
 
@@ -115,6 +116,7 @@ class ProjectStatusOut(BaseModel):
     status: str
     progress: float
     message: str
+    elapsed: float = 0.0
     output_dir: str | None = None
     error: str | None = None
 
@@ -123,6 +125,7 @@ class BatchStatusOut(BaseModel):
     id: str
     status: str
     progress: float
+    elapsed: float = 0.0
     projects: list[ProjectStatusOut]
 
 
@@ -391,7 +394,7 @@ def progress(request: Request, job_id: str) -> ProgressResponse:
     if job is None:
         raise HTTPException(404, "unknown job")
     return ProgressResponse(status=job.status.value, progress=job.progress,
-                            message=job.message, error=job.error)
+                            message=job.message, elapsed=job.elapsed, error=job.error)
 
 
 @router.get("/result/{job_id}", response_model=MergedOutput)
@@ -475,8 +478,9 @@ def batch_status(request: Request, batch_id: str) -> BatchStatusOut:
     if batch is None:
         raise HTTPException(404, "unknown batch")
     return BatchStatusOut(
-        id=batch.id, status=batch.status.value, progress=batch.progress,
+        id=batch.id, status=batch.status.value, progress=batch.progress, elapsed=batch.elapsed,
         projects=[ProjectStatusOut(name=p.name, status=p.status.value, progress=p.progress,
-                                   message=p.message, output_dir=p.output_dir, error=p.error)
+                                   message=p.message, elapsed=p.elapsed,
+                                   output_dir=p.output_dir, error=p.error)
                   for p in batch.projects],
     )

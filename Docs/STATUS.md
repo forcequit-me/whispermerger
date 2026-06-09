@@ -8,10 +8,10 @@ and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-09.
 Both v1 (multi-track stems + batch studio) and v2 (single-track manual diarization) are
 **built and running** on native Windows + RTX 3080 Ti (the build plan's env was validated;
 WSL2 not needed). Full pipeline works end-to-end: pick files → transcribe on GPU (WhisperX
-large-v3 + wav2vec2) → merge with conflict flags → edit → export. Real word output was confirmed
-on a real OBS vlog. **67 GPU-independent tests pass**; the GPU path passes the §11.3 smoke gate.
-Remaining work is optional polish (some `FR-UI-*` toggles), bleed-threshold tuning, foreign-format
-import, and full 5-hour-stem timing measurement.
+large-v3 + wav2vec2) → merge with conflict flags → edit → export. **Validated on a real 56 GB /
+1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **67 GPU-independent
+tests pass**; the GPU path passes the §11.3 smoke gate. Remaining work is optional polish (some
+`FR-UI-*` toggles) and foreign-format import.
 
 ## Built ✅
 
@@ -22,8 +22,8 @@ cache, WhisperX wrapper, FastAPI, export, fresh frontend, polish).
 streams+duration · FR-IN-5 ffmpeg mono/16k/pcm_s16le extraction · FR-IN-6 temp deleted after use.
 
 **Track ID (§8.2):** FR-TK-1 single InputSource model · FR-TK-3 per-track audition · FR-TK-4
-selector only when >1 stream. *(FR-TK-2 changed by request: defaults are **Speaker 1/2/…**, not
-OBS Mic/Desktop; track labels shown 1-based.)*
+selector only when >1 stream. *(FR-TK-2: track labels default to **Speaker 1/2/…** (1-based),
+editable — changed from the originally-specced OBS convention.)*
 
 **Transcription (§8.3):** FR-TR-1 large-v3 + wav2vec2 align · FR-TR-2 float16 · FR-TR-3 VAD ·
 FR-TR-4 progress · FR-TR-5 auto-merge on completion.
@@ -55,6 +55,14 @@ all their lines** (new request).
 - **In-place file reads via a native picker** (`/api/browse`, `/api/browse-folder`) — no upload/
   copy, so 100–200 GB files work. Replaced the byte-upload flow.
 - Toggleable conflict detection and subtitle limits; timestamps added to TXT export.
+- **Per-line audio preview** — ▶ a line or drag a jump bar; instant input-seek clips, works on
+  100+ GB files (`/api/clip`).
+- **Stage-aware progress + total time** — jobs/batches report the current stage (Extracting ·
+  Transcribing · Merging, per track) and elapsed wall time across *all* stages, not just
+  transcription, so the UI never looks stalled.
+- **Storage hygiene** — each extracted track wav is deleted immediately after use; the working
+  dir (extracted tracks, combined wavs, preview clips, audition samples) is wiped on server
+  startup. Only the small WhisperX output cache is kept.
 - Documented torch-2.6/Windows dependency fixes (setuptools<81, transformers<5, weights_only,
   cuDNN 8 on PATH) — see `SETUP.md`.
 
@@ -74,12 +82,19 @@ all their lines** (new request).
 - **FR-MD-2 import:** Edit tab loads WhisperMerger JSON only; importing foreign transcripts
   (Resolve / Premiere / Descript SRT etc.) is not built yet.
 
-## Validation outstanding
+## Validation — real-world stress test ✅
 
-- **SM-1 — partly validated:** real word output confirmed on a 60s slice of a real OBS vlog
-  (coherent text + per-word timestamps). **NFR-1** full 5-hour-stem end-to-end timing (12–20 min)
-  not yet measured.
-- **SM-5 / OQ-3:** bleed flagging + RMS preference tuned on real multi-track recordings.
+- **SM-1 / SM-2 / NFR-1 — validated** on a real 56 GB / 1h51m / 4-track OBS recording (cold):
+  full file transcribed end-to-end in **~10 min** (≈7.4 h of track-audio across 4 tracks),
+  **11,860 words**, full 6639s coverage, coherent text + per-word timestamps, deterministic on
+  re-run. Beats NFR-1's 12–20 min / 5 h budget. Stage breakdown: ~2.6 min extraction (four
+  full-file demuxes), ~7.5 min transcription+align (incl. one-time model load), merge negligible.
+- **Known optimization (not blocking):** extraction re-reads the source once per track
+  (~2.6 min on the 56 GB file); a single-pass extract (read once → all tracks) would shave ~2 min.
+- **Bleed (FR-MG-4):** the near-duplicate-text flag works, but real "duplicate lines across
+  speakers" on this footage turned out to be **clean-vs-processed captures of the same mic**, not
+  bleed — solved by deselecting the redundant track, no algorithm needed. Model-based RMS
+  resolution remains unbuilt/untuned (deferred).
 
 ## v2 — single-track manual diarization (PRD §11.4) — built
 

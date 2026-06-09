@@ -1,3 +1,9 @@
+Wave forms and scrubbing etc across all tabs. Also ensure we can listen to transcript segments? good for verification and editing.
+
+Since the model is only 3gb could we theoretically run multiple instances to speed up processing? (user customizable or based on available VRAM?)
+
+wave form selection might need slight padding on start and end for selected speach segments
+
 Improve UI
 
 Anything to include from Transcript Merger (UI theme or methodology for handling overlaps [who stopped talking last?])

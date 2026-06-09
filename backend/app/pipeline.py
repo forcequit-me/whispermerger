@@ -8,11 +8,12 @@ sequential file is offset by the cumulative duration of files before it (UC2).
 
 from __future__ import annotations
 
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from .extract import extracted_audio
+from .extract import extract_tracks
 from .merge import MergeOptions, merge
 from .models import InputSource, MergedOutput
 
@@ -42,21 +43,38 @@ def run_merge_pipeline(
     offsets: list[float] = []
     sources: list[InputSource] = []
 
+    def report(frac: float, msg: str) -> None:
+        if progress_cb:
+            progress_cb(frac, msg)
+
+    # Per file: extract all its selected tracks in ONE pass (one read of the source), then
+    # transcribe each and delete its temp wav immediately (storage hygiene). Report each
+    # stage so the UI never looks stalled.
     base = 0.0
     done = 0
-    for p in prepared:
-        sources.append(p.input)
-        selected = [t for t in p.input.tracks if t.selected]
-        with extracted_audio(p.path, [t.track_index for t in selected]) as wavs:
-            for track, wav in zip(selected, wavs):
-                if progress_cb:
-                    progress_cb(done / total, f"transcribing {p.input.filename} [{track.speaker}]")
-                outputs.append(transcribe_fn(str(wav)))
+    tmpdir = Path(tempfile.mkdtemp(prefix="wm_pipe_"))
+    try:
+        for p in prepared:
+            sources.append(p.input)
+            selected = [t for t in p.input.tracks if t.selected]
+            report(done / total, f"Extracting audio · {p.input.filename} ({len(selected)} track(s))")
+            wavs = extract_tracks(p.path, [t.track_index for t in selected], tmpdir)
+            for track in selected:
+                n = done + 1
+                report(done / total, f"Transcribing · {track.speaker} ({n}/{total})")
+                outputs.append(transcribe_fn(str(wavs[track.track_index])))
+                wavs[track.track_index].unlink(missing_ok=True)   # free it right away
                 labels.append(track.speaker)
                 offsets.append(base)
                 done += 1
-        base += p.input.duration
+            base += p.input.duration
 
-    if progress_cb:
-        progress_cb(0.99, "merging")
-    return merge(outputs, labels, offsets, options=options, sources=sources)
+        report(0.99, "Merging tracks…")
+        return merge(outputs, labels, offsets, options=options, sources=sources)
+    finally:
+        for f in tmpdir.glob("*"):
+            f.unlink(missing_ok=True)
+        try:
+            tmpdir.rmdir()
+        except OSError:
+            pass

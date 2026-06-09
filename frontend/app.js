@@ -12,6 +12,12 @@ const fmtTime = (s) => {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = (s % 60);
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${sec.toFixed(2).padStart(5, "0")}`;
 };
+// elapsed-time label, shared with the label-track module via window
+function fmtElapsed(s) {
+  s = Math.round(s || 0);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+window.fmtElapsed = fmtElapsed;
 
 // --- tab switching ---------------------------------------------------------------------
 document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -368,7 +374,7 @@ async function runPipeline() {
 async function pollJob(jobId, runBtn) {
   const tick = async () => {
     const p = await (await fetch(`/api/progress/${jobId}`)).json();
-    setProgress(p.progress, p.message || p.status);
+    setProgress(p.progress, `${p.message || p.status}${p.elapsed ? " · " + fmtElapsed(p.elapsed) : ""}`);
     if (p.status === "done") {
       const merged = await (await fetch(`/api/result/${jobId}`)).json();
       $("#result-panel").style.display = "";
@@ -561,10 +567,13 @@ function pollBatch(id, btn) {
 function renderBatchStatus(b) {
   const root = $("#batch-status");
   root.innerHTML = "";
+  root.append(el("div", { className: "muted", style: "margin-bottom:6px",
+    textContent: `Overall: ${Math.round((b.progress || 0) * 100)}% · ${fmtElapsed(b.elapsed)}` }));
   b.projects.forEach((p) => {
     const pct = Math.round((p.progress || 0) * 100);
-    const state = p.status === "running" ? `running ${pct}%` : p.status;
-    const detail = p.error ? "⚠ " + p.error : (p.status === "done" ? "→ " + (p.output_dir || "") : p.message || "");
+    const state = p.status === "running" ? `running ${pct}% · ${fmtElapsed(p.elapsed)}` : p.status;
+    const detail = p.error ? "⚠ " + p.error
+      : (p.status === "done" ? `${p.message} · ${p.output_dir || ""}` : p.message || "");
     const line = el("div", { className: "track-row" },
       el("span", { textContent: p.name, style: "width:200px; font-weight:600" }),
       el("span", { className: "muted", textContent: state, style: "width:120px" }),
