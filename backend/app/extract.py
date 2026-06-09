@@ -43,6 +43,25 @@ def extract_sample(src: str | Path, track_index: int, dest: str | Path,
     return dest
 
 
+def concat_wavs(wav_paths: list[str | Path], dest: str | Path) -> tuple[float, list[float]]:
+    """Concatenate mono/16k wavs (in order) into one combined wav. Returns
+    (total_duration, boundaries) where boundaries[i] is the start time of file i."""
+    import numpy as np
+    import soundfile as sf
+
+    parts, boundaries, total, sr = [], [], 0.0, 16000
+    for p in wav_paths:
+        data, sr = sf.read(str(p), dtype="float32")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        boundaries.append(total)
+        total += len(data) / sr
+        parts.append(data)
+    combined = np.concatenate(parts) if parts else np.zeros(0, dtype="float32")
+    sf.write(str(dest), combined, sr, subtype="PCM_16")
+    return total, boundaries
+
+
 def extract_clip(src: str | Path, dest: str | Path, start: float, duration: float,
                  num_streams: int) -> Path:
     """Extract a short preview clip starting at `start` (a downmix of all audio streams so

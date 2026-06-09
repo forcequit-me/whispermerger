@@ -21,8 +21,15 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   ("yeah"/"uh-huh"), genuine overlap, and mic bleed. Conflict detection is toggleable.
 - **Batch "studio"** — queue multiple projects at once; each project's session files merge
   sequentially into one transcript and auto-export to its own subfolder. No babysitting.
+- **Single-track labeling (v2)** — for one mixed track with multiple speakers (interview,
+  podcast, collab): silero-VAD auto-detects speech on a WaveSurfer waveform, you assign regions
+  to speakers (click / shift-click a run / ctrl-click; number keys; bulk-assign; duplicate a
+  region onto another speaker for talk-over), then transcribe per speaker. Add several files to
+  sequence them into one combined waveform. Single-track and split-lane (one row per speaker)
+  views. Overlapping speech is supported and flagged.
 - **Editor** — inline edit speaker/text/timing, global speaker rename, remove a speaker and
-  all their lines, add/remove lines, keyboard shortcuts, conflict highlighting.
+  all their lines, add/remove lines, keyboard shortcuts, conflict highlighting, per-line audio
+  preview (▶ a line or drag a jump bar — instant input-seek clips, works on huge files).
 - **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing; SRT splits lines on real
   word timestamps (toggleable subtitle limits).
 - **Caching** — WhisperX output is cached by file hash + model, so re-runs skip transcription.
@@ -56,6 +63,8 @@ loads them into VRAM (~30–60 s) before running at ~15–25× realtime.
   folder or "next to source files" → **Run batch**. Each project writes
   `<output>/<project>/<project>.{srt,txt,csv,json}`. A failed project is skipped, not fatal.
 - **Transcribe & Merge** — one-off: pick files, label tracks, run, edit, export.
+- **Label Track** — single-track files: add one (or several to sequence), auto-detected speech
+  appears on a waveform, label regions per speaker, then transcribe into one transcript.
 - **Edit Transcript** — load a WhisperMerger `.json` to tweak and re-export (e.g. a batch result).
 
 ## Architecture
@@ -72,9 +81,11 @@ backend/app/
   pipeline.py   # extract -> transcribe -> merge (one project)
   jobs.py       # single-run job registry + progress
   batch.py      # sequential queue over projects (the studio)
+  diarize.py    # v2: silero-VAD + per-speaker region transcription + timeline remap
   main.py       # FastAPI app + static frontend mount
   routes/api.py # HTTP API
-frontend/       # vanilla HTML/JS/CSS: Batch, Transcribe & Merge, Edit Transcript
+frontend/       # vanilla HTML/JS/CSS: Batch, Transcribe & Merge, Label Track, Edit Transcript
+  labeltrack.js #   v2 waveform labeling (ESM); vendor/ holds WaveSurfer
 backend/tests/  # pytest suite (GPU-independent: stubbed transcribe + real ffmpeg)
 ```
 

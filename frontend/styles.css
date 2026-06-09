@@ -97,6 +97,12 @@ table.editor tr.editing { background: var(--panel-2); }
 .chip.bleed_suspected { background: rgba(224,98,94,.2); color: var(--bleed); }
 .chip.edited, .chip.preferred { background: rgba(87,184,148,.2); color: var(--ok); }
 
+/* split-lane view (Label Track) */
+.lane-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+.lane-label { width: 110px; flex: none; font-size: 12px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lane-track { position: relative; height: 24px; flex: 1; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; }
+.lane-block { position: absolute; top: 2px; bottom: 2px; min-width: 2px; border-radius: 3px; cursor: pointer; }
+
 .muted { color: var(--muted); }
 .spacer { flex: 1; }
 .hidden { display: none; }

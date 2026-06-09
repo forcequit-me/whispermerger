@@ -13,6 +13,7 @@
     <nav class="tabs">
       <button class="tab-btn active" data-tab="batch">Batch</button>
       <button class="tab-btn" data-tab="transcribe">Transcribe &amp; Merge</button>
+      <button class="tab-btn" data-tab="label">Label Track</button>
       <button class="tab-btn" data-tab="edit">Edit Transcript</button>
     </nav>
   </header>
@@ -102,6 +103,41 @@
       </div>
     </section>
 
+    <!-- ============ Label Track (v2 single-track diarization) ============ -->
+    <section id="tab-label" class="tab">
+      <div class="panel">
+        <h2>Single-track labeling</h2>
+        <div class="muted" style="margin-bottom:10px">For one mixed track with multiple speakers (interview, podcast, collab). Label who speaks where, then transcribe per speaker.</div>
+        <button id="label-choose" class="primary">Add files</button>
+        <span class="muted" style="margin-left:10px">add one file, or several to sequence into one combined waveform</span>
+        <div id="label-files" style="margin-top:10px"></div>
+        <div id="label-err" class="err"></div>
+      </div>
+
+      <div class="panel" id="label-work" style="display:none">
+        <h2>Speakers</h2>
+        <div class="row" id="label-speakers" style="margin-bottom:10px"></div>
+        <div class="row" style="margin-bottom:10px">
+          <button id="label-vad" class="ghost">Re-detect speech</button>
+          <button id="label-play" class="ghost">▶ / ⏸</button>
+          <button id="label-view" class="ghost">Split lanes</button>
+          <button id="label-dup" class="ghost">Duplicate region</button>
+          <span class="muted">click a region (shift-click a run, ctrl-click multi-pick) then a speaker/number · drag to create · drag edges to resize · for talk-over, duplicate a region and assign the copy to the other speaker</span>
+        </div>
+        <div id="waveform" style="background:var(--panel-2); border:1px solid var(--line); border-radius:8px"></div>
+        <div id="label-lanes" style="display:none; margin-top:10px"></div>
+        <div class="row" style="margin-top:12px">
+          <button id="label-run" class="primary">Transcribe labeled regions</button>
+          <span id="label-status" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="panel" id="label-result-panel" style="display:none">
+        <h2>Transcript</h2>
+        <div id="editor-label"></div>
+      </div>
+    </section>
+
     <!-- ============ Edit Transcript ============ -->
     <section id="tab-edit" class="tab">
       <div class="panel">
@@ -125,5 +161,6 @@
   </main>
 
   <script src="app.js"></script>
+  <script type="module" src="labeltrack.js"></script>
 </body>
 </html>

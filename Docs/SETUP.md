@@ -1,8 +1,9 @@
 # WhisperMerger — Setup (native Windows)
 
-v1 runs **natively on Windows**. The PRD chose WSL2+conda only to dodge native-Windows
-WhisperX dependency hell, but CUDA torch already runs natively on this machine, so that
-pain is already solved. WSL2 is kept as a fallback only (bottom of this doc).
+WhisperMerger runs **natively on Windows** (both the multi-track and v2 single-track paths).
+The PRD chose WSL2+conda only to dodge native-Windows WhisperX dependency hell, but CUDA torch
+already runs natively on this machine, so that pain is already solved. WSL2 is kept as a
+fallback only (bottom of this doc).
 
 ## Verified machine target
 
@@ -35,13 +36,20 @@ pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.
 pip install -r backend/requirements.txt -c backend/constraints.txt
 ```
 
-## First-run model downloads
+## Dependencies of note
 
-- `large-v3` (faster-whisper / CTranslate2) — ~3 GB, into `~/.cache/huggingface`
-- wav2vec2 forced-alignment model — ~360 MB
 - `ctranslate2 4.4.x` (whisperx caps `<4.5.0`) ships its own CUDA libs.
-- `pyannote-audio` installs as a hard whisperx dep but is **unused** (diarization is NG1 —
-  the stems approach replaces it).
+- `pyannote-audio` is used by **whisperx's built-in VAD** (the transcription-stage silence
+  strip), not for diarization — model-based diarization stays out (NG1).
+- **v2** adds `silero-vad` (the labeling VAD; its model is bundled in the wheel, no download)
+  and **WaveSurfer.js** for the waveform, vendored under `frontend/vendor/` — both offline,
+  no extra install step beyond `requirements.txt`.
+
+## First-run model downloads (into `~/.cache`)
+
+- `large-v3` (faster-whisper / CTranslate2) — ~3 GB
+- wav2vec2 forced-alignment model — ~360 MB
+- whisperx's pyannote VAD checkpoint — small
 
 ## torch 2.6 + Windows gotchas (already handled)
 

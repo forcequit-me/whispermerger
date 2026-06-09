@@ -12,5 +12,6 @@ python-multipart         # FastAPI file uploads
 numpy
 pytest
 httpx                    # FastAPI TestClient (tests)
+silero-vad               # v2: speech detection for single-track manual diarization
 setuptools<81           # ctranslate2 4.4.0 imports pkg_resources, removed in setuptools 81
 nvidia-cudnn-cu12==8.9.7.29  # ctranslate2 4.4.0 needs cuDNN 8; torch bundles cuDNN 9 (see transcribe._ensure_cuda_dlls)

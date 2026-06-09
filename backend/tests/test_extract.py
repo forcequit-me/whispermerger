@@ -32,6 +32,18 @@ def test_extract_maps_correct_stream(two_stream_file, tmp_path):
     assert d0.exists() and d1.exists()
 
 
+def test_concat_wavs(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    from app.extract import concat_wavs
+    sf.write(str(tmp_path / "a.wav"), np.zeros(16000 * 2, dtype="float32"), 16000, subtype="PCM_16")
+    sf.write(str(tmp_path / "b.wav"), np.zeros(16000 * 3, dtype="float32"), 16000, subtype="PCM_16")
+    total, boundaries = concat_wavs([tmp_path / "a.wav", tmp_path / "b.wav"], tmp_path / "c.wav")
+    assert abs(total - 5.0) < 0.01
+    assert boundaries[0] == 0.0 and abs(boundaries[1] - 2.0) < 0.01
+    assert (tmp_path / "c.wav").exists()
+
+
 def test_extracted_audio_context_cleans_up(two_stream_file):
     with extracted_audio(two_stream_file, [0, 1]) as paths:
         assert len(paths) == 2

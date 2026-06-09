@@ -5,12 +5,13 @@ and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-09.
 
 ## Summary
 
-v1 is **functionally complete and running** on native Windows + RTX 3080 Ti (the build plan's
-env was validated; WSL2 not needed). Full pipeline works end-to-end: pick files → transcribe
-on GPU (WhisperX large-v3 + wav2vec2) → merge with conflict flags → edit → export. A **batch
-"studio"** (beyond the original PRD) was added on top. 56 GPU-independent tests pass; the GPU
-path passes the §11.3 smoke gate. Remaining work is mostly P1 editor polish, bleed-threshold
-tuning, foreign-format import, and real-footage validation.
+Both v1 (multi-track stems + batch studio) and v2 (single-track manual diarization) are
+**built and running** on native Windows + RTX 3080 Ti (the build plan's env was validated;
+WSL2 not needed). Full pipeline works end-to-end: pick files → transcribe on GPU (WhisperX
+large-v3 + wav2vec2) → merge with conflict flags → edit → export. Real word output was confirmed
+on a real OBS vlog. **67 GPU-independent tests pass**; the GPU path passes the §11.3 smoke gate.
+Remaining work is optional polish (some `FR-UI-*` toggles), bleed-threshold tuning, foreign-format
+import, and full 5-hour-stem timing measurement.
 
 ## Built ✅
 
@@ -75,14 +76,36 @@ all their lines** (new request).
 
 ## Validation outstanding
 
-- **SM-1 / NFR-1:** real word-level accuracy and 5-hour-stem timing (12–20 min) not yet measured
-  on real footage — the smoke test used a synthetic tone (0 words). Needs a real recording run.
+- **SM-1 — partly validated:** real word output confirmed on a 60s slice of a real OBS vlog
+  (coherent text + per-word timestamps). **NFR-1** full 5-hour-stem end-to-end timing (12–20 min)
+  not yet measured.
 - **SM-5 / OQ-3:** bleed flagging + RMS preference tuned on real multi-track recordings.
+
+## v2 — single-track manual diarization (PRD §11.4) — built
+
+For recordings with no stems (one mixed track, multiple speakers). All phases done:
+
+  - **Phase A (engine) — DONE.** `diarize.py`: silero-VAD speech detection + per-speaker region
+    transcription with timeline remapping → merge (`/api/vad`, `/api/diarize`). Validated on real
+    footage (22 speech regions found in a 60s vlog slice; remapping unit-tested).
+  - **Phase B (labeling UI) — DONE.** "Label Track" tab: WaveSurfer.js waveform (vendored,
+    offline), `/api/track-audio` feed, VAD-seeded regions, speaker buttons + colors, click/
+    number-key assignment, drag-to-create + drag-to-resize regions (free via WaveSurfer),
+    per-region playback → `/api/diarize` → result in the editor.
+  - **Multi-file sequencing — DONE.** Add several single-track files in the Label tab → they
+    concatenate into one combined waveform (`/api/combine`, cached) whose timeline is the
+    sequenced one, with file-join markers; reorder/track-change auto-rebuilds. Reuses the whole
+    single-file flow (VAD/label/diarize/preview) unchanged.
+  - **Phase C (refinement) — DONE.** Boundary drag + free-span (WaveSurfer), **bulk-assign**
+    (shift-click a run / ctrl-click multi-pick → one speaker), and the **single-track ↔
+    split-lane view toggle** (one row per speaker + an unassigned row, blocks on a shared
+    timescale, click to select).
+  - **Overlapping speech — supported.** Two overlapping regions assigned to different speakers
+    represent talk-over ("Duplicate region" copies a span onto another speaker); each is
+    transcribed and the merge flags `overlap`, and split-lane shows it cleanly. Per PRD §11.4,
+    truly simultaneous speech still yields one (garbled) line per speaker — a known limit.
 
 ## Not started / deferred
 
-- **v2 — single-track manual diarization** (PRD §11.4, all FR-V2-*): WaveSurfer.js waveform
-  labeling, VAD-seeded regions, single-track vs split-lane views. Explicitly P2. The data model
-  already generalizes to "one virtual track per speaker," so no engine change needed later.
 - **Tauri packaging** (PRD §16): wrap FastAPI + browser into a `.exe`. Future.
 - **Recording-to-Video skill** (PRD Appendix C): downstream product, its own PRD, out of scope.

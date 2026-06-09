@@ -5,6 +5,7 @@ modules and the job registry held on app.state.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 import uuid
@@ -16,8 +17,9 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from ..batch import ProjectInput, run_batch
+from ..diarize import detect_speech, transcribe_regions
 from ..export import ExportOptions, to_csv, to_json, to_srt, to_txt
-from ..extract import extract_clip, extract_sample
+from ..extract import concat_wavs, extract_clip, extract_sample, extract_track
 from ..merge import BackchannelRender, MergeOptions
 from ..models import InputSource, MergedOutput, Track
 from ..pipeline import PreparedSource, run_merge_pipeline
@@ -122,6 +124,33 @@ class BatchStatusOut(BaseModel):
     status: str
     progress: float
     projects: list[ProjectStatusOut]
+
+
+class RegionOut(BaseModel):
+    start: float
+    end: float
+
+
+class DiarizeRequest(BaseModel):
+    file_id: str
+    track_index: int = 0
+    speakers: dict[str, list[list[float]]]   # speaker name -> [[start, end], ...]
+    options: MergeOptionsIn = MergeOptionsIn()
+
+
+class CombineFile(BaseModel):
+    file_id: str
+    track_index: int = 0
+
+
+class CombineRequest(BaseModel):
+    files: list[CombineFile]                 # in sequence order
+
+
+class CombineResult(BaseModel):
+    file_id: str
+    duration: float
+    boundaries: list[float]                  # start time of each file in the combined timeline
 
 
 # --- input: local path (FR-IN, large files) + upload (small files) ---------------------
@@ -232,6 +261,86 @@ def clip(request: Request, file_id: str, start: float = 0.0, dur: float = 5.0) -
     if not dest.exists():
         extract_clip(entry["path"], dest, start, dur, len(entry["source"].tracks))
     return FileResponse(dest, media_type="audio/wav")
+
+
+# --- v2 single-track diarization (PRD §11.4) -------------------------------------------
+
+def _track_wav(app_state, file_id: str, track_index: int) -> Path:
+    """Extract one track to a cached mono/16k wav (the whole track — VAD/diarize need it)."""
+    entry = app_state.uploads.get(file_id)
+    if entry is None:
+        raise HTTPException(404, f"unknown file_id {file_id}")
+    out_dir = app_state.upload_dir / "diar"
+    out_dir.mkdir(exist_ok=True)
+    dest = out_dir / f"{file_id}_t{track_index}.wav"
+    if not dest.exists():
+        extract_track(entry["path"], track_index, dest)
+    return dest
+
+
+@router.get("/track-audio/{file_id}/{track_index}")
+def track_audio(request: Request, file_id: str, track_index: int) -> FileResponse:
+    """Serve the full track as mono/16k wav (range-supported) for the WaveSurfer waveform."""
+    wav = _track_wav(request.app.state, file_id, track_index)
+    return FileResponse(wav, media_type="audio/wav")
+
+
+@router.post("/vad/{file_id}/{track_index}", response_model=list[RegionOut])
+def vad(request: Request, file_id: str, track_index: int) -> list[RegionOut]:
+    """Detect speech regions on a single track — seeds the manual-labeling UI."""
+    wav = _track_wav(request.app.state, file_id, track_index)
+    return [RegionOut(start=s, end=e) for s, e in detect_speech(wav)]
+
+
+@router.post("/combine", response_model=CombineResult)
+def combine(request: Request, body: CombineRequest) -> CombineResult:
+    """Concatenate several files' tracks into one combined single-track recording (sequence
+    order) and register it as a normal source. The Label Track UI then labels/transcribes it
+    like any single file — the combined timeline is already the sequenced one."""
+    if not body.files:
+        raise HTTPException(400, "no files")
+    state = request.app.state
+    combo_key = "|".join(f"{f.file_id}:{f.track_index}" for f in body.files)
+    cached_id = state.combined.get(combo_key)
+    if cached_id and cached_id in state.uploads:
+        e = state.uploads[cached_id]
+        return CombineResult(file_id=cached_id, duration=e["source"].duration,
+                             boundaries=e["boundaries"])
+
+    wavs = [_track_wav(state, f.file_id, f.track_index) for f in body.files]
+    out_dir = state.upload_dir / "combined"
+    out_dir.mkdir(exist_ok=True)
+    dest = out_dir / f"{hashlib.sha256(combo_key.encode()).hexdigest()[:16]}.wav"
+    total, boundaries = concat_wavs(wavs, dest)
+
+    file_id = uuid.uuid4().hex
+    source = InputSource(filename=f"Combined ({len(body.files)} files)", duration=total,
+                         tracks=[Track(track_index=0, speaker="Speaker 1")])
+    state.uploads[file_id] = {"path": str(dest), "source": source, "boundaries": boundaries}
+    state.combined[combo_key] = file_id
+    return CombineResult(file_id=file_id, duration=total, boundaries=boundaries)
+
+
+@router.post("/diarize", response_model=JobCreated)
+def diarize(request: Request, body: DiarizeRequest) -> JobCreated:
+    """Transcribe each speaker on only their labeled regions, remapped + merged. Job-based."""
+    wav = _track_wav(request.app.state, body.file_id, body.track_index)
+    cache = request.app.state.cache
+    speaker_regions = {name: [(r[0], r[1]) for r in regions]
+                       for name, regions in body.speakers.items()}
+    options = body.options.to_options()
+    job = request.app.state.jobs.create()
+
+    def work(progress) -> MergedOutput:
+        progress(0.1, "transcribing labeled regions")
+        return transcribe_regions(
+            str(wav), speaker_regions,
+            lambda w: transcribe_track(w, cache=cache),
+            options=options,
+        )
+
+    request.app.state.jobs.run(job, work)
+    return JobCreated(job_id=job.id)
 
 
 # --- transcribe + merge (FR-TR-*, FR-MD-1) ---------------------------------------------
