@@ -43,6 +43,26 @@ def extract_sample(src: str | Path, track_index: int, dest: str | Path,
     return dest
 
 
+def extract_clip(src: str | Path, dest: str | Path, start: float, duration: float,
+                 num_streams: int) -> Path:
+    """Extract a short preview clip starting at `start` (a downmix of all audio streams so
+    you hear the whole moment). Input-side seek (`-ss` before `-i`) is instant even on a
+    50+ GB / multi-hour file — it never reads the whole container."""
+    dest = Path(dest)
+    if num_streams <= 1:
+        amap = ["-map", "0:a:0"]
+    else:
+        inputs = "".join(f"[0:a:{i}]" for i in range(num_streams))
+        amap = ["-filter_complex", f"{inputs}amix=inputs={num_streams}:duration=longest[a]",
+                "-map", "[a]"]
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", str(start), "-t", str(duration), "-i", str(src),
+         *amap, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(dest)],
+        check=True, capture_output=True,
+    )
+    return dest
+
+
 @contextlib.contextmanager
 def extracted_audio(src: str | Path, track_indices: list[int]) -> Iterator[list[Path]]:
     """Extract the given tracks into a temp dir, yield their paths, delete the dir on exit.

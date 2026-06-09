@@ -26,9 +26,36 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 // Shared segment editor + export panel. Operates on `merged` (a {version,sources,segments})
 // in place. Words ride underneath untouched; editing text flags the segment "edited".
 // =======================================================================================
-function renderEditor(container, merged) {
+// Preview audio: jump-to-position via instant input-seek clips (works on huge files).
+let previewAudio = null;
+function playClip(fileId, start, dur) {
+  if (previewAudio) previewAudio.pause();
+  previewAudio = new Audio(`/api/clip/${fileId}?start=${start}&dur=${Math.max(2, Math.min(dur, 30))}`);
+  previewAudio.play();
+}
+function fmtClock(s) {
+  s = Math.floor(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function renderEditor(container, merged, preview) {
+  if (preview !== undefined) container._preview = preview;  // persist across re-renders
+  preview = container._preview || null;
   container.innerHTML = "";
-  container.append(buildToolbar(container, merged), buildExportPanel(merged), buildTable(container, merged));
+  container.append(buildToolbar(container, merged), buildExportPanel(merged));
+  if (preview) container.append(buildPreviewBar(preview));
+  container.append(buildTable(container, merged, preview));
+}
+
+function buildPreviewBar(preview) {
+  const slider = el("input", { type: "range", min: 0, max: Math.floor(preview.duration), value: 0, step: 1, style: "flex:1" });
+  const label = el("span", { className: "muted", textContent: "00:00:00", style: "width:70px; text-align:right" });
+  slider.oninput = () => { label.textContent = fmtClock(+slider.value); };
+  slider.onchange = () => playClip(preview.file_id, +slider.value, 5);
+  return el("div", { className: "row", style: "margin:10px 0" },
+    el("span", { className: "muted", textContent: "Preview" }), slider, label,
+    el("span", { className: "muted", textContent: "drag to jump · or ▶ a line" }));
 }
 
 function distinctSpeakers(merged) {
@@ -75,7 +102,7 @@ function buildToolbar(container, merged) {
     el("div", { className: "spacer" }), addBtn);
 }
 
-function buildTable(container, merged) {
+function buildTable(container, merged, preview) {
   const tbody = el("tbody");
   const table = el("table", { className: "editor" },
     el("thead", {}, el("tr", {},
@@ -84,11 +111,11 @@ function buildTable(container, merged) {
       el("th", { textContent: "Flags" }), el("th", { textContent: "" }))),
     tbody);
 
-  merged.segments.forEach((seg, i) => tbody.append(buildRow(container, merged, seg, i)));
+  merged.segments.forEach((seg, i) => tbody.append(buildRow(container, merged, seg, i, preview)));
   return table;
 }
 
-function buildRow(container, merged, seg, i) {
+function buildRow(container, merged, seg, i, preview) {
   const tr = el("tr");
   for (const f of seg.flags || []) tr.classList.add(`flag-${f}`);
   const snapshot = JSON.stringify(seg);
@@ -123,13 +150,21 @@ function buildRow(container, merged, seg, i) {
   const del = el("button", { className: "ghost", textContent: "✕", title: "Remove line" });
   del.onclick = () => { merged.segments.splice(i, 1); renderEditor(container, merged); };
 
+  const actions = el("td", {});
+  if (preview) {
+    const jump = el("button", { className: "ghost", textContent: "▶", title: "Play from here" });
+    jump.onclick = () => playClip(preview.file_id, seg.start, seg.end - seg.start);
+    actions.append(jump);
+  }
+  actions.append(del);
+
   tr.append(
     el("td", { className: "spk" }, spk),
     el("td", { className: "tc" }, start),
     el("td", { className: "tc" }, end),
     el("td", { className: "txt" }, txt),
     flagsCell,
-    el("td", {}, del));
+    actions);
   tr.dataset.rowText = "";
   tr._textInput = txt;
   return tr;
@@ -337,7 +372,10 @@ async function pollJob(jobId, runBtn) {
     if (p.status === "done") {
       const merged = await (await fetch(`/api/result/${jobId}`)).json();
       $("#result-panel").style.display = "";
-      renderEditor($("#editor-transcribe"), merged);
+      // preview audio only when one source (merged timeline == that file's timeline)
+      const preview = uploaded.length === 1
+        ? { file_id: uploaded[0].file_id, duration: uploaded[0].source.duration } : null;
+      renderEditor($("#editor-transcribe"), merged, preview);
       setProgress(1, "done");
       runBtn.disabled = false;
       return;
@@ -382,7 +420,7 @@ function loadEdit(text) {
   merged.sources = merged.sources || [];
   merged.segments.forEach((s) => { s.words = s.words || []; s.flags = s.flags || []; });
   $("#edit-panel").style.display = "";
-  renderEditor($("#editor-edit"), merged);
+  renderEditor($("#editor-edit"), merged, null);  // loaded JSON has no source file to preview
 }
 
 // =======================================================================================

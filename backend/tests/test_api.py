@@ -89,6 +89,15 @@ def test_audition_returns_audio(client, two_stream_file):
     assert client.get("/api/audition/nope/0").status_code == 404
 
 
+def test_clip_returns_audio(client, two_stream_file):
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    r = client.get(f"/api/clip/{file_id}?start=0&dur=1")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/wav"
+    assert len(r.content) > 0
+    assert client.get("/api/clip/nope?start=0&dur=1").status_code == 404
+
+
 def test_unknown_job_404(client):
     assert client.get("/api/progress/nope").status_code == 404
     assert client.get("/api/result/nope").status_code == 404

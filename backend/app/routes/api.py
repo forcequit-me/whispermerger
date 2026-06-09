@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from ..batch import ProjectInput, run_batch
 from ..export import ExportOptions, to_csv, to_json, to_srt, to_txt
-from ..extract import extract_sample
+from ..extract import extract_clip, extract_sample
 from ..merge import BackchannelRender, MergeOptions
 from ..models import InputSource, MergedOutput, Track
 from ..pipeline import PreparedSource, run_merge_pipeline
@@ -215,6 +215,22 @@ def audition(request: Request, file_id: str, track_index: int) -> FileResponse:
     dest = samples / f"{file_id}_t{track_index}.wav"
     if not dest.exists():
         extract_sample(entry["path"], track_index, dest)
+    return FileResponse(dest, media_type="audio/wav")
+
+
+@router.get("/clip/{file_id}")
+def clip(request: Request, file_id: str, start: float = 0.0, dur: float = 5.0) -> FileResponse:
+    """Preview clip starting at `start` (downmix of all tracks). Powers jump-to-line and
+    jump-to-position in the editor — input-seek makes it instant even on huge files."""
+    entry = request.app.state.uploads.get(file_id)
+    if entry is None:
+        raise HTTPException(404, f"unknown file_id {file_id}")
+    dur = max(0.5, min(dur, 120.0))  # cap clip length
+    clips = request.app.state.upload_dir / "clips"
+    clips.mkdir(exist_ok=True)
+    dest = clips / f"{file_id}_{start:.2f}_{dur:.2f}.wav"
+    if not dest.exists():
+        extract_clip(entry["path"], dest, start, dur, len(entry["source"].tracks))
     return FileResponse(dest, media_type="audio/wav")
 
 
