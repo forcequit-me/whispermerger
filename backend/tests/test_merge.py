@@ -86,6 +86,14 @@ def test_genuine_overlap_flags_both():
     assert all("overlap" in s.flags for s in out.segments)
 
 
+def test_detect_conflicts_off_skips_flags():
+    a = wx(seg(0.0, 5.0, "so the plan here is to ship it"))
+    b = wx(seg(2.0, 7.0, "but I think we should wait a bit"))
+    out = merge([a, b], ["Max", "Sam"], options=MergeOptions(detect_conflicts=False))
+    assert all(s.flags == [] for s in out.segments)        # no flagging
+    assert [s.start for s in out.segments] == [0.0, 2.0]    # still interleaved by start
+
+
 def test_brief_overlap_below_threshold_not_flagged():
     a = wx(seg(0.0, 3.0, "okay sounds good to me"))
     b = wx(seg(2.5, 5.0, "great lets do it then"))  # 0.5s overlap, not similar text

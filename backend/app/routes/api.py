@@ -5,13 +5,17 @@ modules and the job registry held on app.state.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import uuid
 from pathlib import Path
+from typing import Literal
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from ..batch import ProjectInput, run_batch
 from ..export import ExportOptions, to_csv, to_json, to_srt, to_txt
 from ..extract import extract_sample
 from ..merge import BackchannelRender, MergeOptions
@@ -43,6 +47,7 @@ class SourceSelection(BaseModel):
 
 
 class MergeOptionsIn(BaseModel):
+    detect_conflicts: bool = True
     backchannel_max_words: int = 4
     backchannel_render: BackchannelRender = BackchannelRender.PARENTHETICAL
     overlap_min_seconds: float = 2.0
@@ -70,6 +75,7 @@ class ProgressResponse(BaseModel):
 
 
 class ExportOptionsIn(BaseModel):
+    apply_limits: bool = True
     chars_per_line: int = 42
     max_lines: int = 2
     min_duration: float = 1.0
@@ -86,22 +92,114 @@ class ExportRequest(BaseModel):
     filename: str = "transcript"
 
 
-# --- upload + probe (FR-IN-1/2/3/4) ----------------------------------------------------
+class BatchProjectIn(BaseModel):
+    name: str
+    sources: list[SourceSelection]
 
-@router.post("/upload", response_model=list[UploadItem])
-async def upload(request: Request, files: list[UploadFile] = File(...)) -> list[UploadItem]:
+
+class BatchRequest(BaseModel):
+    projects: list[BatchProjectIn]
+    output_mode: Literal["folder", "source"] = "folder"
+    output_folder: str | None = None
+    options: MergeOptionsIn = MergeOptionsIn()
+
+
+class BatchCreated(BaseModel):
+    batch_id: str
+
+
+class ProjectStatusOut(BaseModel):
+    name: str
+    status: str
+    progress: float
+    message: str
+    output_dir: str | None = None
+    error: str | None = None
+
+
+class BatchStatusOut(BaseModel):
+    id: str
+    status: str
+    progress: float
+    projects: list[ProjectStatusOut]
+
+
+# --- input: local path (FR-IN, large files) + upload (small files) ---------------------
+
+class AddPathRequest(BaseModel):
+    paths: list[str]
+
+
+def _register(app_state, file_path: Path, display_name: str) -> UploadItem:
+    """Probe a file already on disk and register it in place (no copy)."""
+    file_id = uuid.uuid4().hex
+    source = probe(file_path)
+    source.filename = display_name
+    app_state.uploads[file_id] = {"path": str(file_path), "source": source}
+    return UploadItem(file_id=file_id, source=source)
+
+
+@router.post("/add-path", response_model=list[UploadItem])
+def add_path(request: Request, body: AddPathRequest) -> list[UploadItem]:
+    """Register local files by path (programmatic / scriptable). The UI uses /browse."""
     items: list[UploadItem] = []
-    for f in files:
-        file_id = uuid.uuid4().hex
-        suffix = Path(f.filename or "").suffix
-        dest = request.app.state.upload_dir / f"{file_id}{suffix}"
-        dest.write_bytes(await f.read())
-
-        source = probe(dest)
-        source.filename = f.filename or dest.name  # keep the user-facing name
-        request.app.state.uploads[file_id] = {"path": str(dest), "source": source}
-        items.append(UploadItem(file_id=file_id, source=source))
+    for raw in body.paths:
+        p = Path(raw.strip().strip('"'))
+        if not p.is_file():
+            raise HTTPException(404, f"not a file: {raw}")
+        items.append(_register(request.app.state, p, p.name))
     return items
+
+
+# Native OS file picker, run in a subprocess so tkinter stays on its own main thread
+# (FastAPI handlers run in a worker thread, where Tk is unsafe).
+_PICKER = (
+    "import tkinter as tk; from tkinter import filedialog\n"
+    "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+    "paths = filedialog.askopenfilenames(title='Select recordings')\n"
+    "r.destroy()\n"
+    "import sys; sys.stdout.write('\\n'.join(paths))\n"
+)
+
+
+def _native_pick() -> list[str]:
+    out = subprocess.run([sys.executable, "-c", _PICKER],
+                         capture_output=True, text=True, timeout=600)
+    return [p for p in out.stdout.splitlines() if p.strip()]
+
+
+@router.post("/browse", response_model=list[UploadItem])
+def browse(request: Request) -> list[UploadItem]:
+    """Open a native file picker on the server (same machine) and register the chosen files
+    in place. No upload, no copy — ffmpeg reads the originals and pulls only the audio streams.
+    The only way to get real local paths, since browsers hide them from the web file picker."""
+    items: list[UploadItem] = []
+    for raw in _native_pick():
+        p = Path(raw)
+        if p.is_file():
+            items.append(_register(request.app.state, p, p.name))
+    return items
+
+
+_DIR_PICKER = (
+    "import tkinter as tk; from tkinter import filedialog\n"
+    "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+    "d = filedialog.askdirectory(title='Select output folder')\n"
+    "r.destroy()\n"
+    "import sys; sys.stdout.write(d or '')\n"
+)
+
+
+def _native_pick_dir() -> str:
+    out = subprocess.run([sys.executable, "-c", _DIR_PICKER],
+                         capture_output=True, text=True, timeout=600)
+    return out.stdout.strip()
+
+
+@router.post("/browse-folder")
+def browse_folder() -> dict:
+    """Native folder picker — used to choose the batch output directory."""
+    return {"path": _native_pick_dir()}
 
 
 # --- audition (FR-TK-3) ----------------------------------------------------------------
@@ -122,14 +220,11 @@ def audition(request: Request, file_id: str, track_index: int) -> FileResponse:
 
 # --- transcribe + merge (FR-TR-*, FR-MD-1) ---------------------------------------------
 
-@router.post("/transcribe", response_model=JobCreated)
-def transcribe(request: Request, body: TranscribeRequest) -> JobCreated:
-    uploads = request.app.state.uploads
-    cache = request.app.state.cache
-
+def _prepare_sources(app_state, sources: list[SourceSelection]) -> list[PreparedSource]:
+    """Resolve a list of file_id selections into PreparedSources for the pipeline."""
     prepared: list[PreparedSource] = []
-    for sel in body.sources:
-        entry = uploads.get(sel.file_id)
+    for sel in sources:
+        entry = app_state.uploads.get(sel.file_id)
         if entry is None:
             raise HTTPException(404, f"unknown file_id {sel.file_id}")
         base: InputSource = entry["source"]
@@ -141,7 +236,13 @@ def transcribe(request: Request, body: TranscribeRequest) -> JobCreated:
                     for t in sel.tracks],
         )
         prepared.append(PreparedSource(path=entry["path"], input=source))
+    return prepared
 
+
+@router.post("/transcribe", response_model=JobCreated)
+def transcribe(request: Request, body: TranscribeRequest) -> JobCreated:
+    cache = request.app.state.cache
+    prepared = _prepare_sources(request.app.state, body.sources)
     options = body.options.to_options()
     job = request.app.state.jobs.create()
 
@@ -213,3 +314,44 @@ def export_inline(body: ExportRequest, format: str = "srt") -> Response:
     resp, ext = _render(body.merged, format, body.options.to_options())
     resp.headers["Content-Disposition"] = f'attachment; filename="{body.filename}.{ext}"'
     return resp
+
+
+# --- batch / studio (Method 1 + 2) -----------------------------------------------------
+
+@router.post("/batch", response_model=BatchCreated)
+def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
+    if body.output_mode == "folder" and not body.output_folder:
+        raise HTTPException(400, "output_folder required when output_mode='folder'")
+    cache = request.app.state.cache
+
+    projects = [
+        ProjectInput(name=p.name, prepared=_prepare_sources(request.app.state, p.sources))
+        for p in body.projects
+    ]
+    options = body.options.to_options()
+    batch = request.app.state.batches.create([p.name for p in body.projects])
+
+    def work() -> None:
+        run_batch(
+            batch, projects,
+            lambda wav: transcribe_track(wav, cache=cache),
+            output_mode=body.output_mode,
+            output_folder=body.output_folder,
+            options=options,
+        )
+
+    request.app.state.batches.run(batch, work)
+    return BatchCreated(batch_id=batch.id)
+
+
+@router.get("/batch/{batch_id}", response_model=BatchStatusOut)
+def batch_status(request: Request, batch_id: str) -> BatchStatusOut:
+    batch = request.app.state.batches.get(batch_id)
+    if batch is None:
+        raise HTTPException(404, "unknown batch")
+    return BatchStatusOut(
+        id=batch.id, status=batch.status.value, progress=batch.progress,
+        projects=[ProjectStatusOut(name=p.name, status=p.status.value, progress=p.progress,
+                                   message=p.message, output_dir=p.output_dir, error=p.error)
+                  for p in batch.projects],
+    )

@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from .batch import BatchRegistry
 from .cache import Cache
 from .jobs import JobRegistry
 from .routes.api import router as api_router
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
 
     # Shared state, reached in routes via request.app.state.
     app.state.jobs = JobRegistry()
+    app.state.batches = BatchRegistry()
     app.state.cache = Cache(CACHE_DIR)
     app.state.uploads = {}          # file_id -> {"path": str, "source": InputSource}
     app.state.upload_dir = UPLOAD_DIR

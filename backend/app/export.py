@@ -10,12 +10,14 @@ from __future__ import annotations
 import csv
 import io
 from dataclasses import dataclass
+from pathlib import Path
 
 from .models import MergedOutput, Segment, Word
 
 
 @dataclass
 class ExportOptions:
+    apply_limits: bool = True     # off -> one SRT cue per segment, no line splitting
     chars_per_line: int = 42      # FR-UI-4 CPL
     max_lines: int = 2            # FR-UI-4 max lines per subtitle
     min_duration: float = 1.0     # FR-UI-4 minimum cue duration (s)
@@ -30,10 +32,11 @@ def to_json(merged: MergedOutput) -> str:
 
 def to_txt(merged: MergedOutput, opts: ExportOptions | None = None) -> str:
     opts = opts or ExportOptions()
-    lines = [
-        f"{seg.speaker}: {seg.text}" if opts.show_speakers else seg.text
-        for seg in merged.segments
-    ]
+    lines = []
+    for seg in merged.segments:
+        body = f"{seg.speaker}: {seg.text}" if opts.show_speakers else seg.text
+        # start + end timing in the transcript
+        lines.append(f"[{_timecode(seg.start)} --> {_timecode(seg.end)}] {body}")
     return "\n".join(lines)
 
 
@@ -44,6 +47,26 @@ def to_csv(merged: MergedOutput) -> str:
     for seg in merged.segments:
         w.writerow([seg.start, seg.end, seg.speaker, seg.text, "|".join(seg.flags)])
     return buf.getvalue()
+
+
+def export_all(merged: MergedOutput, out_dir: Path, basename: str,
+               opts: ExportOptions | None = None) -> list[Path]:
+    """Write all four formats as <basename>.{srt,txt,csv,json} into out_dir (batch export)."""
+    opts = opts or ExportOptions()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    renderers = {
+        "srt": lambda: to_srt(merged, opts),
+        "txt": lambda: to_txt(merged, opts),
+        "csv": lambda: to_csv(merged),
+        "json": lambda: to_json(merged),
+    }
+    written = []
+    for ext, render in renderers.items():
+        path = out_dir / f"{basename}.{ext}"
+        path.write_text(render(), encoding="utf-8")
+        written.append(path)
+    return written
 
 
 # --- SRT with word-level line splitting ------------------------------------------------
@@ -69,6 +92,11 @@ def _segment_cues(seg: Segment, opts: ExportOptions):
     the text is wrapped and time is interpolated across the segment span.
     """
     speaker = f"{seg.speaker}: " if opts.show_speakers else ""
+
+    # Limits off: one cue per segment, whole text, segment timing — no splitting.
+    if not opts.apply_limits:
+        yield seg.start, seg.end, _prefix(speaker, seg.text)
+        return
 
     if seg.words:
         line_groups = _pack_words(seg.words, opts.chars_per_line)

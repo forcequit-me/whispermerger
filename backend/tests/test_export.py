@@ -2,7 +2,7 @@
 
 import json
 
-from app.export import ExportOptions, to_csv, to_json, to_srt, to_txt, _timecode
+from app.export import ExportOptions, export_all, to_csv, to_json, to_srt, to_txt, _timecode
 from app.models import MergedOutput, Segment, Word
 
 
@@ -14,6 +14,13 @@ def _words(text, start, step=0.4):
 
 def _merged(*segments):
     return MergedOutput(segments=list(segments))
+
+
+def test_export_all_writes_four_files(tmp_path):
+    m = _merged(Segment(speaker="Max", start=0, end=1, text="hello", words=_words("hello", 0)))
+    written = export_all(m, tmp_path / "proj", "proj")
+    assert {p.name for p in written} == {"proj.srt", "proj.txt", "proj.csv", "proj.json"}
+    assert all(p.exists() and p.read_text(encoding="utf-8") for p in written)
 
 
 def test_timecode_format():
@@ -30,10 +37,10 @@ def test_to_json_roundtrips():
     assert data["segments"][0]["words"][0]["word"] == "hello"
 
 
-def test_to_txt_speaker_toggle():
+def test_to_txt_has_start_end_and_speaker_toggle():
     m = _merged(Segment(speaker="Max", start=0, end=1, text="hello there"))
-    assert to_txt(m) == "Max: hello there"
-    assert to_txt(m, ExportOptions(show_speakers=False)) == "hello there"
+    assert to_txt(m) == "[00:00:00,000 --> 00:00:01,000] Max: hello there"
+    assert to_txt(m, ExportOptions(show_speakers=False)) == "[00:00:00,000 --> 00:00:01,000] hello there"
 
 
 def test_to_csv_has_header_and_rows():
@@ -61,6 +68,16 @@ def test_srt_word_level_split_long_segment():
     assert "\n1\n" in ("\n" + srt) and "2\n" in srt
     # cue timing comes from word timestamps, not the segment span
     assert "00:00:00,000 --> " in srt
+
+
+def test_srt_apply_limits_off_one_cue_per_segment():
+    text = "one two three four five six seven eight nine ten eleven twelve"
+    seg = Segment(speaker="Max", start=0.0, end=6.0, text=text, words=_words(text, 0.0))
+    srt = to_srt(_merged(seg), ExportOptions(apply_limits=False, chars_per_line=12, max_lines=1))
+    blocks = [b for b in srt.split("\n\n") if b.strip()]
+    assert len(blocks) == 1                              # no splitting
+    assert "00:00:00,000 --> 00:00:06,000" in srt        # full segment timing
+    assert f"Max: {text}" in srt                          # whole text on one cue
 
 
 def test_srt_min_duration_enforced():

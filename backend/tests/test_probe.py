@@ -14,9 +14,9 @@ def test_reads_duration(two_stream_file):
     assert src.duration == 2.0 or abs(src.duration - 2.0) < 0.2
 
 
-def test_obs_default_labels(two_stream_file):
+def test_default_speaker_labels(two_stream_file):
     src = probe(two_stream_file)
-    assert [t.speaker for t in src.tracks] == ["Mic", "Desktop"]
+    assert [t.speaker for t in src.tracks] == ["Speaker 1", "Speaker 2"]
     assert all(t.selected for t in src.tracks)
 
 

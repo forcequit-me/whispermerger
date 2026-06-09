@@ -12,17 +12,9 @@ from pathlib import Path
 
 from .models import InputSource, Track
 
-# OBS multi-track convention (FR-TK-2): first two tracks default to Mic / Desktop. Labels
-# stay editable in the UI.
-_OBS_DEFAULTS = ["Mic", "Desktop"]
-
-
-def _default_speaker(track_index: int, num_audio: int, filename: str) -> str:
-    if num_audio == 1:
-        return Path(filename).stem  # single source -> name it after the file
-    if track_index < len(_OBS_DEFAULTS):
-        return _OBS_DEFAULTS[track_index]
-    return f"Track {track_index + 1}"
+def _default_speaker(track_index: int) -> str:
+    # Generic "Speaker N" defaults; labels stay editable in the UI.
+    return f"Speaker {track_index + 1}"
 
 
 def probe(path: str | Path) -> InputSource:
@@ -41,10 +33,7 @@ def probe(path: str | Path) -> InputSource:
     duration = _read_duration(data, audio_streams)
 
     tracks = [
-        Track(
-            track_index=i,
-            speaker=_default_speaker(i, num_audio, path.name),
-        )
+        Track(track_index=i, speaker=_default_speaker(i))
         for i in range(num_audio)
     ]
     return InputSource(filename=path.name, duration=duration, tracks=tracks)

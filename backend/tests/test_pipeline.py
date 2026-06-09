@@ -10,6 +10,21 @@ def _stub_transcribe(_audio_path: str) -> dict:
                           "words": [{"word": "hello", "start": 0.0, "end": 1.0}]}]}
 
 
+def test_pipeline_mixed_track_counts_in_one_project(two_stream_file):
+    # One project, files with differing track counts: a 2-track source then a 1-track source.
+    two_track = InputSource(filename="multi.mkv", duration=4.0, sequence=0,
+                            tracks=[Track(track_index=0, speaker="A"), Track(track_index=1, speaker="B")])
+    one_track = InputSource(filename="solo.wav", duration=3.0, sequence=1,
+                            tracks=[Track(track_index=0, speaker="C")])
+    out = run_merge_pipeline(
+        [PreparedSource(str(two_stream_file), two_track),
+         PreparedSource(str(two_stream_file), one_track)],
+        _stub_transcribe,
+    )
+    # 3 transcriptions (2 + 1); the 1-track file is offset by the first file's 4s duration
+    assert sorted((s.speaker, s.start) for s in out.segments) == [("A", 0.0), ("B", 0.0), ("C", 4.0)]
+
+
 def test_pipeline_extracts_transcribes_merges(two_stream_file):
     src = InputSource(
         filename=two_stream_file.name,

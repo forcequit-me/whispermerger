@@ -11,25 +11,64 @@
     <h1>WhisperMerger</h1>
     <span class="sub">word-level transcripts, local GPU</span>
     <nav class="tabs">
-      <button class="tab-btn active" data-tab="transcribe">Transcribe &amp; Merge</button>
+      <button class="tab-btn active" data-tab="batch">Batch</button>
+      <button class="tab-btn" data-tab="transcribe">Transcribe &amp; Merge</button>
       <button class="tab-btn" data-tab="edit">Edit Transcript</button>
     </nav>
   </header>
 
   <main>
+    <!-- ============ Batch / Studio ============ -->
+    <section id="tab-batch" class="tab active">
+      <div class="panel">
+        <h2>Projects</h2>
+        <div id="projects"></div>
+        <button id="add-project" class="ghost">+ New project</button>
+      </div>
+
+      <div class="panel">
+        <h2>Output</h2>
+        <div class="row">
+          <label class="opt"><input type="radio" name="outmode" value="folder" checked> Single folder</label>
+          <button id="choose-folder" class="ghost">Choose folder…</button>
+          <span id="out-folder-path" class="muted">no folder chosen</span>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label class="opt"><input type="radio" name="outmode" value="source"> Next to each project's source files</label>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label class="opt"><input type="checkbox" id="batch-detect" checked>
+            Detect conflicts (backchannel / overlap / bleed)</label>
+        </div>
+        <div class="muted" style="margin-top:6px">Each project saves to its own subfolder with all formats (SRT, TXT, CSV, JSON).</div>
+        <div class="row" style="margin-top:12px">
+          <button id="run-batch" class="primary">Run batch</button>
+          <span id="batch-err" class="err"></span>
+        </div>
+      </div>
+
+      <div class="panel" id="batch-status-panel" style="display:none">
+        <h2>Progress</h2>
+        <div id="batch-status"></div>
+      </div>
+    </section>
+
     <!-- ============ Transcribe & Merge ============ -->
-    <section id="tab-transcribe" class="tab active">
+    <section id="tab-transcribe" class="tab">
       <div class="panel">
         <h2>Input</h2>
-        <div id="dropzone" class="dropzone">
-          Drop audio / multi-track video here, or click to choose.
-          <input id="file-input" type="file" multiple class="hidden" />
-        </div>
+        <button id="choose-btn" class="primary">Choose recordings…</button>
+        <span class="muted" style="margin-left:10px">opens a file picker — files are read in place, nothing is uploaded</span>
+        <div id="path-err" class="err"></div>
         <div id="sources"></div>
       </div>
 
       <div class="panel" id="options-panel" style="display:none">
         <h2>Merge options</h2>
+        <div class="row" style="margin-bottom:10px">
+          <label class="opt"><input type="checkbox" id="opt-detect" checked>
+            Detect conflicts (backchannel / overlap / bleed)</label>
+        </div>
         <div class="row">
           <label class="field"><span>Backchannel</span>
             <select id="opt-backchannel">

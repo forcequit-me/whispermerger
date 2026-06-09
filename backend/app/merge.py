@@ -39,6 +39,7 @@ class BackchannelRender(str, Enum):
 
 @dataclass
 class MergeOptions:
+    detect_conflicts: bool = True           # off -> just interleave by time, no flags
     backchannel_max_words: int = 4          # FR-MG-2: "under N words"
     backchannel_render: BackchannelRender = BackchannelRender.PARENTHETICAL  # OQ-2 default
     overlap_min_seconds: float = 2.0        # FR-MG-3: "several seconds"
@@ -175,14 +176,15 @@ def merge(
             tagged.append((i, seg))
 
     # Pairwise conflict detection across different tracks only.
-    for x in range(len(tagged)):
-        ix, a = tagged[x]
-        for y in range(x + 1, len(tagged)):
-            iy, b = tagged[y]
-            if ix == iy:
-                continue
-            if _overlap_seconds(a, b) > 0:
-                _classify_pair(a, b, opts, rms_fn)
+    if opts.detect_conflicts:
+        for x in range(len(tagged)):
+            ix, a = tagged[x]
+            for y in range(x + 1, len(tagged)):
+                iy, b = tagged[y]
+                if ix == iy:
+                    continue
+                if _overlap_seconds(a, b) > 0:
+                    _classify_pair(a, b, opts, rms_fn)
 
     segments = [seg for _, seg in tagged]
     segments = _apply_backchannel_render(segments, opts.backchannel_render)

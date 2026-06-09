@@ -1,5 +1,5 @@
-"""API tests via FastAPI TestClient. Real upload/probe + a monkeypatched transcribe stub
-so the full job flow runs without a GPU."""
+"""API tests via FastAPI TestClient. Files are registered by path (/add-path); the GUI
+picker (/browse) is tested with a monkeypatched picker. transcribe is stubbed (no GPU)."""
 
 import time
 
@@ -20,21 +20,38 @@ def _stub_transcribe(_wav, **_kw):
                           "words": [{"word": "hello", "start": 0.0, "end": 1.0}]}]}
 
 
-def test_upload_returns_tracks(client, two_stream_file):
-    with open(two_stream_file, "rb") as f:
-        r = client.post("/api/upload", files={"files": ("two_stream.mkv", f, "video/x-matroska")})
-    assert r.status_code == 200
-    item = r.json()[0]
+def _add(client, path):
+    return client.post("/api/add-path", json={"paths": [str(path)]}).json()
+
+
+def test_add_path_registers_without_copy(client, two_stream_file):
+    item = _add(client, two_stream_file)[0]
     assert item["source"]["filename"] == "two_stream.mkv"
-    assert [t["speaker"] for t in item["source"]["tracks"]] == ["Mic", "Desktop"]
+    assert [t["speaker"] for t in item["source"]["tracks"]] == ["Speaker 1", "Speaker 2"]
+    assert item["file_id"]
+
+
+def test_add_path_missing_file_404(client):
+    assert client.post("/api/add-path", json={"paths": ["C:/nope/missing.mkv"]}).status_code == 404
+
+
+def test_browse_uses_native_picker(client, two_stream_file, monkeypatch):
+    monkeypatch.setattr(routes.api, "_native_pick", lambda: [str(two_stream_file)])
+    r = client.post("/api/browse")
+    assert r.status_code == 200
+    assert r.json()[0]["source"]["filename"] == "two_stream.mkv"
+
+
+def test_browse_cancelled_returns_empty(client, monkeypatch):
+    monkeypatch.setattr(routes.api, "_native_pick", lambda: [])
+    assert client.post("/api/browse").json() == []
 
 
 def test_export_inline_srt(client):
     merged = {"version": "1.0", "sources": [], "segments": [
         {"speaker": "Max", "start": 0.0, "end": 1.0, "text": "hello",
          "words": [{"word": "hello", "start": 0.0, "end": 1.0}], "flags": []}]}
-    r = client.post("/api/export?format=srt",
-                    json={"merged": merged, "filename": "mycut"})
+    r = client.post("/api/export?format=srt", json={"merged": merged, "filename": "mycut"})
     assert r.status_code == 200
     assert "Max: hello" in r.text
     assert r.headers["content-disposition"] == 'attachment; filename="mycut.srt"'
@@ -42,11 +59,7 @@ def test_export_inline_srt(client):
 
 def test_transcribe_flow(client, two_stream_file, monkeypatch):
     monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)
-
-    with open(two_stream_file, "rb") as f:
-        up = client.post("/api/upload",
-                         files={"files": ("two_stream.mkv", f, "video/x-matroska")}).json()
-    file_id = up[0]["file_id"]
+    file_id = _add(client, two_stream_file)[0]["file_id"]
 
     r = client.post("/api/transcribe", json={
         "sources": [{"file_id": file_id, "sequence": 0, "tracks": [
@@ -68,10 +81,7 @@ def test_transcribe_flow(client, two_stream_file, monkeypatch):
 
 
 def test_audition_returns_audio(client, two_stream_file):
-    with open(two_stream_file, "rb") as f:
-        up = client.post("/api/upload",
-                         files={"files": ("two_stream.mkv", f, "video/x-matroska")}).json()
-    file_id = up[0]["file_id"]
+    file_id = _add(client, two_stream_file)[0]["file_id"]
     r = client.get(f"/api/audition/{file_id}/0")
     assert r.status_code == 200
     assert r.headers["content-type"] == "audio/wav"
@@ -82,3 +92,41 @@ def test_audition_returns_audio(client, two_stream_file):
 def test_unknown_job_404(client):
     assert client.get("/api/progress/nope").status_code == 404
     assert client.get("/api/result/nope").status_code == 404
+
+
+def test_browse_folder_uses_native_dir_picker(client, monkeypatch):
+    monkeypatch.setattr(routes.api, "_native_pick_dir", lambda: "C:/out")
+    assert client.post("/api/browse-folder").json() == {"path": "C:/out"}
+
+
+def test_batch_flow_writes_outputs(client, two_stream_file, tmp_path, monkeypatch):
+    monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+
+    r = client.post("/api/batch", json={
+        "output_mode": "folder", "output_folder": str(tmp_path),
+        "projects": [{"name": "Perf Poser", "sources": [
+            {"file_id": file_id, "sequence": 0,
+             "tracks": [{"track_index": 0, "speaker": "Speaker 1", "selected": True}]}]}]})
+    batch_id = r.json()["batch_id"]
+
+    deadline = time.time() + 5
+    status = "queued"
+    while time.time() < deadline:
+        status = client.get(f"/api/batch/{batch_id}").json()["status"]
+        if status == "done":
+            break
+        time.sleep(0.02)
+    body = client.get(f"/api/batch/{batch_id}").json()
+    assert body["status"] == "done"
+    assert body["projects"][0]["status"] == "done"
+    assert (tmp_path / "Perf Poser" / "Perf Poser.srt").exists()
+
+
+def test_batch_folder_mode_requires_folder(client, two_stream_file):
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    r = client.post("/api/batch", json={
+        "output_mode": "folder",
+        "projects": [{"name": "P", "sources": [
+            {"file_id": file_id, "tracks": [{"track_index": 0, "speaker": "Speaker 1"}]}]}]})
+    assert r.status_code == 400

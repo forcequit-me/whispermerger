@@ -51,6 +51,16 @@ function buildToolbar(container, merged) {
     renderEditor(container, merged);
   };
 
+  const removeBtn = el("button", { className: "ghost", textContent: "Remove speaker" });
+  removeBtn.onclick = () => {
+    const spk = from.value;
+    const count = merged.segments.filter((s) => s.speaker === spk).length;
+    if (!count) return;
+    if (!confirm(`Remove speaker "${spk}" and all ${count} of their line(s)? This can't be undone.`)) return;
+    merged.segments = merged.segments.filter((s) => s.speaker !== spk);
+    renderEditor(container, merged);
+  };
+
   const addBtn = el("button", { className: "ghost", textContent: "+ Add line" });
   addBtn.onclick = () => {
     const last = merged.segments[merged.segments.length - 1];
@@ -61,7 +71,7 @@ function buildToolbar(container, merged) {
   };
 
   return el("div", { className: "row", style: "margin-bottom:12px" },
-    el("span", { className: "muted", textContent: "Speaker:" }), from, to, renameBtn,
+    el("span", { className: "muted", textContent: "Speaker:" }), from, to, renameBtn, removeBtn,
     el("div", { className: "spacer" }), addBtn);
 }
 
@@ -152,14 +162,21 @@ function buildExportPanel(merged) {
   const format = el("select");
   ["srt", "txt", "csv", "json"].forEach((f) => format.append(el("option", { value: f, textContent: f.toUpperCase() })));
   const filename = el("input", { value: "transcript", size: 14 });
+  const applyLimits = el("input", { type: "checkbox", checked: true });
   const cpl = el("input", { type: "number", value: 42 });
   const maxLines = el("input", { type: "number", value: 2 });
   const minDur = el("input", { type: "number", value: 1, step: 0.5 });
   const showSpk = el("input", { type: "checkbox", checked: true });
 
+  // Subtitle limits only apply to SRT; toggling off disables (and ignores) the limit fields.
+  const syncLimits = () => [cpl, maxLines, minDur].forEach((n) => { n.disabled = !applyLimits.checked; });
+  applyLimits.onchange = syncLimits;
+  syncLimits();
+
   const btn = el("button", { className: "primary", textContent: "Export" });
   btn.onclick = async () => {
     const options = {
+      apply_limits: applyLimits.checked,
       chars_per_line: +cpl.value, max_lines: +maxLines.value,
       min_duration: +minDur.value, show_speakers: showSpk.checked,
     };
@@ -169,6 +186,7 @@ function buildExportPanel(merged) {
   const field = (label, node) => el("label", { className: "field" }, el("span", { textContent: label }), node);
   return el("div", { className: "row", style: "margin:14px 0; padding-top:14px; border-top:1px solid var(--line)" },
     field("Format", format), field("Filename", filename),
+    el("label", { className: "opt" }, applyLimits, "Subtitle limits"),
     field("Chars/line", cpl), field("Max lines", maxLines), field("Min dur (s)", minDur),
     el("label", { className: "opt" }, showSpk, "Show speakers"),
     el("div", { className: "spacer" }), btn);
@@ -191,25 +209,35 @@ async function downloadExport(merged, format, filename, options) {
 const uploaded = [];  // [{file_id, source}]
 
 (function initTranscribeTab() {
-  const dz = $("#dropzone"), input = $("#file-input");
-  dz.onclick = () => input.click();
-  input.onchange = () => handleFiles(input.files);
-  dz.ondragover = (e) => { e.preventDefault(); dz.classList.add("over"); };
-  dz.ondragleave = () => dz.classList.remove("over");
-  dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove("over"); handleFiles(e.dataTransfer.files); };
+  $("#choose-btn").onclick = browseFiles;
   $("#run-btn").onclick = runPipeline;
+  const detect = $("#opt-detect");
+  const syncDetect = () => MERGE_THRESHOLD_IDS.forEach((id) => { $(`#${id}`).disabled = !detect.checked; });
+  detect.onchange = syncDetect;
+  syncDetect();
 })();
 
-async function handleFiles(fileList) {
-  if (!fileList.length) return;
-  const fd = new FormData();
-  for (const f of fileList) fd.append("files", f);
-  const res = await fetch("/api/upload", { method: "POST", body: fd });
-  if (!res.ok) { alert("Upload failed: " + (await res.text())); return; }
-  const items = await res.json();
+function registerItems(items) {
   items.forEach((it) => uploaded.push(it));
   renderSources();
   $("#options-panel").style.display = "";
+}
+
+async function browseFiles() {
+  const err = $("#path-err"), btn = $("#choose-btn");
+  err.textContent = "";
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "Opening file picker…";
+  try {
+    const res = await fetch("/api/browse", { method: "POST" });
+    if (!res.ok) { err.textContent = "Could not open picker: " + (await res.text()); return; }
+    const items = await res.json();
+    if (items.length) registerItems(items);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 }
 
 // FR-TK-3: per-track audition. One clip plays at a time.
@@ -243,7 +271,7 @@ function renderSources() {
         const spk = el("input", { value: t.speaker });
         spk.oninput = () => { t.speaker = spk.value; };
         box.append(el("div", { className: "track-row" },
-          sel, el("span", { className: "ti", textContent: `track ${t.track_index}` }),
+          sel, el("span", { className: "ti", textContent: `track ${t.track_index + 1}` }),
           spk, auditionBtn(it.file_id, t.track_index)));
       });
     } else {
@@ -267,8 +295,11 @@ function renderSources() {
   });
 }
 
+const MERGE_THRESHOLD_IDS = ["opt-backchannel", "opt-bc-words", "opt-overlap", "opt-bleed-win", "opt-bleed-sim"];
+
 function gatherOptions() {
   return {
+    detect_conflicts: $("#opt-detect").checked,
     backchannel_render: $("#opt-backchannel").value,
     backchannel_max_words: +$("#opt-bc-words").value,
     overlap_min_seconds: +$("#opt-overlap").value,
@@ -352,4 +383,155 @@ function loadEdit(text) {
   merged.segments.forEach((s) => { s.words = s.words || []; s.flags = s.flags || []; });
   $("#edit-panel").style.display = "";
   renderEditor($("#editor-edit"), merged);
+}
+
+// =======================================================================================
+// Batch / Studio tab
+// =======================================================================================
+const projects = [];           // [{ name, files: [{file_id, source}] }]
+let outputFolder = null;
+let projectCounter = 0;
+
+(function initBatchTab() {
+  $("#add-project").onclick = () => {
+    projectCounter += 1;
+    projects.push({ name: `Project ${projectCounter}`, files: [] });
+    renderProjects();
+  };
+  $("#choose-folder").onclick = chooseFolder;
+  $("#run-batch").onclick = runBatch;
+})();
+
+function renderProjects() {
+  const root = $("#projects");
+  root.innerHTML = "";
+  projects.forEach((proj, pi) => root.append(buildProjectCard(proj, pi)));
+}
+
+function buildProjectCard(proj, pi) {
+  const box = el("div", { className: "source" });
+  const name = el("input", { value: proj.name, style: "font-weight:600; width:240px" });
+  name.oninput = () => { proj.name = name.value; };
+  const addFiles = el("button", { className: "ghost", textContent: "Add files" });
+  addFiles.onclick = () => addProjectFiles(proj);
+  const removeProj = el("button", { className: "ghost", textContent: "✕ Remove project" });
+  removeProj.onclick = () => { projects.splice(pi, 1); renderProjects(); };
+  box.append(el("div", { className: "name" },
+    name, el("div", { className: "spacer" }), addFiles, removeProj));
+
+  proj.files.forEach((_, fi) => box.append(buildFileRow(proj, fi)));
+  if (!proj.files.length) box.append(el("div", { className: "muted", textContent: "no files yet — click Add files" }));
+  return box;
+}
+
+function buildFileRow(proj, fi) {
+  const f = proj.files[fi];
+  const wrap = el("div", { style: "border-top:1px solid var(--line); padding:6px 0; margin-top:6px" });
+  const swap = (a, b) => { [proj.files[a], proj.files[b]] = [proj.files[b], proj.files[a]]; renderProjects(); };
+  const up = el("button", { className: "ghost", textContent: "↑", title: "Move earlier" });
+  up.onclick = () => { if (fi > 0) swap(fi, fi - 1); };
+  const down = el("button", { className: "ghost", textContent: "↓", title: "Move later" });
+  down.onclick = () => { if (fi < proj.files.length - 1) swap(fi, fi + 1); };
+  const rm = el("button", { className: "ghost", textContent: "✕" });
+  rm.onclick = () => { proj.files.splice(fi, 1); renderProjects(); };
+
+  wrap.append(el("div", { className: "track-row" },
+    el("span", { className: "ti", textContent: `${fi + 1}.` }),
+    el("span", { textContent: f.source.filename, style: "flex:1" }),
+    el("span", { className: "dur muted", textContent: `${f.source.duration.toFixed(1)}s` }),
+    up, down, rm));
+
+  f.source.tracks.forEach((t) => {
+    const spk = el("input", { value: t.speaker, size: 12 });
+    spk.oninput = () => { t.speaker = spk.value; };
+    if (f.source.tracks.length > 1) {
+      const sel = el("input", { type: "checkbox", checked: t.selected !== false });
+      sel.onchange = () => { t.selected = sel.checked; };
+      wrap.append(el("div", { className: "track-row" },
+        sel, el("span", { className: "ti", textContent: `track ${t.track_index + 1}` }), spk));
+    } else {
+      wrap.append(el("div", { className: "track-row" },
+        el("span", { className: "ti", textContent: "speaker" }), spk));
+    }
+  });
+  return wrap;
+}
+
+async function addProjectFiles(proj) {
+  $("#batch-err").textContent = "";
+  const res = await fetch("/api/browse", { method: "POST" });
+  if (!res.ok) { $("#batch-err").textContent = "Picker failed: " + (await res.text()); return; }
+  proj.files.push(...(await res.json()));
+  renderProjects();
+}
+
+async function chooseFolder() {
+  const res = await fetch("/api/browse-folder", { method: "POST" });
+  if (!res.ok) return;
+  const { path } = await res.json();
+  if (path) { outputFolder = path; $("#out-folder-path").textContent = path; }
+}
+
+function runBatch() {
+  const err = $("#batch-err");
+  err.textContent = "";
+  const usable = projects.filter((p) => p.files.length);
+  if (!usable.length) { err.textContent = "Add at least one project with files."; return; }
+  const mode = document.querySelector("input[name=outmode]:checked").value;
+  if (mode === "folder" && !outputFolder) { err.textContent = "Choose an output folder."; return; }
+
+  const body = {
+    output_mode: mode,
+    output_folder: outputFolder,
+    options: { detect_conflicts: $("#batch-detect").checked },
+    projects: usable.map((p) => ({
+      name: p.name,
+      sources: p.files.map((f, i) => ({
+        file_id: f.file_id,
+        sequence: i,
+        tracks: f.source.tracks.map((t) => ({
+          track_index: t.track_index, speaker: t.speaker, selected: t.selected !== false,
+        })),
+      })),
+    })),
+  };
+  startBatch(body);
+}
+
+async function startBatch(body) {
+  const btn = $("#run-batch");
+  btn.disabled = true;
+  const res = await fetch("/api/batch", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!res.ok) { $("#batch-err").textContent = "Batch failed: " + (await res.text()); btn.disabled = false; return; }
+  const { batch_id } = await res.json();
+  $("#batch-status-panel").style.display = "";
+  pollBatch(batch_id, btn);
+}
+
+function pollBatch(id, btn) {
+  const tick = async () => {
+    const b = await (await fetch(`/api/batch/${id}`)).json();
+    renderBatchStatus(b);
+    if (b.status === "done") { btn.disabled = false; return; }
+    setTimeout(tick, 800);
+  };
+  tick();
+}
+
+function renderBatchStatus(b) {
+  const root = $("#batch-status");
+  root.innerHTML = "";
+  b.projects.forEach((p) => {
+    const pct = Math.round((p.progress || 0) * 100);
+    const state = p.status === "running" ? `running ${pct}%` : p.status;
+    const detail = p.error ? "⚠ " + p.error : (p.status === "done" ? "→ " + (p.output_dir || "") : p.message || "");
+    const line = el("div", { className: "track-row" },
+      el("span", { textContent: p.name, style: "width:200px; font-weight:600" }),
+      el("span", { className: "muted", textContent: state, style: "width:120px" }),
+      el("span", { className: "muted", textContent: detail, style: "flex:1" }));
+    if (p.status === "error") line.classList.add("flag-bleed_suspected");
+    root.append(line);
+  });
 }
