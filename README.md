@@ -26,17 +26,25 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   to speakers (click / shift-click a run / ctrl-click; number keys; bulk-assign; duplicate a
   region onto another speaker for talk-over), then transcribe per speaker. Add several files to
   sequence them into one combined waveform. Single-track and split-lane (one row per speaker)
-  views. Overlapping speech is supported and flagged.
+  views. **Horizontal zoom** + optional **region padding** (widen detected speech a touch so
+  words aren't clipped). Overlapping speech is supported and flagged.
 - **Editor** — inline edit speaker/text/timing, global speaker rename, remove a speaker and
   all their lines, add/remove lines, keyboard shortcuts, conflict highlighting, per-line audio
   preview (▶ a line or drag a jump bar — instant input-seek clips, works on huge files).
+- **Waveform + scrubbing in every editor** — drawn from server-computed downsampled peaks
+  (`/api/peaks`), so the browser never downloads full audio (scales to 100+ GB files). Click to
+  play from any point; **horizontal zoom** for precision. In *Edit Transcript*, *Attach audio* to
+  a loaded JSON to enable the waveform + ▶ for verification.
 - **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing; SRT splits lines on real
-  word timestamps (toggleable subtitle limits).
+  word timestamps (toggleable subtitle limits). **Pad (s)** extends each segment's start/end by N
+  seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.
 - **Caching** — WhisperX output is cached by file hash + model, so re-runs skip transcription.
 - **Stage-aware progress + timing** — jobs and batches report the current stage (Extracting ·
   Transcribing · Merging, per track) and total elapsed wall time, so a long run never looks stuck.
 - **Storage-clean** — extracted audio is deleted right after use, and the working dir is wiped on
   startup; only the small transcription cache persists. Nothing piles up.
+- **One-click start/stop** — `Startup.bat` launches the server and opens the UI; `Shutdown.bat`
+  (or the **⏻ Shutdown** button in the header) stops it.
 
 ## Requirements
 
@@ -52,12 +60,13 @@ python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 pip install -r backend/requirements.txt -c backend/constraints.txt
 
-# run the app
+# run the app (or just double-click Startup.bat, which does this + opens the browser)
 cd backend
 python -m uvicorn app.main:app --port 8756
 ```
 
-Then open **http://localhost:8756**. First transcription downloads the models (~3 GB) and
+Then open **http://localhost:8756** (Startup.bat opens it for you). Stop with `Shutdown.bat` or
+the **⏻ Shutdown** button in the header. First transcription downloads the models (~3 GB) and
 loads them into VRAM (~30–60 s) before running.
 
 **Performance (real-world):** a 56 GB / 1h51m OBS recording with **4 audio tracks** transcribed

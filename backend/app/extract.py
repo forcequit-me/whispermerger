@@ -98,6 +98,32 @@ def extract_clip(src: str | Path, dest: str | Path, start: float, duration: floa
     return dest
 
 
+def compute_peaks(wav_path: str | Path, buckets: int = 2000) -> list[float]:
+    """Downsample a mono/16k wav into `buckets` per-bucket max-abs amplitudes, normalized to
+    [0, 1]. Read bucket-by-bucket so a multi-hour track never lands fully in memory. Feeds the
+    frontend waveform — the browser draws this instead of downloading the audio."""
+    import numpy as np
+    import soundfile as sf
+
+    with sf.SoundFile(str(wav_path)) as f:
+        total = len(f)
+        if total == 0:
+            return []
+        buckets = max(1, min(buckets, total))
+        step = total / buckets
+        peaks: list[float] = []
+        for i in range(buckets):
+            start = int(i * step)
+            end = total if i == buckets - 1 else int((i + 1) * step)
+            f.seek(start)
+            block = f.read(max(1, end - start), dtype="float32", always_2d=False)
+            if getattr(block, "ndim", 1) > 1:
+                block = block.mean(axis=1)
+            peaks.append(float(np.abs(block).max()) if len(block) else 0.0)
+    scale = max(peaks) or 1.0
+    return [round(p / scale, 4) for p in peaks]
+
+
 @contextlib.contextmanager
 def extracted_audio(src: str | Path, track_indices: list[int]) -> Iterator[list[Path]]:
     """Extract the given tracks into a temp dir, yield their paths, delete the dir on exit.

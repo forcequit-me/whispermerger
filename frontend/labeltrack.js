@@ -36,6 +36,7 @@ $("#label-view").onclick = () => {
   renderLanes();
 };
 $("#label-dup").onclick = duplicateSelection;
+$("#label-zoom").oninput = () => { if (ws) try { ws.zoom(+$("#label-zoom").value); } catch (_) {} };
 
 // Duplicate the selected region(s) as new unassigned regions on the same span — for talk-over,
 // assign the copy to the other speaker so two speakers overlap on that range (PRD §11.4 / OQ-7).
@@ -269,7 +270,10 @@ async function runVad() {
   boundaryIds.clear();
   selection.clear();
   anchorId = null;
-  spans.forEach((s) => regions.addRegion({ start: s.start, end: s.end, color: UNASSIGNED, drag: true, resize: true }));
+  const pad = Math.max(0, +($("#label-pad").value) || 0);
+  spans.forEach((s) => regions.addRegion({
+    start: Math.max(0, s.start - pad), end: Math.min(activeDuration || s.end, s.end + pad),
+    color: UNASSIGNED, drag: true, resize: true }));
   drawBoundaries();
   renderLanes();
   $("#label-status").textContent = `${spans.length} speech regions — assign each to a speaker`;

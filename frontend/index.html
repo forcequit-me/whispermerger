@@ -10,6 +10,7 @@
   <header>
     <h1>WhisperMerger</h1>
     <span class="sub">word-level transcripts, local GPU</span>
+    <button id="shutdown-btn" class="ghost" title="Stop the local server" style="margin-left:auto">⏻ Shutdown</button>
     <nav class="tabs">
       <button class="tab-btn active" data-tab="batch">Batch</button>
       <button class="tab-btn" data-tab="transcribe">Transcribe &amp; Merge</button>
@@ -122,6 +123,12 @@
           <button id="label-play" class="ghost">▶ / ⏸</button>
           <button id="label-view" class="ghost">Split lanes</button>
           <button id="label-dup" class="ghost">Duplicate region</button>
+          <label class="field"><span>Region pad (s)</span>
+            <input id="label-pad" type="number" value="0" step="0.1" min="0" style="width:70px"
+              title="expand each detected speech region by N seconds on both ends" /></label>
+          <label class="field"><span>Zoom</span>
+            <input id="label-zoom" type="range" min="1" max="400" value="1" step="1"
+              title="horizontal zoom for speaker-selection precision" /></label>
           <span class="muted">click a region (shift-click a run, ctrl-click multi-pick) then a speaker/number · drag to create · drag edges to resize · for talk-over, duplicate a region and assign the copy to the other speaker</span>
         </div>
         <div id="waveform" style="background:var(--panel-2); border:1px solid var(--line); border-radius:8px"></div>
@@ -155,6 +162,10 @@
       </div>
       <div class="panel" id="edit-panel" style="display:none">
         <h2>Transcript</h2>
+        <div class="row" style="margin-bottom:10px">
+          <button id="edit-attach" class="ghost">Attach audio…</button>
+          <span id="edit-attach-name" class="muted">attach the source file to scrub the waveform &amp; ▶ lines</span>
+        </div>
         <div id="editor-edit"></div>
       </div>
     </section>

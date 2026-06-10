@@ -19,6 +19,15 @@ function fmtElapsed(s) {
 }
 window.fmtElapsed = fmtElapsed;
 
+// --- shutdown --------------------------------------------------------------------------
+$("#shutdown-btn").onclick = async () => {
+  if (!confirm("Stop the WhisperMerger server?")) return;
+  try { await fetch("/api/shutdown", { method: "POST" }); } catch (_) { /* server is going down */ }
+  document.body.innerHTML =
+    '<div style="display:flex;height:100vh;align-items:center;justify-content:center;color:#8a93a3;font:15px sans-serif">' +
+    "Server stopped — you can close this tab.</div>";
+};
+
 // --- tab switching ---------------------------------------------------------------------
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.onclick = () => {
@@ -50,8 +59,63 @@ function renderEditor(container, merged, preview) {
   preview = container._preview || null;
   container.innerHTML = "";
   container.append(buildToolbar(container, merged), buildExportPanel(merged));
-  if (preview) container.append(buildPreviewBar(preview));
+  if (preview) { container.append(buildPreviewBar(preview)); container.append(buildWaveform(preview)); }
   container.append(buildTable(container, merged, preview));
+}
+
+// Lightweight canvas waveform fed by server-side peaks (/api/peaks). No full-audio download.
+// Click to play from that point (input-seek clip); horizontal zoom for precision on long files.
+function buildWaveform(preview) {
+  const scroller = el("div", { style: "overflow-x:auto; background:var(--panel-2); border:1px solid var(--line); border-radius:8px" });
+  const canvas = el("canvas", { height: 120, style: "display:block; height:120px; cursor:pointer" });
+  scroller.append(canvas);
+  const zoom = el("input", { type: "range", min: 1, max: 20, value: 1, step: 1, title: "horizontal zoom" });
+  const status = el("span", { className: "muted", textContent: "loading waveform…" });
+  let peaks = [], duration = preview.duration || 1, playhead = 0, raf = 0;
+
+  const draw = () => {
+    const base = Math.max(scroller.clientWidth || 600, 600);
+    const w = Math.floor(base * +zoom.value), h = canvas.height;
+    canvas.width = w; canvas.style.width = w + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#566";
+    const bw = w / (peaks.length || 1);
+    peaks.forEach((p, i) => {
+      const ph = Math.max(1, p * h * 0.9);
+      ctx.fillRect(i * bw, (h - ph) / 2, Math.max(1, bw - 0.5), ph);
+    });
+    ctx.fillStyle = "#5b9dff";
+    ctx.fillRect((playhead / duration) * w, 0, 2, h);
+  };
+
+  fetch(`/api/peaks/${preview.file_id}`)
+    .then((r) => r.json())
+    .then((d) => { peaks = d.peaks || []; duration = d.duration || duration; status.textContent = "click to play · zoom for precision"; draw(); })
+    .catch(() => { status.textContent = "waveform unavailable"; });
+
+  canvas.onclick = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const t0 = (e.clientX - rect.left) / canvas.width * duration;
+    playClip(preview.file_id, t0, 5);
+    playhead = t0; draw();
+    cancelAnimationFrame(raf);
+    const tick = () => {
+      if (previewAudio && !previewAudio.paused) {
+        playhead = t0 + previewAudio.currentTime; draw();
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+  };
+  zoom.oninput = draw;
+
+  return el("div", {},
+    el("div", { className: "row", style: "margin:10px 0 6px" },
+      el("span", { className: "muted", textContent: "Waveform" }), status,
+      el("div", { className: "spacer" }),
+      el("span", { className: "muted", textContent: "zoom" }), zoom),
+    scroller);
 }
 
 function buildPreviewBar(preview) {
@@ -207,6 +271,7 @@ function buildExportPanel(merged) {
   const cpl = el("input", { type: "number", value: 42 });
   const maxLines = el("input", { type: "number", value: 2 });
   const minDur = el("input", { type: "number", value: 1, step: 0.5 });
+  const pad = el("input", { type: "number", value: 0, step: 0.1, min: 0, title: "extend each segment start/end by N seconds (video-edit breathing room)" });
   const showSpk = el("input", { type: "checkbox", checked: true });
 
   // Subtitle limits only apply to SRT; toggling off disables (and ignores) the limit fields.
@@ -220,6 +285,7 @@ function buildExportPanel(merged) {
       apply_limits: applyLimits.checked,
       chars_per_line: +cpl.value, max_lines: +maxLines.value,
       min_duration: +minDur.value, show_speakers: showSpk.checked,
+      pad_seconds: +pad.value,
     };
     await downloadExport(merged, format.value, filename.value || "transcript", options);
   };
@@ -229,6 +295,7 @@ function buildExportPanel(merged) {
     field("Format", format), field("Filename", filename),
     el("label", { className: "opt" }, applyLimits, "Subtitle limits"),
     field("Chars/line", cpl), field("Max lines", maxLines), field("Min dur (s)", minDur),
+    field("Pad (s)", pad),
     el("label", { className: "opt" }, showSpk, "Show speakers"),
     el("div", { className: "spacer" }), btn);
 }
@@ -400,6 +467,7 @@ function setProgress(frac, msg) {
 // =======================================================================================
 // Edit Transcript tab
 // =======================================================================================
+let editMerged = null, editPreview = null;
 (function initEditTab() {
   const dz = $("#dropzone-edit"), input = $("#file-input-edit");
   dz.onclick = () => input.click();
@@ -408,7 +476,20 @@ function setProgress(frac, msg) {
   dz.ondragleave = () => dz.classList.remove("over");
   dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove("over"); e.dataTransfer.files[0] && readJsonFile(e.dataTransfer.files[0]); };
   $("#json-load").onclick = () => loadEdit($("#json-in").value);
+  $("#edit-attach").onclick = attachEditAudio;
 })();
+
+async function attachEditAudio() {
+  if (!editMerged) return;
+  const res = await fetch("/api/browse", { method: "POST" });
+  if (!res.ok) return;
+  const items = await res.json();
+  if (!items.length) return;
+  const it = items[0];
+  editPreview = { file_id: it.file_id, duration: it.source.duration };
+  $("#edit-attach-name").textContent = it.source.filename;
+  renderEditor($("#editor-edit"), editMerged, editPreview);
+}
 
 function readJsonFile(file) {
   const r = new FileReader();
@@ -425,8 +506,10 @@ function loadEdit(text) {
   merged.version = merged.version || "1.0";
   merged.sources = merged.sources || [];
   merged.segments.forEach((s) => { s.words = s.words || []; s.flags = s.flags || []; });
+  editMerged = merged; editPreview = null;
+  $("#edit-attach-name").textContent = "attach the source file to scrub the waveform & ▶ lines";
   $("#edit-panel").style.display = "";
-  renderEditor($("#editor-edit"), merged, null);  // loaded JSON has no source file to preview
+  renderEditor($("#editor-edit"), merged, null);  // no source yet — Attach audio to enable preview
 }
 
 // =======================================================================================

@@ -6,8 +6,11 @@ modules and the job registry held on app.state.
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -18,8 +21,8 @@ from pydantic import BaseModel
 
 from ..batch import ProjectInput, run_batch
 from ..diarize import detect_speech, transcribe_regions
-from ..export import ExportOptions, to_csv, to_json, to_srt, to_txt
-from ..extract import concat_wavs, extract_clip, extract_sample, extract_track
+from ..export import ExportOptions, pad_segments, to_csv, to_json, to_srt, to_txt
+from ..extract import compute_peaks, concat_wavs, extract_clip, extract_sample, extract_track
 from ..merge import BackchannelRender, MergeOptions
 from ..models import InputSource, MergedOutput, Track
 from ..pipeline import PreparedSource, run_merge_pipeline
@@ -27,6 +30,19 @@ from ..probe import probe
 from ..transcribe import transcribe_track
 
 router = APIRouter()
+
+
+# --- server lifecycle ------------------------------------------------------------------
+
+@router.post("/shutdown")
+def shutdown() -> dict:
+    """Stop the local server from the web UI / Shutdown.bat. Hard exit on a background thread
+    after the response flushes — safe here because temp working files are wiped on next startup."""
+    def _die() -> None:
+        time.sleep(0.3)
+        os._exit(0)
+    threading.Thread(target=_die, daemon=True).start()
+    return {"stopping": True}
 
 
 # --- request/response schemas ----------------------------------------------------------
@@ -83,6 +99,7 @@ class ExportOptionsIn(BaseModel):
     max_lines: int = 2
     min_duration: float = 1.0
     show_speakers: bool = True
+    pad_seconds: float = 0.0
 
     def to_options(self) -> ExportOptions:
         return ExportOptions(**self.model_dump())
@@ -266,6 +283,27 @@ def clip(request: Request, file_id: str, start: float = 0.0, dur: float = 5.0) -
     return FileResponse(dest, media_type="audio/wav")
 
 
+@router.get("/peaks/{file_id}")
+def peaks(request: Request, file_id: str, buckets: int = 2000) -> dict:
+    """Downsampled waveform peaks for the editor (downmix of all streams, matching /clip).
+    Browser draws these instead of downloading audio — scales to huge files. Cached per file."""
+    entry = request.app.state.uploads.get(file_id)
+    if entry is None:
+        raise HTTPException(404, f"unknown file_id {file_id}")
+    cached = entry.get("peaks")
+    if cached and cached["buckets"] == buckets:
+        return {"duration": entry["source"].duration, "peaks": cached["peaks"]}
+    out_dir = request.app.state.upload_dir / "peaks"
+    out_dir.mkdir(exist_ok=True)
+    dest = out_dir / f"{file_id}.wav"
+    if not dest.exists():
+        extract_clip(entry["path"], dest, 0.0, entry["source"].duration,
+                     len(entry["source"].tracks))
+    vals = compute_peaks(dest, buckets)
+    entry["peaks"] = {"buckets": buckets, "peaks": vals}
+    return {"duration": entry["source"].duration, "peaks": vals}
+
+
 # --- v2 single-track diarization (PRD §11.4) -------------------------------------------
 
 def _track_wav(app_state, file_id: str, track_index: int) -> Path:
@@ -421,6 +459,7 @@ def _render(merged: MergedOutput, fmt: str, opts: ExportOptions) -> tuple[Respon
     if fmt not in _FORMATS:
         raise HTTPException(400, f"unsupported format {fmt}")
     fn, media_type, ext = _FORMATS[fmt]
+    merged = pad_segments(merged, opts.pad_seconds)  # all formats carry padded timecodes
     body = fn(merged, opts) if fmt in ("srt", "txt") else fn(merged)
     return Response(content=body, media_type=media_type), ext
 

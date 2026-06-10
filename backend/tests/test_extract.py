@@ -44,6 +44,20 @@ def test_concat_wavs(tmp_path):
     assert (tmp_path / "c.wav").exists()
 
 
+def test_compute_peaks_shape_and_range(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    from app.extract import compute_peaks
+    # 4s ramp 0->1 in amplitude so peaks should rise monotonically across buckets
+    t = np.linspace(0, 1, 16000 * 4, dtype="float32")
+    sf.write(str(tmp_path / "r.wav"), t * np.sin(2 * np.pi * 200 * t), 16000, subtype="PCM_16")
+    peaks = compute_peaks(tmp_path / "r.wav", buckets=100)
+    assert len(peaks) == 100
+    assert all(0.0 <= p <= 1.0 for p in peaks)
+    assert max(peaks) == 1.0                 # normalized to peak
+    assert peaks[-1] > peaks[0]              # ramp -> louder at the end
+
+
 def test_extracted_audio_context_cleans_up(two_stream_file):
     with extracted_audio(two_stream_file, [0, 1]) as paths:
         assert len(paths) == 2

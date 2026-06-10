@@ -1,7 +1,7 @@
 # WhisperMerger — Build Status
 
-Snapshot of what's built vs. outstanding, mapped against `whispermerger-prd.md` (FR-* IDs)
-and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-09.
+Snapshot of what's built vs. outstanding, mapped against `whispermerger-prd.md` (FR-\* IDs)
+and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-10.
 
 ## Summary
 
@@ -9,7 +9,7 @@ Both v1 (multi-track stems + batch studio) and v2 (single-track manual diarizati
 **built and running** on native Windows + RTX 3080 Ti (the build plan's env was validated;
 WSL2 not needed). Full pipeline works end-to-end: pick files → transcribe on GPU (WhisperX
 large-v3 + wav2vec2) → merge with conflict flags → edit → export. **Validated on a real 56 GB /
-1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **67 GPU-independent
+1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **70 GPU-independent
 tests pass**; the GPU path passes the §11.3 smoke gate. Remaining work is optional polish (some
 `FR-UI-*` toggles) and foreign-format import.
 
@@ -22,8 +22,8 @@ cache, WhisperX wrapper, FastAPI, export, fresh frontend, polish).
 streams+duration · FR-IN-5 ffmpeg mono/16k/pcm_s16le extraction · FR-IN-6 temp deleted after use.
 
 **Track ID (§8.2):** FR-TK-1 single InputSource model · FR-TK-3 per-track audition · FR-TK-4
-selector only when >1 stream. *(FR-TK-2: track labels default to **Speaker 1/2/…** (1-based),
-editable — changed from the originally-specced OBS convention.)*
+selector only when >1 stream. _(FR-TK-2: track labels default to **Speaker 1/2/…** (1-based),
+editable — changed from the originally-specced OBS convention.)_
 
 **Transcription (§8.3):** FR-TR-1 large-v3 + wav2vec2 align · FR-TR-2 float16 · FR-TR-3 VAD ·
 FR-TR-4 progress · FR-TR-5 auto-merge on completion.
@@ -58,7 +58,7 @@ all their lines** (new request).
 - **Per-line audio preview** — ▶ a line or drag a jump bar; instant input-seek clips, works on
   100+ GB files (`/api/clip`).
 - **Stage-aware progress + total time** — jobs/batches report the current stage (Extracting ·
-  Transcribing · Merging, per track) and elapsed wall time across *all* stages, not just
+  Transcribing · Merging, per track) and elapsed wall time across _all_ stages, not just
   transcription, so the UI never looks stalled.
 - **Storage hygiene** — each extracted track wav is deleted immediately after use; the working
   dir (extracted tracks, combined wavs, preview clips, audition samples) is wiped on server
@@ -66,13 +66,34 @@ all their lines** (new request).
 - Documented torch-2.6/Windows dependency fixes (setuptools<81, transformers<5, weights_only,
   cuDNN 8 on PATH) — see `SETUP.md`.
 
+## Editing & workflow polish (2026-06-10)
+
+- **Waveform + scrubbing in every editor** — new `/api/peaks/{file_id}` serves downsampled
+  max-abs peaks (`extract.compute_peaks`, downmix of all streams, cached); the editor draws a
+  lightweight `<canvas>` waveform (`buildWaveform` in `app.js`) with click-to-play (input-seek
+  clip), an animated playhead, and **horizontal zoom**. No full-audio download — scales to 100+ GB.
+- **Export padding** — `ExportOptions.pad_seconds` + `export.pad_segments`; `_render` pads once so
+  all four formats carry the padded timecodes. One `Pad (s)` field in the export panel. Render-time
+  only (source transcript untouched; words/SRT word-splitting unaffected). Covers FR-style
+  "breathing room for video editing".
+- **Label Track: zoom + region pad** — WaveSurfer `zoom()` slider (selection precision) and a
+  `Region pad (s)` input that widens VAD-seeded regions (clamped to `[0, duration]`) so words at
+  region edges aren't clipped before per-speaker transcription.
+- **Edit tab: attach audio** — a loaded-from-JSON transcript can now bind a source file
+  (`/api/browse`) to enable the waveform + per-line ▶ for verification (previously preview-less).
+- **One-click start/stop** — `Startup.bat` / `Shutdown.bat` at the repo root, plus a `⏻ Shutdown`
+  header button → `POST /api/shutdown` (hard `os._exit` on a background thread after the response
+  flushes; safe since temp is wiped on next startup).
+- Tests: `test_export.py` (padding shift/clamp + padded export timecodes) and `test_extract.py`
+  (`compute_peaks` shape/range). **70 GPU-independent tests pass.**
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected` and an `rms_fn` hook exists, but
   real RMS-from-source-audio is not yet wired in, and the threshold is untuned (OQ-3). Needs
   real recordings to calibrate.
-- **FR-UI-5 output toggles:** only *Show Speakers* is implemented. *Show Transcription*, *Show
-  CC*, *Strip Silence* are not (Strip Silence is a no-op on the audio path per the PRD anyway).
+- **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
+  CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line
   starts at the previous line's end), not the full CC-placement logic.
 - **FR-UI-7 keyboard:** Enter (next), Escape (revert), Ctrl+↑/↓ (move) done; Ctrl+Enter and bare
@@ -100,25 +121,25 @@ all their lines** (new request).
 
 For recordings with no stems (one mixed track, multiple speakers). All phases done:
 
-  - **Phase A (engine) — DONE.** `diarize.py`: silero-VAD speech detection + per-speaker region
-    transcription with timeline remapping → merge (`/api/vad`, `/api/diarize`). Validated on real
-    footage (22 speech regions found in a 60s vlog slice; remapping unit-tested).
-  - **Phase B (labeling UI) — DONE.** "Label Track" tab: WaveSurfer.js waveform (vendored,
-    offline), `/api/track-audio` feed, VAD-seeded regions, speaker buttons + colors, click/
-    number-key assignment, drag-to-create + drag-to-resize regions (free via WaveSurfer),
-    per-region playback → `/api/diarize` → result in the editor.
-  - **Multi-file sequencing — DONE.** Add several single-track files in the Label tab → they
-    concatenate into one combined waveform (`/api/combine`, cached) whose timeline is the
-    sequenced one, with file-join markers; reorder/track-change auto-rebuilds. Reuses the whole
-    single-file flow (VAD/label/diarize/preview) unchanged.
-  - **Phase C (refinement) — DONE.** Boundary drag + free-span (WaveSurfer), **bulk-assign**
-    (shift-click a run / ctrl-click multi-pick → one speaker), and the **single-track ↔
-    split-lane view toggle** (one row per speaker + an unassigned row, blocks on a shared
-    timescale, click to select).
-  - **Overlapping speech — supported.** Two overlapping regions assigned to different speakers
-    represent talk-over ("Duplicate region" copies a span onto another speaker); each is
-    transcribed and the merge flags `overlap`, and split-lane shows it cleanly. Per PRD §11.4,
-    truly simultaneous speech still yields one (garbled) line per speaker — a known limit.
+- **Phase A (engine) — DONE.** `diarize.py`: silero-VAD speech detection + per-speaker region
+  transcription with timeline remapping → merge (`/api/vad`, `/api/diarize`). Validated on real
+  footage (22 speech regions found in a 60s vlog slice; remapping unit-tested).
+- **Phase B (labeling UI) — DONE.** "Label Track" tab: WaveSurfer.js waveform (vendored,
+  offline), `/api/track-audio` feed, VAD-seeded regions, speaker buttons + colors, click/
+  number-key assignment, drag-to-create + drag-to-resize regions (free via WaveSurfer),
+  per-region playback → `/api/diarize` → result in the editor.
+- **Multi-file sequencing — DONE.** Add several single-track files in the Label tab → they
+  concatenate into one combined waveform (`/api/combine`, cached) whose timeline is the
+  sequenced one, with file-join markers; reorder/track-change auto-rebuilds. Reuses the whole
+  single-file flow (VAD/label/diarize/preview) unchanged.
+- **Phase C (refinement) — DONE.** Boundary drag + free-span (WaveSurfer), **bulk-assign**
+  (shift-click a run / ctrl-click multi-pick → one speaker), and the **single-track ↔
+  split-lane view toggle** (one row per speaker + an unassigned row, blocks on a shared
+  timescale, click to select).
+- **Overlapping speech — supported.** Two overlapping regions assigned to different speakers
+  represent talk-over ("Duplicate region" copies a span onto another speaker); each is
+  transcribed and the merge flags `overlap`, and split-lane shows it cleanly. Per PRD §11.4,
+  truly simultaneous speech still yields one (garbled) line per speaker — a known limit.
 
 ## Not started / deferred
 

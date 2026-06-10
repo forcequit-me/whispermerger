@@ -2,7 +2,7 @@
 
 import json
 
-from app.export import ExportOptions, export_all, to_csv, to_json, to_srt, to_txt, _timecode
+from app.export import ExportOptions, export_all, pad_segments, to_csv, to_json, to_srt, to_txt, _timecode
 from app.models import MergedOutput, Segment, Word
 
 
@@ -85,6 +85,28 @@ def test_srt_min_duration_enforced():
                   words=[Word(word="hi", start=0.0, end=0.3)])
     srt = to_srt(_merged(seg), ExportOptions(min_duration=1.0))
     assert "00:00:00,000 --> 00:00:01,000" in srt
+
+
+def test_pad_segments_shifts_and_clamps():
+    m = _merged(Segment(speaker="Max", start=0.2, end=1.0, text="hi"),
+                Segment(speaker="Sam", start=3.0, end=4.0, text="yo"))
+    padded = pad_segments(m, 0.5)
+    assert padded.segments[0].start == 0.0          # clamped at zero (0.2 - 0.5)
+    assert padded.segments[0].end == 1.5
+    assert padded.segments[1].start == 2.5 and padded.segments[1].end == 4.5
+    # source untouched + zero pad is a no-op
+    assert m.segments[0].start == 0.2
+    assert pad_segments(m, 0.0) is m
+
+
+def test_pad_seconds_in_export_timecodes():
+    seg = Segment(speaker="Max", start=1.0, end=2.0, text="hello",
+                  words=_words("hello", 1.0))
+    m = _merged(seg)
+    txt = to_txt(pad_segments(m, 0.5))
+    assert "[00:00:00,500 --> 00:00:02,500]" in txt
+    csv = to_csv(pad_segments(m, 0.5))
+    assert ",0.5,2.5," in csv.replace(" ", "") or "0.5,2.5" in csv
 
 
 def test_srt_speaker_prefix_first_line_only():

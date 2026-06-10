@@ -22,6 +22,18 @@ class ExportOptions:
     max_lines: int = 2            # FR-UI-4 max lines per subtitle
     min_duration: float = 1.0     # FR-UI-4 minimum cue duration (s)
     show_speakers: bool = True    # FR-UI-5 Show Speakers
+    pad_seconds: float = 0.0      # breathing room: extend each segment start/end (video editing)
+
+
+def pad_segments(merged: MergedOutput, pad: float) -> MergedOutput:
+    """Return a copy of `merged` with every segment start pulled `pad`s earlier and end pushed
+    `pad`s later (start clamped >= 0). Render-time only — words are left untouched, so the
+    source transcript stays clean and SRT word-splitting still uses real word timings."""
+    if not pad:
+        return merged
+    segs = [seg.model_copy(update={"start": max(0.0, seg.start - pad), "end": seg.end + pad})
+            for seg in merged.segments]
+    return merged.model_copy(update={"segments": segs})
 
 
 # --- JSON / TXT / CSV ------------------------------------------------------------------
