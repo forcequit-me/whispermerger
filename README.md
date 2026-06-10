@@ -26,15 +26,17 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   to speakers (click / shift-click a run / ctrl-click; number keys; bulk-assign; duplicate a
   region onto another speaker for talk-over), then transcribe per speaker. Add several files to
   sequence them into one combined waveform. Single-track and split-lane (one row per speaker)
-  views. **Horizontal zoom** + optional **region padding** (widen detected speech a touch so
-  words aren't clipped). Overlapping speech is supported and flagged.
+  views. **Horizontal zoom** (out = whole track in view) + **vertical/amplitude zoom** (for quiet
+  audio) + optional **region padding** (widen detected speech a touch so words aren't clipped).
+  Overlapping speech is supported and flagged.
 - **Editor** — inline edit speaker/text/timing, global speaker rename, remove a speaker and
   all their lines, add/remove lines, keyboard shortcuts, conflict highlighting, per-line audio
   preview (▶ a line or drag a jump bar — instant input-seek clips, works on huge files).
 - **Waveform + scrubbing in every editor** — drawn from server-computed downsampled peaks
   (`/api/peaks`), so the browser never downloads full audio (scales to 100+ GB files). Click to
-  play from any point; **horizontal zoom** for precision. In *Edit Transcript*, *Attach audio* to
-  a loaded JSON to enable the waveform + ▶ for verification.
+  play from any point; **horizontal zoom** for precision (zoomed all the way out shows the whole
+  file) and **vertical/amplitude zoom** to read quiet audio. In *Edit Transcript*, *Attach audio*
+  to a loaded JSON to enable the waveform + ▶ for verification.
 - **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing; SRT splits lines on real
   word timestamps (toggleable subtitle limits). **Pad (s)** extends each segment's start/end by N
   seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.

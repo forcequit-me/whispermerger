@@ -22,6 +22,7 @@ const speakers = [];         // [{name, color}]
 const assign = new Map();    // region.id -> speaker name
 const boundaryIds = new Set();
 let ws = null, regions = null, anchorId = null, splitView = false;
+let decoded = null;          // { data: Float32Array, sr } — for drawing split-lane mini-waveforms
 const selection = new Set();   // region ids currently selected (bulk-assignable)
 let activeFileId = null, activeTrack = 0, activeDuration = 0, boundaries = [0];
 let buildToken = 0;
@@ -36,7 +37,21 @@ $("#label-view").onclick = () => {
   renderLanes();
 };
 $("#label-dup").onclick = duplicateSelection;
-$("#label-zoom").oninput = () => { if (ws) try { ws.zoom(+$("#label-zoom").value); } catch (_) {} };
+// zoom is relative to "fit the whole file in view": slider=1 → entire waveform visible
+// start-to-finish; higher → that many times zoomed in.
+function fitPxPerSec() {
+  const w = $("#waveform").clientWidth || 600;
+  return w / (activeDuration || 1);
+}
+function applyZoom() {
+  if (ws) try { ws.zoom(fitPxPerSec() * (+$("#label-zoom").value || 1)); } catch (_) {}
+  renderLanes();   // lanes scale with the same zoom factor
+}
+$("#label-zoom").oninput = applyZoom;
+$("#label-vzoom").oninput = () => {
+  if (ws) try { ws.setOptions({ barHeight: +$("#label-vzoom").value }); } catch (_) {}
+  renderLanes();   // mini-waveforms use the same amplitude gain
+};
 
 // Duplicate the selected region(s) as new unassigned regions on the same span — for talk-over,
 // assign the copy to the other speaker so two speakers overlap on that range (PRD §11.4 / OQ-7).
@@ -139,14 +154,16 @@ function initWave(fid, track) {
   boundaryIds.clear();
   selection.clear();
   anchorId = null;
+  decoded = null;
   ws = WaveSurfer.create({
     container: "#waveform", height: 140,
     waveColor: "#566", progressColor: "#5b9dff", cursorColor: "#e6e9ef",
+    barHeight: +$("#label-vzoom").value || 1,
     url: `/api/track-audio/${fid}/${track}`,
   });
   regions = ws.registerPlugin(RegionsPlugin.create());
-  ws.on("decode", () => regions.enableDragSelection({ color: UNASSIGNED }));
-  ws.on("ready", () => runVad());   // auto-detect speech on load
+  ws.on("decode", () => { regions.enableDragSelection({ color: UNASSIGNED }); captureDecoded(); });
+  ws.on("ready", () => { captureDecoded(); applyZoom(); runVad(); });   // fit whole file, then auto-detect speech
   regions.on("region-created", (r) => { if (!assign.has(r.id) && !boundaryIds.has(r.id)) { r.setOptions({ color: UNASSIGNED }); renderLanes(); } });
   regions.on("region-updated", () => renderLanes());
   regions.on("region-clicked", (r, e) => {
@@ -191,14 +208,51 @@ function highlight() {
   renderLanes();
 }
 
-// Split-lane view: one row per speaker (+ unassigned), regions as blocks on a shared timescale.
+function captureDecoded() {
+  try {
+    const b = ws && ws.getDecodedData();
+    if (b) { decoded = { data: b.getChannelData(0), sr: b.sampleRate }; renderLanes(); }
+  } catch (_) { /* not decoded yet */ }
+}
+
+// Draw one region's slice of the decoded audio into its lane canvas (max-abs envelope, same
+// amplitude gain as the vertical-zoom slider). Falls back to a flat tint until audio is decoded.
+function drawRegionWave({ canvas, start, end, un, color }) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  canvas.width = w; canvas.height = h;
+  if (!decoded) return;
+  const ctx = canvas.getContext("2d");
+  const { data, sr } = decoded;
+  const i0 = Math.max(0, Math.floor(start * sr)), i1 = Math.min(data.length, Math.ceil(end * sr));
+  if (i1 <= i0) return;
+  const gain = +($("#label-vzoom").value) || 1;
+  ctx.fillStyle = un ? "rgba(230,233,239,0.6)" : color;
+  const per = (i1 - i0) / w;
+  for (let x = 0; x < w; x++) {
+    let mx = 0;
+    const s = i0 + Math.floor(x * per), e = Math.max(s + 1, i0 + Math.floor((x + 1) * per));
+    for (let j = s; j < e; j++) { const a = Math.abs(data[j]); if (a > mx) mx = a; }
+    const ph = Math.min(h, Math.max(1, mx * h * gain));
+    ctx.fillRect(x, (h - ph) / 2, 1, ph);
+  }
+}
+
+// Split-lane view: one row per speaker (+ unassigned), regions as mini-waveforms on a shared timescale.
 function renderLanes() {
   const root = $("#label-lanes");
   if (!root) return;
   if (!splitView || !regions) { root.style.display = "none"; return; }
   root.style.display = "";
+  root.style.overflowX = "auto";
   root.innerHTML = "";
   const dur = activeDuration || 1;
+  // Horizontal zoom: lane strip width = (fit width) * zoom factor; factor 1 fits the whole file,
+  // higher scrolls — kept proportional to the main waveform zoom (shared #label-zoom slider).
+  const factor = +($("#label-zoom").value) || 1;
+  const labelW = 110, gap = 8;
+  const trackW = Math.max(50, root.clientWidth - labelW - gap - 4) * factor;
+  const inner = el("div", { style: `width:${labelW + gap + trackW}px` });
   const byName = new Map();
   const unassigned = [];
   for (const r of regions.getRegions()) {
@@ -209,20 +263,25 @@ function renderLanes() {
   }
   const rows = speakers.map((s) => ({ name: s.name, color: s.color, regs: byName.get(s.name) || [] }));
   rows.push({ name: "(unassigned)", color: "#8a93a3", regs: unassigned, un: true });
+  const pending = [];
   for (const row of rows) {
-    const track = el("div", { className: "lane-track" });
+    const track = el("div", { className: "lane-track", style: `flex:none; width:${trackW}px` });
     for (const r of row.regs) {
-      const blk = el("div", { className: "lane-block", title: `${r.start.toFixed(2)}–${r.end.toFixed(2)}s` });
+      const blk = el("canvas", { className: "lane-block", title: `${r.start.toFixed(2)}–${r.end.toFixed(2)}s` });
       blk.style.left = (r.start / dur * 100) + "%";
       blk.style.width = Math.max(0.3, (r.end - r.start) / dur * 100) + "%";
       blk.style.background = row.un ? UNASSIGNED : alpha(row.color);
       blk.style.outline = selection.has(r.id) ? "2px solid #e6e9ef" : "none";
       blk.onclick = () => { selection.clear(); selection.add(r.id); anchorId = r.id; highlight(); r.play(); };
       track.append(blk);
+      pending.push({ canvas: blk, start: r.start, end: r.end, un: row.un, color: row.un ? "#aab" : row.color });
     }
-    root.append(el("div", { className: "lane-row" },
-      el("div", { className: "lane-label", textContent: row.name, style: `color:${row.color}` }), track));
+    inner.append(el("div", { className: "lane-row" },
+      el("div", { className: "lane-label", textContent: row.name,
+        style: `color:${row.color}; position:sticky; left:0; z-index:1; background:var(--panel)` }), track));
   }
+  root.append(inner);
+  requestAnimationFrame(() => pending.forEach(drawRegionWave));   // size+draw after layout
 }
 
 // --- speakers + assignment -------------------------------------------------------------

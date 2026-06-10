@@ -71,14 +71,19 @@ all their lines** (new request).
 - **Waveform + scrubbing in every editor** — new `/api/peaks/{file_id}` serves downsampled
   max-abs peaks (`extract.compute_peaks`, downmix of all streams, cached); the editor draws a
   lightweight `<canvas>` waveform (`buildWaveform` in `app.js`) with click-to-play (input-seek
-  clip), an animated playhead, and **horizontal zoom**. No full-audio download — scales to 100+ GB.
+  clip), an animated playhead, **horizontal zoom** (min = whole file in view), and **vertical /
+  amplitude zoom** (gain for quiet audio). No full-audio download — scales to 100+ GB.
 - **Export padding** — `ExportOptions.pad_seconds` + `export.pad_segments`; `_render` pads once so
   all four formats carry the padded timecodes. One `Pad (s)` field in the export panel. Render-time
   only (source transcript untouched; words/SRT word-splitting unaffected). Covers FR-style
   "breathing room for video editing".
-- **Label Track: zoom + region pad** — WaveSurfer `zoom()` slider (selection precision) and a
-  `Region pad (s)` input that widens VAD-seeded regions (clamped to `[0, duration]`) so words at
-  region edges aren't clipped before per-speaker transcription.
+- **Label Track: zoom + region pad** — WaveSurfer horizontal zoom (relative to a fit-whole-file
+  baseline, so slider min shows the entire track start-to-finish) + vertical/amplitude zoom
+  (`barHeight`), and a `Region pad (s)` input that widens VAD-seeded regions (clamped to
+  `[0, duration]`) so words at region edges aren't clipped before per-speaker transcription.
+  Split-lane blocks now render the **actual region waveform** (drawn from WaveSurfer's decoded
+  audio via `getDecodedData`), not flat boxes, and the lane strip honors the same horizontal +
+  amplitude zoom (scrolls horizontally when zoomed, with pinned speaker labels).
 - **Edit tab: attach audio** — a loaded-from-JSON transcript can now bind a source file
   (`/api/browse`) to enable the waveform + per-line ▶ for verification (previously preview-less).
 - **One-click start/stop** — `Startup.bat` / `Shutdown.bat` at the repo root, plus a `⏻ Shutdown`

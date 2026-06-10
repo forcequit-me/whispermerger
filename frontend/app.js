@@ -70,19 +70,20 @@ function buildWaveform(preview) {
   const canvas = el("canvas", { height: 120, style: "display:block; height:120px; cursor:pointer" });
   scroller.append(canvas);
   const zoom = el("input", { type: "range", min: 1, max: 20, value: 1, step: 1, title: "horizontal zoom" });
+  const vzoom = el("input", { type: "range", min: 1, max: 20, value: 1, step: 0.5, title: "vertical (amplitude) zoom — for quiet audio" });
   const status = el("span", { className: "muted", textContent: "loading waveform…" });
   let peaks = [], duration = preview.duration || 1, playhead = 0, raf = 0;
 
   const draw = () => {
     const base = Math.max(scroller.clientWidth || 600, 600);
-    const w = Math.floor(base * +zoom.value), h = canvas.height;
+    const w = Math.floor(base * +zoom.value), h = canvas.height, gain = +vzoom.value;
     canvas.width = w; canvas.style.width = w + "px";
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#566";
     const bw = w / (peaks.length || 1);
     peaks.forEach((p, i) => {
-      const ph = Math.max(1, p * h * 0.9);
+      const ph = Math.min(h, Math.max(1, p * h * 0.9 * gain));
       ctx.fillRect(i * bw, (h - ph) / 2, Math.max(1, bw - 0.5), ph);
     });
     ctx.fillStyle = "#5b9dff";
@@ -109,12 +110,14 @@ function buildWaveform(preview) {
     raf = requestAnimationFrame(tick);
   };
   zoom.oninput = draw;
+  vzoom.oninput = draw;
 
   return el("div", {},
     el("div", { className: "row", style: "margin:10px 0 6px" },
       el("span", { className: "muted", textContent: "Waveform" }), status,
       el("div", { className: "spacer" }),
-      el("span", { className: "muted", textContent: "zoom" }), zoom),
+      el("span", { className: "muted", textContent: "zoom" }), zoom,
+      el("span", { className: "muted", textContent: "amp" }), vzoom),
     scroller);
 }
 
