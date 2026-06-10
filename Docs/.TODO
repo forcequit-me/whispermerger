@@ -1,12 +1,10 @@
+Need setting for start and end time padding offset in seconds as sometimes the timestamps are a bit abrupt which isnt ideal for video editing, optional feature, input for start and end padding or just one input for both. wave form selection (detection) might need slight padding on start and end for selected speach segments as well.
+
 Wave forms and scrubbing etc across all tabs. Also ensure we can listen to transcript segments? good for verification and editing.
 
 Ability to horizontally zoom wave forms for speaker selection precision
 
 easy startup and shutdown of server? Batch Files(Startup.bat shutdown.bat) maybe even button in web ui to shutdown?
-
-Since the model is only 3gb could we theoretically run multiple instances to speed up processing? (user customizable or based on available VRAM?)
-
-wave form selection might need slight padding on start and end for selected speach segments
 
 Improve UI
 
