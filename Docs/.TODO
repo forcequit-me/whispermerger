@@ -1,11 +1,3 @@
-Improve split lane UI
-
-Improve Progress bar I want to more clearly see what % is processed and in what stage
-
-Need shutdown Icon and favicon
-
-Improve UI - UI should use width better since we are working with audio waveforms, more DAW like in design. Borrow more UI tidiness and good alignment etc from transcript merger. Also use height better.
-
 Anything to include from Transcript Merger (UI theme or methodology for handling overlaps [who stopped talking last?])
 
 Test Features

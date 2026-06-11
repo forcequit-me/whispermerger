@@ -33,6 +33,7 @@ let activeFileId = null, activeTrack = 0, activeDuration = 0, boundaries = [0];
 let buildToken = 0;
 
 $("#label-choose").onclick = addFiles;
+$("#label-choose-more").onclick = addFiles;
 $("#label-vad").onclick = runVad;
 $("#label-play").onclick = () => ws && ws.playPause();
 $("#label-run").onclick = runTranscribe;
@@ -98,6 +99,9 @@ async function addFiles() {
 }
 
 function renderFiles() {
+  const has = files.length > 0;                      // empty → entry hero; loaded → files panel + waveform
+  $("#label-entry").style.display = has ? "none" : "";
+  $("#label-input-panel").style.display = has ? "" : "none";
   const root = $("#label-files");
   root.innerHTML = "";
   files.forEach((f, i) => {

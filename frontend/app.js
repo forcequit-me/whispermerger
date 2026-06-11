@@ -368,7 +368,8 @@ async function downloadExport(merged, format, filename, options) {
 const uploaded = [];  // [{file_id, source}]
 
 (function initTranscribeTab() {
-  $("#choose-btn").onclick = browseFiles;
+  $("#choose-btn").onclick = () => browseFiles($("#choose-btn"));
+  $("#choose-more").onclick = () => browseFiles($("#choose-more"));
   $("#run-btn").onclick = runPipeline;
   const detect = $("#opt-detect");
   const syncDetect = () => MERGE_THRESHOLD_IDS.forEach((id) => { $(`#${id}`).disabled = !detect.checked; });
@@ -379,11 +380,14 @@ const uploaded = [];  // [{file_id, source}]
 function registerItems(items) {
   items.forEach((it) => uploaded.push(it));
   renderSources();
+  $("#transcribe-entry").style.display = "none";
+  $("#input-panel").style.display = "";
   $("#options-panel").style.display = "";
 }
 
-async function browseFiles() {
-  const err = $("#path-err"), btn = $("#choose-btn");
+async function browseFiles(btn) {
+  btn = btn || $("#choose-btn");
+  const err = $("#path-err");
   err.textContent = "";
   btn.disabled = true;
   const label = btn.textContent;
@@ -552,7 +556,18 @@ let editMerged = null, editPreview = null;
   dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove("over"); e.dataTransfer.files[0] && readJsonFile(e.dataTransfer.files[0]); };
   $("#json-load").onclick = () => loadEdit($("#json-in").value);
   $("#edit-attach").onclick = attachEditAudio;
+  $("#edit-load-another").onclick = resetEdit;
 })();
+
+// Collapse the editor back to the loader so another transcript can be dropped in.
+function resetEdit() {
+  editMerged = null; editPreview = null;
+  $("#editor-edit").innerHTML = "";
+  $("#json-err").textContent = "";
+  $("#edit-panel").style.display = "none";
+  $("#dropzone-edit").style.display = "";
+  $("#paste-details").style.display = "";
+}
 
 async function attachEditAudio() {
   if (!editMerged) return;
@@ -582,7 +597,9 @@ function loadEdit(text) {
   merged.sources = merged.sources || [];
   merged.segments.forEach((s) => { s.words = s.words || []; s.flags = s.flags || []; });
   editMerged = merged; editPreview = null;
-  $("#edit-attach-name").textContent = "attach the source file to scrub the waveform & ▶ lines";
+  $("#edit-attach-name").textContent = "attach the source file to scrub the waveform & play lines";
+  $("#dropzone-edit").style.display = "none";
+  $("#paste-details").style.display = "none";
   $("#edit-panel").style.display = "";
   renderEditor($("#editor-edit"), merged, null);  // no source yet — Attach audio to enable preview
 }
@@ -594,17 +611,24 @@ const projects = [];           // [{ name, files: [{file_id, source}] }]
 let outputFolder = null;
 let projectCounter = 0;
 
+function addProject() {
+  projectCounter += 1;
+  projects.push({ name: `Project ${projectCounter}`, files: [] });
+  renderProjects();
+}
+
 (function initBatchTab() {
-  $("#add-project").onclick = () => {
-    projectCounter += 1;
-    projects.push({ name: `Project ${projectCounter}`, files: [] });
-    renderProjects();
-  };
+  $("#add-project").onclick = addProject;
+  $("#add-project-entry").onclick = addProject;
   $("#choose-folder").onclick = chooseFolder;
   $("#run-batch").onclick = runBatch;
 })();
 
 function renderProjects() {
+  const has = projects.length > 0;                       // empty → show the entry hero, hide work panels
+  $("#batch-entry").style.display = has ? "none" : "";
+  $("#batch-projects-panel").style.display = has ? "" : "none";
+  $("#batch-output-panel").style.display = has ? "" : "none";
   const root = $("#projects");
   root.innerHTML = "";
   projects.forEach((proj, pi) => root.append(buildProjectCard(proj, pi)));

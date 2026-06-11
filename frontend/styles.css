@@ -1,5 +1,5 @@
 :root {
-  --bg: #14161a;
+  --bg: #0e1014;
   --panel: #1c1f26;
   --panel-2: #232732;
   --line: #2e3340;
@@ -21,12 +21,18 @@ body {
   color: var(--text);
 }
 header {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 14px 22px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
+}
+/* thin signal-blue accent under the header chrome */
+header::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(91,157,255,.4), transparent);
 }
 header h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
 header .sub { color: var(--muted); font-size: 12px; }
@@ -38,6 +44,7 @@ header .sub { color: var(--muted); font-size: 12px; }
 .icon-btn svg { flex: none; }
 .icon-only { display: inline-flex; align-items: center; justify-content: center; padding: 6px; line-height: 0; }
 .icon-only svg { flex: none; }
+#shutdown-btn { color: var(--muted); background: transparent; border-color: transparent; margin-left: 8px; }
 #shutdown-btn:hover { border-color: var(--bleed); color: var(--bleed); }
 
 /* DAW cockpit detail: numeric/time fields ride a monospace stack so digits line up. */
@@ -70,6 +77,38 @@ main { padding: 22px; max-width: 1400px; margin: 0 auto; }
 }
 .dropzone.over,
 .dropzone:focus-visible { border-color: var(--accent); color: var(--text); background: var(--panel-2); }
+
+/* Full-bleed entry zone — the empty / pre-processing state of each tab (DAW loader feel). */
+.entry {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 16px;
+  min-height: min(64vh, 600px);
+  padding: 48px 24px;
+  border: 1.5px dashed var(--line); border-radius: 16px;
+  background: rgba(28, 31, 38, .5);             /* faint surface tint over the base */
+  transition: border-color .15s, background .15s;
+}
+.entry.dropzone { cursor: pointer; }
+.entry.dropzone:hover, .entry.dropzone.over, .entry.dropzone:focus-visible {
+  border-color: var(--accent); background: rgba(35, 39, 50, .55); color: var(--text);
+}
+.entry-mark { color: var(--accent); }
+.entry-mark .accent2 { fill: var(--ok); }
+.entry-title { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: .2px; color: var(--text); }
+.entry-btn { font-size: 15px; padding: 10px 20px; }
+.entry-steps {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 14px;
+  list-style: none; padding: 0; margin: 2px 0 0;
+}
+.entry-steps li { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+.entry-steps li b {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--panel-2); border: 1px solid var(--line);
+  color: var(--text); font-size: 11px; font-weight: 600;
+}
+.entry-note { font-size: 12px; margin: 0; max-width: 46ch; }
+.paste-details { max-width: 560px; }
 
 .source { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: var(--panel-2); }
 .source .name { font-weight: 600; margin-bottom: 8px; display: flex; gap: 10px; align-items: center; }

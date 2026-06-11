@@ -23,31 +23,49 @@
       <h1>WhisperMerger</h1>
     </span>
     <span class="sub">word-level transcripts, local GPU</span>
-    <button id="shutdown-btn" class="ghost icon-btn" title="Stop the local server" style="margin-left:auto">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>
-      </svg>
-      <span>Shutdown</span>
-    </button>
     <nav class="tabs">
       <button class="tab-btn active" data-tab="batch">Batch</button>
       <button class="tab-btn" data-tab="transcribe">Transcribe &amp; Merge</button>
       <button class="tab-btn" data-tab="label">Label Track</button>
       <button class="tab-btn" data-tab="edit">Edit Transcript</button>
     </nav>
+    <button id="shutdown-btn" class="ghost icon-btn" title="Stop the local server">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>
+      </svg>
+      <span>Shutdown</span>
+    </button>
   </header>
 
   <main>
     <!-- ============ Batch / Studio ============ -->
     <section id="tab-batch" class="tab active">
-      <div class="panel">
+      <div class="entry" id="batch-entry">
+        <svg class="entry-mark" width="60" height="38" viewBox="0 0 64 40" aria-hidden="true">
+          <g fill="currentColor">
+            <rect x="2" y="16" width="3" height="8" rx="1.5"/><rect x="8" y="10" width="3" height="20" rx="1.5"/>
+            <rect x="14" y="4" width="3" height="32" rx="1.5" class="accent2"/><rect x="20" y="13" width="3" height="14" rx="1.5"/>
+            <rect x="26" y="7" width="3" height="26" rx="1.5"/><rect x="32" y="2" width="3" height="36" rx="1.5" class="accent2"/>
+            <rect x="38" y="11" width="3" height="18" rx="1.5"/><rect x="44" y="6" width="3" height="28" rx="1.5"/>
+            <rect x="50" y="14" width="3" height="12" rx="1.5"/><rect x="56" y="9" width="3" height="22" rx="1.5" class="accent2"/>
+          </g>
+        </svg>
+        <h2 class="entry-title">Queue recordings for batch transcription</h2>
+        <button id="add-project-entry" class="primary entry-btn">+ New project</button>
+        <ol class="entry-steps">
+          <li><b>1</b> New project</li><li><b>2</b> Add files</li><li><b>3</b> Run batch</li>
+        </ol>
+        <p class="entry-note muted">each project merges its files and exports SRT / TXT / CSV / JSON to its own folder</p>
+      </div>
+
+      <div class="panel" id="batch-projects-panel" style="display:none">
         <h2>Projects</h2>
         <div id="projects"></div>
         <button id="add-project" class="ghost">+ New project</button>
       </div>
 
-      <div class="panel">
+      <div class="panel" id="batch-output-panel" style="display:none">
         <h2>Output</h2>
         <div class="row">
           <label class="opt"><input type="radio" name="outmode" value="folder" checked> Single folder</label>
@@ -76,11 +94,28 @@
 
     <!-- ============ Transcribe & Merge ============ -->
     <section id="tab-transcribe" class="tab">
-      <div class="panel">
-        <h2>Input</h2>
-        <button id="choose-btn" class="primary">Choose recordings…</button>
-        <span class="muted" style="margin-left:10px">opens a file picker — files are read in place, nothing is uploaded</span>
+      <div class="entry" id="transcribe-entry">
+        <svg class="entry-mark" width="60" height="38" viewBox="0 0 64 40" aria-hidden="true">
+          <g fill="currentColor">
+            <rect x="2" y="16" width="3" height="8" rx="1.5"/><rect x="8" y="10" width="3" height="20" rx="1.5"/>
+            <rect x="14" y="4" width="3" height="32" rx="1.5" class="accent2"/><rect x="20" y="13" width="3" height="14" rx="1.5"/>
+            <rect x="26" y="7" width="3" height="26" rx="1.5"/><rect x="32" y="2" width="3" height="36" rx="1.5" class="accent2"/>
+            <rect x="38" y="11" width="3" height="18" rx="1.5"/><rect x="44" y="6" width="3" height="28" rx="1.5"/>
+            <rect x="50" y="14" width="3" height="12" rx="1.5"/><rect x="56" y="9" width="3" height="22" rx="1.5" class="accent2"/>
+          </g>
+        </svg>
+        <h2 class="entry-title">Choose recordings to transcribe &amp; merge</h2>
+        <button id="choose-btn" class="primary entry-btn">Choose recordings…</button>
+        <ol class="entry-steps">
+          <li><b>1</b> Choose</li><li><b>2</b> Label tracks</li><li><b>3</b> Run</li>
+        </ol>
+        <p class="entry-note muted">files are read in place — nothing is uploaded</p>
         <div id="path-err" class="err"></div>
+      </div>
+
+      <div class="panel" id="input-panel" style="display:none">
+        <h2>Input</h2>
+        <button id="choose-more" class="ghost">+ Add recordings…</button>
         <div id="sources"></div>
       </div>
 
@@ -133,13 +168,29 @@
 
     <!-- ============ Label Track (v2 single-track diarization) ============ -->
     <section id="tab-label" class="tab">
-      <div class="panel">
-        <h2>Single-track labeling</h2>
-        <div class="muted" style="margin-bottom:10px">For one mixed track with multiple speakers (interview, podcast, collab). Label who speaks where, then transcribe per speaker.</div>
-        <button id="label-choose" class="primary">Add files</button>
-        <span class="muted" style="margin-left:10px">add one file, or several to sequence into one combined waveform</span>
-        <div id="label-files" style="margin-top:10px"></div>
+      <div class="entry" id="label-entry">
+        <svg class="entry-mark" width="60" height="38" viewBox="0 0 64 40" aria-hidden="true">
+          <g fill="currentColor">
+            <rect x="2" y="16" width="3" height="8" rx="1.5"/><rect x="8" y="10" width="3" height="20" rx="1.5"/>
+            <rect x="14" y="4" width="3" height="32" rx="1.5" class="accent2"/><rect x="20" y="13" width="3" height="14" rx="1.5"/>
+            <rect x="26" y="7" width="3" height="26" rx="1.5"/><rect x="32" y="2" width="3" height="36" rx="1.5" class="accent2"/>
+            <rect x="38" y="11" width="3" height="18" rx="1.5"/><rect x="44" y="6" width="3" height="28" rx="1.5"/>
+            <rect x="50" y="14" width="3" height="12" rx="1.5"/><rect x="56" y="9" width="3" height="22" rx="1.5" class="accent2"/>
+          </g>
+        </svg>
+        <h2 class="entry-title">Label a single mixed track by speaker</h2>
+        <button id="label-choose" class="primary entry-btn">Add files</button>
+        <ol class="entry-steps">
+          <li><b>1</b> Add files</li><li><b>2</b> Label regions</li><li><b>3</b> Transcribe</li>
+        </ol>
+        <p class="entry-note muted">one mixed track (interview, podcast, collab) — or several to sequence into one waveform</p>
         <div id="label-err" class="err"></div>
+      </div>
+
+      <div class="panel" id="label-input-panel" style="display:none">
+        <h2>Files</h2>
+        <button id="label-choose-more" class="ghost">+ Add files</button>
+        <div id="label-files" style="margin-top:10px"></div>
       </div>
 
       <div class="panel" id="label-work" style="display:none">
@@ -179,25 +230,36 @@
 
     <!-- ============ Edit Transcript ============ -->
     <section id="tab-edit" class="tab">
-      <div class="panel">
-        <h2>Load transcript (WhisperMerger JSON)</h2>
-        <div id="dropzone-edit" class="dropzone" role="button" tabindex="0"
-             aria-label="Drop a transcript JSON file here, or press Enter to choose a file">
-          Drop a transcript .json here, or click to choose.
-          <input id="file-input-edit" type="file" accept=".json" class="hidden" />
-        </div>
-        <details style="margin-top:10px">
-          <summary class="muted">or paste JSON</summary>
-          <textarea id="json-in" class="json-in" placeholder='{"version":"1.0","segments":[...]}'></textarea>
-          <div style="margin-top:8px"><button id="json-load" class="ghost">Load pasted JSON</button>
-            <span id="json-err" class="err"></span></div>
-        </details>
+      <div class="entry dropzone" id="dropzone-edit" role="button" tabindex="0"
+           aria-label="Drop a transcript JSON file here, or press Enter to choose a file">
+        <svg class="entry-mark" width="60" height="38" viewBox="0 0 64 40" aria-hidden="true">
+          <g fill="currentColor">
+            <rect x="2" y="16" width="3" height="8" rx="1.5"/><rect x="8" y="10" width="3" height="20" rx="1.5"/>
+            <rect x="14" y="4" width="3" height="32" rx="1.5" class="accent2"/><rect x="20" y="13" width="3" height="14" rx="1.5"/>
+            <rect x="26" y="7" width="3" height="26" rx="1.5"/><rect x="32" y="2" width="3" height="36" rx="1.5" class="accent2"/>
+            <rect x="38" y="11" width="3" height="18" rx="1.5"/><rect x="44" y="6" width="3" height="28" rx="1.5"/>
+            <rect x="50" y="14" width="3" height="12" rx="1.5"/><rect x="56" y="9" width="3" height="22" rx="1.5" class="accent2"/>
+          </g>
+        </svg>
+        <h2 class="entry-title">Load a WhisperMerger transcript</h2>
+        <ol class="entry-steps">
+          <li><b>1</b> Drop or choose</li><li><b>2</b> Edit</li><li><b>3</b> Export</li>
+        </ol>
+        <p class="entry-note muted">drop a .json here, or click to choose</p>
+        <input id="file-input-edit" type="file" accept=".json" class="hidden" />
       </div>
+      <details class="paste-details" id="paste-details" style="margin-top:12px">
+        <summary class="muted">or paste JSON</summary>
+        <textarea id="json-in" class="json-in" placeholder='{"version":"1.0","segments":[...]}'></textarea>
+        <div style="margin-top:8px"><button id="json-load" class="ghost">Load pasted JSON</button>
+          <span id="json-err" class="err"></span></div>
+      </details>
       <div class="panel" id="edit-panel" style="display:none">
         <h2>Transcript</h2>
         <div class="row" style="margin-bottom:10px">
+          <button id="edit-load-another" class="ghost">Load another…</button>
           <button id="edit-attach" class="ghost">Attach audio…</button>
-          <span id="edit-attach-name" class="muted">attach the source file to scrub the waveform &amp; ▶ lines</span>
+          <span id="edit-attach-name" class="muted">attach the source file to scrub the waveform &amp; play lines</span>
         </div>
         <div id="editor-edit"></div>
       </div>
