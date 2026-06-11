@@ -4,13 +4,32 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhisperMerger</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header>
-    <h1>WhisperMerger</h1>
+    <span class="brand">
+      <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+        <g fill="currentColor">
+          <rect x="5"  y="13" width="2.4" height="6"  rx="1.2"/>
+          <rect x="9"  y="9"  width="2.4" height="14" rx="1.2"/>
+          <rect x="13" y="5"  width="2.4" height="22" rx="1.2" class="accent2"/>
+          <rect x="17" y="10" width="2.4" height="12" rx="1.2"/>
+          <rect x="21" y="7"  width="2.4" height="18" rx="1.2" class="accent2"/>
+          <rect x="25" y="12" width="2.4" height="8"  rx="1.2"/>
+        </g>
+      </svg>
+      <h1>WhisperMerger</h1>
+    </span>
     <span class="sub">word-level transcripts, local GPU</span>
-    <button id="shutdown-btn" class="ghost" title="Stop the local server" style="margin-left:auto">⏻ Shutdown</button>
+    <button id="shutdown-btn" class="ghost icon-btn" title="Stop the local server" style="margin-left:auto">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>
+      </svg>
+      <span>Shutdown</span>
+    </button>
     <nav class="tabs">
       <button class="tab-btn active" data-tab="batch">Batch</button>
       <button class="tab-btn" data-tab="transcribe">Transcribe &amp; Merge</button>
@@ -93,7 +112,15 @@
       </div>
 
       <div class="panel progress-wrap" id="progress-wrap">
-        <h2>Progress</h2>
+        <div class="progress-head">
+          <h2>Progress</h2>
+          <span class="progress-pct" id="progress-pct">0%</span>
+        </div>
+        <ol class="stage-steps" id="stage-steps">
+          <li data-stage="extract"><span class="dot"></span>Extract</li>
+          <li data-stage="transcribe"><span class="dot"></span>Transcribe</li>
+          <li data-stage="merge"><span class="dot"></span>Merge</li>
+        </ol>
         <div class="bar"><div id="progress-bar"></div></div>
         <div class="progress-msg" id="progress-msg"></div>
       </div>
@@ -120,7 +147,9 @@
         <div class="row" id="label-speakers" style="margin-bottom:10px"></div>
         <div class="row" style="margin-bottom:10px">
           <button id="label-vad" class="ghost">Re-detect speech</button>
-          <button id="label-play" class="ghost">▶ / ⏸</button>
+          <button id="label-play" class="ghost icon-only" title="Play / pause">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          </button>
           <button id="label-view" class="ghost">Split lanes</button>
           <button id="label-dup" class="ghost">Duplicate region</button>
           <label class="field"><span>Region pad (s)</span>
@@ -152,7 +181,8 @@
     <section id="tab-edit" class="tab">
       <div class="panel">
         <h2>Load transcript (WhisperMerger JSON)</h2>
-        <div id="dropzone-edit" class="dropzone">
+        <div id="dropzone-edit" class="dropzone" role="button" tabindex="0"
+             aria-label="Drop a transcript JSON file here, or press Enter to choose a file">
           Drop a transcript .json here, or click to choose.
           <input id="file-input-edit" type="file" accept=".json" class="hidden" />
         </div>

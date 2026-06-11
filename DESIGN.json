@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-11T00:00:00Z",
+  "title": "Design System: WhisperMerger",
+  "extensions": {
+    "colorMeta": {
+      "accent-signal-blue": { "role": "primary", "displayName": "Signal Blue", "canonical": "#5b9dff", "tonalRamp": ["#0d1a33", "#16294d", "#1f3a6b", "#2c5396", "#3d72c4", "#5b9dff", "#84b6ff", "#b3d2ff", "#dcebff"] },
+      "conflict-amber": { "role": "secondary", "displayName": "Conflict Amber", "canonical": "#d9a441", "tonalRamp": ["#2e2410", "#48380f", "#6b521a", "#977226", "#c08f33", "#d9a441", "#e6bd6f", "#f0d49e", "#f8e9cb"] },
+      "conflict-red": { "role": "secondary", "displayName": "Conflict Red", "canonical": "#e0625e", "tonalRamp": ["#33110f", "#4d1816", "#6f231f", "#9a312c", "#c2433d", "#e0625e", "#ea8a86", "#f2b2af", "#f9d9d7" ] },
+      "status-green": { "role": "secondary", "displayName": "Status Green", "canonical": "#57b894", "tonalRamp": ["#0e2a20", "#143d2e", "#1d5944", "#2a7a5e", "#3d9a78", "#57b894", "#82ccb1", "#aedece", "#d6efe6"] },
+      "surface-base": { "role": "neutral", "displayName": "Workbench Base", "canonical": "#14161a", "tonalRamp": ["#0d0f12", "#14161a", "#1c1f26", "#232732", "#2e3340", "#3a4150", "#525a6b", "#9aa3b2", "#e6e9ef"] },
+      "text-primary": { "role": "neutral", "displayName": "Text Primary", "canonical": "#e6e9ef", "tonalRamp": ["#14161a", "#232732", "#2e3340", "#525a6b", "#9aa3b2", "#c2c8d3", "#e6e9ef", "#f1f3f7", "#fafbfc"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "App title only; deliberately small (17px)." },
+      "body": { "displayName": "Body", "purpose": "All editable content and controls." },
+      "label": { "displayName": "Label", "purpose": "Uppercase panel section headers and field captions." },
+      "mono": { "displayName": "Readout Mono", "purpose": "Every numeric readout: timecodes, durations, percentages, counts." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "bar-fill", "value": "width 0.25s ease", "purpose": "Progress bar fill growth." },
+      { "name": "ui-fade", "value": "0.15s", "purpose": "Hover/dropzone state transitions." },
+      { "name": "stage-dot", "value": "0.2s", "purpose": "Stage stepper dot lighting." }
+    ],
+    "motionNote": "Flat-bench system: animate transform/opacity/width only. Ease-out, no bounce. Honor prefers-reduced-motion on progress, stage stepper, and lane updates.",
+    "breakpoints": [
+      { "name": "app", "value": "1400px", "purpose": "Max working width for non-timeline tabs; Label Track uncaps to full width." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single loud action per panel (Run, Export, Transcribe).",
+      "html": "<button class=\"ds-btn-primary\">Run batch</button>",
+      "css": ".ds-btn-primary { background: #5b9dff; color: #0b1220; font-weight: 600; border: 1px solid #5b9dff; border-radius: 6px; padding: 6px 9px; font: inherit; cursor: pointer; } .ds-btn-primary:hover { filter: brightness(1.06); } .ds-btn-primary:disabled { opacity: .5; cursor: not-allowed; } .ds-btn-primary:focus-visible { outline: 2px solid #5b9dff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Default secondary action; raised surface with hairline.",
+      "html": "<button class=\"ds-btn-ghost\">Choose folder…</button>",
+      "css": ".ds-btn-ghost { background: #232732; color: #e6e9ef; border: 1px solid #2e3340; border-radius: 6px; padding: 6px 9px; font: inherit; cursor: pointer; } .ds-btn-ghost:hover { border-color: #3a4150; } .ds-btn-ghost:focus-visible { outline: 2px solid #5b9dff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Icon-only ghost (play, close, reorder). Inline SVG, never emoji.",
+      "html": "<button class=\"ds-btn-icon\" title=\"Remove line\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6 6l12 12M18 6 6 18\"/></svg></button>",
+      "css": ".ds-btn-icon { display: inline-flex; align-items: center; justify-content: center; background: #232732; color: #e6e9ef; border: 1px solid #2e3340; border-radius: 6px; padding: 6px; line-height: 0; cursor: pointer; } .ds-btn-icon:hover { border-color: #3a4150; } .ds-btn-icon:focus-visible { outline: 2px solid #5b9dff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "The only container. Groups one logical step. Never nested.",
+      "html": "<section class=\"ds-panel\"><h2 class=\"ds-panel-h\">Progress</h2><p>…</p></section>",
+      "css": ".ds-panel { background: #1c1f26; border: 1px solid #2e3340; border-radius: 10px; padding: 16px; color: #e6e9ef; } .ds-panel-h { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: #9aa3b2; font-weight: 600; margin: 0 0 12px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Caption sits above; numeric inputs use mono.",
+      "html": "<label class=\"ds-field\"><span>Overlap min (s)</span><input class=\"ds-input ds-mono\" value=\"2\"></label>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 4px; } .ds-field span { font-size: 11px; color: #9aa3b2; } .ds-input { background: #232732; color: #e6e9ef; border: 1px solid #2e3340; border-radius: 6px; padding: 6px 9px; font: inherit; } .ds-input.ds-mono { font-family: ui-monospace, \"JetBrains Mono\", Menlo, Consolas, monospace; } .ds-input:focus-visible { outline: 2px solid #5b9dff; outline-offset: 1px; border-color: #5b9dff; }"
+    },
+    {
+      "name": "Conflict Chip",
+      "kind": "chip",
+      "refersTo": "panel",
+      "description": "Read-only flag marker. Hue carries meaning (amber=overlap, red=bleed, green=done).",
+      "html": "<span class=\"ds-chip ds-chip-overlap\">overlap</span>",
+      "css": ".ds-chip { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 10px; } .ds-chip-overlap { background: rgba(217,164,65,.2); color: #d9a441; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Workbench",
+    "overview": "WhisperMerger is a maker's workbench for audio, not a dashboard. Tools are laid out where the hand expects them, nothing is decorative, and everything is within reach. The dark tinted-charcoal surface lets waveforms, lanes, and conflict colors read like real material on the bench while the chrome stays quiet. Depth comes from tonal layering of three near-black surfaces, never from drop shadows. Numbers are first-class readouts in monospace; color is reserved for the signal-blue accent and the three conflict hues.",
+    "keyCharacteristics": [
+      "Dark tinted-charcoal workbench; three tonal surfaces carry all depth (flat, no shadows).",
+      "Width belongs to the waveform — timeline surfaces run wide, not capped like a marketing page.",
+      "Monospace numerics everywhere a number is a readout.",
+      "One accent (signal blue) plus a fixed conflict palette (amber / red / green); nothing else colored.",
+      "Crisp inline-SVG icons, never emoji."
+    ],
+    "rules": [
+      { "name": "The Meaning-Only Color Rule", "body": "Hue is reserved for the accent and the three conflict states. Amber=overlap, red=bleed/error, green=done/preferred. A neutral that needs to stand out gets a tonal step, not a tint.", "section": "colors" },
+      { "name": "The No-Pure-Black Rule", "body": "#000 and #fff are prohibited. Every neutral is tinted toward the blue hue.", "section": "colors" },
+      { "name": "The Readout Rule", "body": "Any measurement — time, duration, percent, count — is set in mono with tabular numerics, column-aligned. Never in the proportional body face.", "section": "typography" },
+      { "name": "The Quiet Title Rule", "body": "No oversized H1. Largest type is 17px. Hierarchy from weight, color, and tonal surface.", "section": "typography" },
+      { "name": "The Flat-Bench Rule", "body": "Surfaces are flat. To stand out, raise a tonal step or add a hairline — never a shadow.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep color meaningful: signal blue for action/live, amber=overlap, red=bleed/error, green=done.",
+      "Do set every measurement in the mono stack with tabular numerics, column-aligned.",
+      "Do convey depth with tonal steps (base → panel → raised) and 1px hairlines. Flat by default.",
+      "Do give width to waveforms, lanes, and the transcript table.",
+      "Do keep one signal-blue primary button per panel; everything else is a ghost button.",
+      "Do carry a text label + region count alongside every speaker color swatch (colorblind-safe).",
+      "Do put an accent focus ring on every interactive control, and honor prefers-reduced-motion."
+    ],
+    "donts": [
+      "Don't ship the generic AI/SaaS dashboard look: no decorative gradients, hero-metric cards, identical icon-card grids, or glassmorphism.",
+      "Don't look like a bloated GUI toolkit (Gradio / Streamlit / Electron / PyQt).",
+      "Don't go consumer-cute: no mascots, no emoji, no oversized friendly onboarding.",
+      "Don't build cluttered enterprise panels: no boxes inside boxes, no nested cards.",
+      "Don't use #000 or #fff; every neutral is tinted toward the blue hue.",
+      "Don't add drop shadows to convey elevation; raise a tonal step or add a hairline.",
+      "Don't use a colored side-stripe (box-shadow inset 3px, border-left > 1px) as a row accent; use a full hairline-tint or a leading chip.",
+      "Don't introduce a web/display font; it breaks the offline-instant feel."
+    ]
+  }
+}

@@ -11,6 +11,11 @@ const el = (tag, props = {}, ...kids) => {
   for (const k of kids) n.append(k);
   return n;
 };
+// Swap the Label play/pause button glyph (uses app.js's shared SVG icon set).
+function setPlayIcon(name) {
+  const b = $("#label-play");
+  if (b && window.uiIcon) b.replaceChildren(window.uiIcon(name));
+}
 
 const PALETTE = ["#5b9dff", "#57b894", "#d9a441", "#e0625e", "#b07cff", "#46c6c6", "#e08a3c", "#9ac85b"];
 const UNASSIGNED = "rgba(150,160,175,0.25)";
@@ -97,11 +102,11 @@ function renderFiles() {
   root.innerHTML = "";
   files.forEach((f, i) => {
     const swap = (a, b) => { [files[a], files[b]] = [files[b], files[a]]; renderFiles(); rebuild(); };
-    const up = el("button", { className: "ghost", textContent: "↑" });
+    const up = el("button", { className: "ghost icon-only", title: "Move earlier" }, window.uiIcon("up"));
     up.onclick = () => { if (i > 0) swap(i, i - 1); };
-    const down = el("button", { className: "ghost", textContent: "↓" });
+    const down = el("button", { className: "ghost icon-only", title: "Move later" }, window.uiIcon("down"));
     down.onclick = () => { if (i < files.length - 1) swap(i, i + 1); };
-    const rm = el("button", { className: "ghost", textContent: "✕" });
+    const rm = el("button", { className: "ghost icon-only", title: "Remove" }, window.uiIcon("close"));
     rm.onclick = () => { files.splice(i, 1); renderFiles(); rebuild(); };
 
     const row = el("div", { className: "track-row" },
@@ -155,8 +160,9 @@ function initWave(fid, track) {
   selection.clear();
   anchorId = null;
   decoded = null;
+  setPlayIcon("play");                 // fresh waveform starts paused
   ws = WaveSurfer.create({
-    container: "#waveform", height: 140,
+    container: "#waveform", height: 180,
     waveColor: "#566", progressColor: "#5b9dff", cursorColor: "#e6e9ef",
     barHeight: +$("#label-vzoom").value || 1,
     url: `/api/track-audio/${fid}/${track}`,
@@ -164,6 +170,13 @@ function initWave(fid, track) {
   regions = ws.registerPlugin(RegionsPlugin.create());
   ws.on("decode", () => { regions.enableDragSelection({ color: UNASSIGNED }); captureDecoded(); });
   ws.on("ready", () => { captureDecoded(); applyZoom(); runVad(); });   // fit whole file, then auto-detect speech
+  // Spacebar transport + button glyph both reflect the real play state.
+  ws.on("play", () => {
+    setPlayIcon("pause");
+    window.wmTransport && window.wmTransport.set({ toggle: () => ws && ws.playPause() });
+  });
+  ws.on("pause", () => setPlayIcon("play"));
+  ws.on("finish", () => setPlayIcon("play"));
   regions.on("region-created", (r) => { if (!assign.has(r.id) && !boundaryIds.has(r.id)) { r.setOptions({ color: UNASSIGNED }); renderLanes(); } });
   regions.on("region-updated", () => renderLanes());
   regions.on("region-clicked", (r, e) => {
@@ -253,6 +266,7 @@ function renderLanes() {
   const labelW = 110, gap = 8;
   const trackW = Math.max(50, root.clientWidth - labelW - gap - 4) * factor;
   const inner = el("div", { style: `width:${labelW + gap + trackW}px` });
+  inner.append(buildRuler(dur, labelW, trackW));
   const byName = new Map();
   const unassigned = [];
   for (const r of regions.getRegions()) {
@@ -276,12 +290,38 @@ function renderLanes() {
       track.append(blk);
       pending.push({ canvas: blk, start: r.start, end: r.end, un: row.un, color: row.un ? "#aab" : row.color });
     }
-    inner.append(el("div", { className: "lane-row" },
-      el("div", { className: "lane-label", textContent: row.name,
-        style: `color:${row.color}; position:sticky; left:0; z-index:1; background:var(--panel)` }), track));
+    const label = el("div", { className: "lane-label" + (row.un ? " un" : ""),
+      style: `width:${labelW}px; flex:none; position:sticky; left:0; z-index:1` },
+      el("span", { className: "lane-swatch", style: `background:${row.un ? UNASSIGNED : row.color}` }),
+      el("span", { className: "lane-name", textContent: row.name, style: `color:${row.un ? "var(--muted)" : row.color}` }),
+      el("span", { className: "lane-count", textContent: row.regs.length || "" }));
+    inner.append(el("div", { className: "lane-row" }, label, track));
   }
   root.append(inner);
   requestAnimationFrame(() => pending.forEach(drawRegionWave));   // size+draw after layout
+}
+
+// DAW-style time ruler aligned to the lane tracks: ticks + mm:ss labels at a readable spacing.
+function buildRuler(dur, labelW, trackW) {
+  const ruler = el("div", { className: "lane-ruler" });
+  const spacer = el("div", { className: "lane-label", style: `width:${labelW}px; flex:none; position:sticky; left:0; z-index:1` });
+  const axis = el("div", { className: "lane-axis", style: `flex:none; width:${trackW}px` });
+  // aim for a tick roughly every ~90px; snap the interval to a "nice" number of seconds
+  const targetTicks = Math.max(2, Math.floor(trackW / 90));
+  const raw = dur / targetTicks;
+  const nice = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].find((n) => n >= raw) || raw;
+  for (let t = 0; t <= dur + 0.001; t += nice) {
+    const tick = el("div", { className: "tick", style: `left:${(t / dur) * 100}%` },
+      el("span", { textContent: fmtTick(t) }));
+    axis.append(tick);
+  }
+  ruler.append(spacer, axis);
+  return ruler;
+}
+function fmtTick(s) {
+  s = Math.round(s);
+  const m = Math.floor(s / 60), sec = s % 60;
+  return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
 // --- speakers + assignment -------------------------------------------------------------
@@ -290,8 +330,8 @@ function renderSpeakers() {
   const root = $("#label-speakers");
   root.innerHTML = "";
   speakers.forEach((sp, i) => {
-    const b = el("button", { className: "ghost", title: `assign selected region (key ${i + 1})` },
-      el("span", { textContent: "■ ", style: `color:${sp.color}` }),
+    const b = el("button", { className: "ghost icon-btn", title: `assign selected region (key ${i + 1})` },
+      el("span", { className: "lane-swatch", style: `background:${sp.color}` }),
       el("span", { textContent: `${i + 1} ${sp.name}` }));
     b.onclick = () => assignSelectedTo(sp);
     root.append(b);

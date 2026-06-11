@@ -7,6 +7,53 @@ const el = (tag, props = {}, ...kids) => {
   for (const k of kids) n.append(k);
   return n;
 };
+
+// Inline SVG icons — no emoji (Phosphor/Radix-style). currentColor inherits the button's color.
+const ICONS = {
+  play:  { fill: true, d: "M8 5v14l11-7z" },
+  pause: { fill: true, d: "M7 5h3v14H7zM14 5h3v14h-3z" },
+  close: { d: "M6 6l12 12M18 6 6 18" },
+  up:    { d: "M6 14l6-6 6 6" },
+  down:  { d: "M6 10l6 6 6-6" },
+  warn:  { d: "M12 4l9 16H3zM12 10v4M12 17h.01" },
+};
+function icon(name, size = 15) {
+  const ns = "http://www.w3.org/2000/svg";
+  const spec = ICONS[name];
+  const s = document.createElementNS(ns, "svg");
+  s.setAttribute("viewBox", "0 0 24 24");
+  s.setAttribute("width", size); s.setAttribute("height", size);
+  s.setAttribute("aria-hidden", "true");
+  if (spec.fill) s.setAttribute("fill", "currentColor");
+  else Object.entries({ fill: "none", stroke: "currentColor", "stroke-width": "2",
+    "stroke-linecap": "round", "stroke-linejoin": "round" }).forEach(([k, v]) => s.setAttribute(k, v));
+  const p = document.createElementNS(ns, "path");
+  p.setAttribute("d", spec.d);
+  s.append(p);
+  return s;
+}
+function setIcon(node, name, size) { node.replaceChildren(icon(name, size)); }
+window.uiIcon = icon;   // labeltrack.js (module) reuses these
+
+// --- spacebar transport ----------------------------------------------------------------
+// Tracks the single "currently active" player (an <Audio> or the WaveSurfer instance). The
+// most recently played thing wins. Spacebar toggles it — unless focus is in a text field or
+// on a button, where space must keep its normal meaning.
+const wmTransport = {
+  active: null,
+  set(player) { this.active = player; },
+  toggle() { if (this.active) { this.active.toggle(); return true; } return false; },
+};
+window.wmTransport = wmTransport;                                  // labeltrack.js registers ws here
+const htmlPlayer = (el) => ({ toggle: () => { el.paused ? el.play() : el.pause(); } });
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== " " && e.code !== "Space") return;
+  const t = e.target, tag = (t.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select" || t.isContentEditable) return;
+  if (tag === "button" || (t.getAttribute && t.getAttribute("role") === "button")) return;
+  if (wmTransport.toggle()) e.preventDefault();                   // we handled it — don't scroll the page
+});
 const fmtTime = (s) => {
   s = Math.max(0, s || 0);
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = (s % 60);
@@ -47,6 +94,7 @@ function playClip(fileId, start, dur) {
   if (previewAudio) previewAudio.pause();
   previewAudio = new Audio(`/api/clip/${fileId}?start=${start}&dur=${Math.max(2, Math.min(dur, 30))}`);
   previewAudio.play();
+  wmTransport.set(htmlPlayer(previewAudio));
 }
 function fmtClock(s) {
   s = Math.floor(s);
@@ -220,12 +268,12 @@ function buildRow(container, merged, seg, i, preview) {
   const flagsCell = el("td");
   renderFlags(flagsCell, seg);
 
-  const del = el("button", { className: "ghost", textContent: "✕", title: "Remove line" });
+  const del = el("button", { className: "ghost icon-only", title: "Remove line" }, icon("close"));
   del.onclick = () => { merged.segments.splice(i, 1); renderEditor(container, merged); };
 
   const actions = el("td", {});
   if (preview) {
-    const jump = el("button", { className: "ghost", textContent: "▶", title: "Play from here" });
+    const jump = el("button", { className: "ghost icon-only", title: "Play from here" }, icon("play"));
     jump.onclick = () => playClip(preview.file_id, seg.start, seg.end - seg.start);
     actions.append(jump);
   }
@@ -354,13 +402,16 @@ async function browseFiles() {
 // FR-TK-3: per-track audition. One clip plays at a time.
 let currentAudio = null;
 function auditionBtn(fileId, trackIndex) {
-  const btn = el("button", { className: "ghost", textContent: "▶", title: "Audition track" });
+  const btn = el("button", { className: "ghost icon-only", title: "Audition track" });
+  setIcon(btn, "play");
   const audio = new Audio(`/api/audition/${fileId}/${trackIndex}`);
-  audio.onended = () => { btn.textContent = "▶"; };
+  // Icon follows the audio's real state, so spacebar pause/resume keeps it in sync.
+  audio.onplay = () => { setIcon(btn, "pause"); wmTransport.set(htmlPlayer(audio)); };
+  audio.onpause = () => setIcon(btn, "play");
+  audio.onended = () => setIcon(btn, "play");
   btn.onclick = () => {
     if (currentAudio && currentAudio !== audio) { currentAudio.pause(); currentAudio.currentTime = 0; }
-    if (audio.paused) { currentAudio = audio; audio.play(); btn.textContent = "⏸"; }
-    else { audio.pause(); btn.textContent = "▶"; }
+    audio.paused ? (currentAudio = audio, audio.play()) : audio.pause();
   };
   return btn;
 }
@@ -462,9 +513,29 @@ async function pollJob(jobId, runBtn) {
   tick();
 }
 
+// Map a progress message to its pipeline stage so the stepper can light up.
+function stageOf(msg) {
+  const m = (msg || "").toLowerCase();
+  if (m.includes("merg")) return "merge";
+  if (m.includes("transcrib")) return "transcribe";
+  if (m.includes("extract")) return "extract";
+  return "";
+}
+const STAGE_ORDER = ["extract", "transcribe", "merge"];
+
 function setProgress(frac, msg) {
-  $("#progress-bar").style.width = `${Math.round((frac || 0) * 100)}%`;
+  const pct = Math.round((frac || 0) * 100);
+  $("#progress-bar").style.width = `${pct}%`;
+  $("#progress-pct").textContent = `${pct}%`;
   $("#progress-msg").textContent = msg || "";
+
+  const done = /\bdone\b/i.test(msg || "");
+  const stage = done ? "merge" : stageOf(msg);
+  const active = STAGE_ORDER.indexOf(stage);
+  $("#stage-steps").querySelectorAll("li").forEach((li, i) => {
+    li.classList.toggle("active", !done && i === active);
+    li.classList.toggle("done", done || (active >= 0 && i < active));
+  });
 }
 
 // =======================================================================================
@@ -474,6 +545,7 @@ let editMerged = null, editPreview = null;
 (function initEditTab() {
   const dz = $("#dropzone-edit"), input = $("#file-input-edit");
   dz.onclick = () => input.click();
+  dz.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } };
   input.onchange = () => input.files[0] && readJsonFile(input.files[0]);
   dz.ondragover = (e) => { e.preventDefault(); dz.classList.add("over"); };
   dz.ondragleave = () => dz.classList.remove("over");
@@ -544,7 +616,8 @@ function buildProjectCard(proj, pi) {
   name.oninput = () => { proj.name = name.value; };
   const addFiles = el("button", { className: "ghost", textContent: "Add files" });
   addFiles.onclick = () => addProjectFiles(proj);
-  const removeProj = el("button", { className: "ghost", textContent: "✕ Remove project" });
+  const removeProj = el("button", { className: "ghost icon-btn", title: "Remove project" },
+    icon("close"), "Remove project");
   removeProj.onclick = () => { projects.splice(pi, 1); renderProjects(); };
   box.append(el("div", { className: "name" },
     name, el("div", { className: "spacer" }), addFiles, removeProj));
@@ -558,11 +631,11 @@ function buildFileRow(proj, fi) {
   const f = proj.files[fi];
   const wrap = el("div", { style: "border-top:1px solid var(--line); padding:6px 0; margin-top:6px" });
   const swap = (a, b) => { [proj.files[a], proj.files[b]] = [proj.files[b], proj.files[a]]; renderProjects(); };
-  const up = el("button", { className: "ghost", textContent: "↑", title: "Move earlier" });
+  const up = el("button", { className: "ghost icon-only", title: "Move earlier" }, icon("up"));
   up.onclick = () => { if (fi > 0) swap(fi, fi - 1); };
-  const down = el("button", { className: "ghost", textContent: "↓", title: "Move later" });
+  const down = el("button", { className: "ghost icon-only", title: "Move later" }, icon("down"));
   down.onclick = () => { if (fi < proj.files.length - 1) swap(fi, fi + 1); };
-  const rm = el("button", { className: "ghost", textContent: "✕" });
+  const rm = el("button", { className: "ghost icon-only", title: "Remove file" }, icon("close"));
   rm.onclick = () => { proj.files.splice(fi, 1); renderProjects(); };
 
   wrap.append(el("div", { className: "track-row" },
@@ -658,12 +731,14 @@ function renderBatchStatus(b) {
   b.projects.forEach((p) => {
     const pct = Math.round((p.progress || 0) * 100);
     const state = p.status === "running" ? `running ${pct}% · ${fmtElapsed(p.elapsed)}` : p.status;
-    const detail = p.error ? "⚠ " + p.error
+    const detail = p.error ? p.error
       : (p.status === "done" ? `${p.message} · ${p.output_dir || ""}` : p.message || "");
+    const detailSpan = el("span", { className: "muted", textContent: detail, style: "flex:1" });
+    if (p.error) { detailSpan.prepend(icon("warn", 13), " "); detailSpan.style.color = "var(--bleed)"; }
     const line = el("div", { className: "track-row" },
       el("span", { textContent: p.name, style: "width:200px; font-weight:600" }),
       el("span", { className: "muted", textContent: state, style: "width:120px" }),
-      el("span", { className: "muted", textContent: detail, style: "flex:1" }));
+      detailSpan);
     if (p.status === "error") line.classList.add("flag-bleed_suspected");
     root.append(line);
   });
