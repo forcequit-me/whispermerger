@@ -166,17 +166,25 @@ table.editor { width: 100%; border-collapse: collapse; }
 table.editor th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase;
   letter-spacing: .5px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 table.editor td { padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-/* Conflict rows: full-row hue tint (the Flags column already carries the chip — no side-stripe). */
+/* Conflict rows: full-row hue tint (the Notes column already carries the chip — no side-stripe). */
 table.editor tr.flag-overlap { background: rgba(217, 164, 65, .07); }
 table.editor tr.flag-backchannel { background: rgba(91, 157, 255, .07); }
 table.editor tr.flag-bleed_suspected { background: rgba(224, 98, 94, .07); }
-table.editor td.tc input { width: 78px; }
+table.editor td.tc input { width: 116px; }   /* fits HH:MM:SS.ss in monospace without clipping */
 table.editor td.spk input { width: 96px; }
+/* Text is the main column — it absorbs the slack so Speaker/Start/End group up tight on the left. */
+table.editor td.txt { width: 100%; }
+table.editor td.spk, table.editor td.tc { padding-left: 6px; padding-right: 6px; }
 table.editor td.txt textarea {
   width: 100%; resize: none; overflow: hidden;
   white-space: pre-wrap; overflow-wrap: anywhere;   /* wrap + honor manual breaks; break long tokens */
   line-height: 1.4; min-height: 34px; display: block; vertical-align: top;
 }
+/* per-line actions: clear gap between play/pause and delete so they aren't mis-clicked */
+table.editor td.act-col { white-space: nowrap; }
+table.editor .row-actions { display: flex; align-items: center; gap: 16px; justify-content: flex-end; }
+/* "Notes" column hides entirely until a line is actually flagged */
+table.editor:not(.has-notes) .notes-col { display: none; }
 table.editor tr.editing { background: var(--panel-2); }
 .chip { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-right: 4px; }
 .chip.overlap { background: rgba(217,164,65,.2); color: var(--overlap); }

@@ -146,7 +146,22 @@ tabs (Transcribe & Merge, Label Track, Edit Transcript) at once. No backend chan
   **downward** (cells are `vertical-align: top`) instead of overflowing horizontally. **Enter now
   inserts a line break** (line breaks persist in `seg.text` and ride through JSON/CSV cleanly,
   fold into SRT wrapping); row navigation moved to sibling-based `focusSibling` for Ctrl+↑/↓ so it
-  skips hidden rows. Asset cache-bust bumped to `?v=10`.
+  skips hidden rows.
+- **Per-line preview ▶/⏸ toggle** — the editor's per-line play button (`toggleClip` in `app.js`)
+  now flips to a pause glyph while its clip plays and reverts on pause/end; click again to
+  pause/resume, and starting another line reverts the previous button. Matches the existing
+  track-audition (`auditionBtn`) and Label-waveform buttons; icons follow the audio's real state
+  so spacebar stays in sync.
+- **Wider Start/End fields** — `table.editor td.tc input` widened 78px → 116px so the full
+  `HH:MM:SS.ss` monospace timecode shows without clipping.
+- **Editor column layout** — Text column now absorbs the slack (`td.txt { width:100% }`) so
+  Speaker/Start/End group tightly on the left and the transcript is the widest column; tighter
+  `td.spk`/`td.tc` padding; per-line play and delete buttons separated by a `.row-actions` flex gap.
+- **"Flags" column → "Notes", auto-hidden when empty** — the column is hidden via
+  `table.editor:not(.has-notes) .notes-col` until a visible line carries a flag (conflict or
+  `edited`); editing a word-timed line reveals it live (`tr.closest("table.editor").add("has-notes")`)
+  without losing focus.
+- Asset cache-bust bumped to `?v=12` (css + js).
 
 ## Partial / outstanding (v1 polish)
 

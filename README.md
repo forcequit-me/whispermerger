@@ -33,8 +33,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   stay fully visible instead of running off the edge), global speaker rename, **per-speaker
   show/hide toggle** (hides a speaker's lines from the table _and_ from every export, non-
   destructively — toggle them back anytime) alongside the destructive **remove a speaker and all
-  their lines**, add/remove lines, keyboard shortcuts, conflict highlighting, per-line audio
-  preview (play a line or drag a jump bar — instant input-seek clips, works on huge files).
+  their lines**, add/remove lines, keyboard shortcuts, conflict highlighting (review tags in an
+  auto-hiding **Notes** column — present only when a line is flagged), per-line audio
+  preview with a **▶/⏸ toggle** (play a line, click again to pause/resume — one clip at a time)
+  or drag a jump bar; instant input-seek clips, works on huge files.
   **Spacebar** toggles play/pause on whatever you last played (unless you're typing in a field).
 - **Waveform + scrubbing in every editor** — drawn from server-computed downsampled peaks
   (`/api/peaks`), so the browser never downloads full audio (scales to 100+ GB files). Click to

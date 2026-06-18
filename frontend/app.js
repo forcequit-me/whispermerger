@@ -122,6 +122,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 // =======================================================================================
 // Preview audio: jump-to-position via instant input-seek clips (works on huge files).
 let previewAudio = null;
+let previewBtn = null;   // the per-line ▶/⏸ button whose clip is currently loaded
 function playClip(fileId, start, dur, track) {
   if (previewAudio) previewAudio.pause();
   let url = `/api/clip/${fileId}?start=${start}&dur=${Math.max(2, Math.min(dur, 30))}`;
@@ -129,6 +130,23 @@ function playClip(fileId, start, dur, track) {
   previewAudio = new Audio(url);
   previewAudio.play();
   wmTransport.set(htmlPlayer(previewAudio));
+}
+
+// Per-line preview button: ▶ plays this line's clip and flips to ⏸ while it's playing; click
+// again to pause/resume. Only one clip plays at a time, so starting another line reverts the
+// previous button to ▶. Icons follow the audio's real state, so spacebar stays in sync.
+function toggleClip(btn, fileId, start, dur, track) {
+  if (btn === previewBtn && previewAudio && !previewAudio.paused) { previewAudio.pause(); return; }
+  playClip(fileId, start, dur, track);
+  const audio = previewAudio;
+  if (previewBtn && previewBtn !== btn) { setIcon(previewBtn, "play"); previewBtn.title = "Play from here"; }
+  previewBtn = btn;
+  const showPlay = () => { setIcon(btn, "play"); btn.title = "Play from here"; };
+  const showPause = () => { setIcon(btn, "pause"); btn.title = "Pause"; };
+  showPause();
+  audio.onplay = () => { showPause(); wmTransport.set(htmlPlayer(audio)); };
+  audio.onpause = showPlay;
+  audio.onended = showPlay;
 }
 function fmtClock(s) {
   s = Math.floor(s);
@@ -283,11 +301,14 @@ function buildSpeakerBar(container, merged) {
 
 function buildTable(container, merged, preview) {
   const tbody = el("tbody");
-  const table = el("table", { className: "editor" },
+  // "Notes" column only shows once a visible line carries a flag (conflict / edited).
+  const hasNotes = merged.segments.some((s) => !container._disabled.has(s.speaker) && (s.flags || []).length);
+  const table = el("table", { className: "editor" + (hasNotes ? " has-notes" : "") },
     el("thead", {}, el("tr", {},
       el("th", { textContent: "Speaker" }), el("th", { textContent: "Start" }),
       el("th", { textContent: "End" }), el("th", { textContent: "Text" }),
-      el("th", { textContent: "Flags" }), el("th", { textContent: "" }))),
+      el("th", { className: "notes-col", textContent: "Notes" }),
+      el("th", { className: "act-col", textContent: "" }))),
     tbody);
 
   merged.segments.forEach((seg, i) => {
@@ -318,6 +339,7 @@ function buildRow(container, merged, seg, i, preview) {
       seg.flags.push("edited");           // text changed -> word timings may be stale
       renderFlags(flagsCell, seg);
       tr.classList.add("flag-edited");
+      tr.closest("table.editor")?.classList.add("has-notes");   // reveal the Notes column now
     }
   };
   // Enter inserts a line break (natural textarea behavior). Escape reverts; Ctrl+↑/↓ moves rows.
@@ -328,21 +350,22 @@ function buildRow(container, merged, seg, i, preview) {
   };
   requestAnimationFrame(() => autoGrow(txt));   // size to initial content once in the DOM
 
-  const flagsCell = el("td");
+  const flagsCell = el("td", { className: "notes-col" });
   renderFlags(flagsCell, seg);
 
   const del = el("button", { className: "ghost icon-only", title: "Remove line" }, icon("close"));
   del.onclick = () => { merged.segments.splice(i, 1); renderEditor(container, merged); };
 
-  const actions = el("td", {});
+  const rowActions = el("div", { className: "row-actions" });
   if (preview) {
     const jump = el("button", { className: "ghost icon-only", title: "Play from here" }, icon("play"));
     // play only this speaker's stream when we know the mapping (multi-track source); else downmix
     const track = preview.trackOf ? preview.trackOf[seg.speaker] : undefined;
-    jump.onclick = () => playClip(preview.file_id, seg.start, seg.end - seg.start, track);
-    actions.append(jump);
+    jump.onclick = () => toggleClip(jump, preview.file_id, seg.start, seg.end - seg.start, track);
+    rowActions.append(jump);
   }
-  actions.append(del);
+  rowActions.append(del);
+  const actions = el("td", { className: "act-col" }, rowActions);
 
   tr.append(
     el("td", { className: "spk" }, spk),
