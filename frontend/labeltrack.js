@@ -363,9 +363,18 @@ function assignSelectedTo(sp) {
 
 // --- VAD + transcribe ------------------------------------------------------------------
 
+function setLabelBar(frac, msg) {
+  const pct = Math.round((frac || 0) * 100);
+  $("#label-bar").style.width = pct + "%";
+  $("#label-pct").textContent = pct + "%";
+  $("#label-progress-msg").textContent = msg || "";
+}
+
 async function runVad() {
   $("#label-status").textContent = "detecting speech…";
-  const res = await fetch(`/api/vad/${activeFileId}/${activeTrack}`, { method: "POST" });
+  let res;
+  try { res = await fetch(`/api/vad/${activeFileId}/${activeTrack}`, { method: "POST" }); }
+  catch (e) { $("#label-status").textContent = "couldn't reach the server."; return; }
   if (!res.ok) { $("#label-status").textContent = "VAD failed: " + (await res.text()); return; }
   const spans = await res.json();
   regions.clearRegions();
@@ -399,28 +408,51 @@ async function runTranscribe() {
   const btn = $("#label-run");
   btn.disabled = true;
   $("#label-status").textContent = "starting…";
-  const res = await fetch("/api/diarize", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ file_id: activeFileId, track_index: activeTrack, speakers: map, options: { detect_conflicts: true } }),
-  });
+  $("#label-progress").classList.add("show");
+  setLabelBar(0, "starting…");
+  let res;
+  try {
+    res = await window.fetchTO("/api/diarize", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_id: activeFileId, track_index: activeTrack, speakers: map, options: { detect_conflicts: true } }),
+    }, 30000);
+  } catch (e) { $("#label-status").textContent = "couldn't reach the server to start."; btn.disabled = false; return; }
   if (!res.ok) { $("#label-status").textContent = "Failed: " + (await res.text()); btn.disabled = false; return; }
   const { job_id } = await res.json();
   poll(job_id, btn);
 }
 
 function poll(jobId, btn) {
+  let fails = 0;
   const tick = async () => {
-    const p = await (await fetch(`/api/progress/${jobId}`)).json();
-    $("#label-status").textContent = (p.message || p.status) + (p.elapsed ? " · " + window.fmtElapsed(p.elapsed) : "");
+    let p;
+    try {
+      const r = await window.fetchTO(`/api/progress/${jobId}`);
+      if (!r.ok) throw new Error(await r.text());
+      p = await r.json();
+      fails = 0;
+    } catch (e) {
+      // Server briefly unresponsive (first-run model load) — keep waiting, never freeze.
+      $("#label-progress-msg").textContent = (++fails > 5)
+        ? "still working… first-run model load can take a few minutes (watch the server window)"
+        : "working… waiting for the server";
+      setTimeout(tick, 1200); return;
+    }
+    const line = (p.message || p.status) + (p.elapsed ? " · " + window.fmtElapsed(p.elapsed) : "");
+    setLabelBar(p.progress, line);
+    $("#label-status").textContent = line;
     if (p.status === "done") {
-      const merged = await (await fetch(`/api/result/${jobId}`)).json();
-      $("#label-result-panel").style.display = "";
-      window.renderEditor($("#editor-label"), merged, { file_id: activeFileId, duration: activeDuration });
-      $("#label-status").textContent = "done";
+      try {
+        const merged = await (await window.fetchTO(`/api/result/${jobId}`)).json();
+        $("#label-result-panel").style.display = "";
+        window.renderEditor($("#editor-label"), merged, { file_id: activeFileId, duration: activeDuration });
+        setLabelBar(1, "done");
+        $("#label-status").textContent = "done";
+      } catch (e) { $("#label-status").textContent = "done — but couldn't load the result"; }
       btn.disabled = false;
       return;
     }
-    if (p.status === "error") { $("#label-status").textContent = "error: " + p.error; btn.disabled = false; return; }
+    if (p.status === "error") { setLabelBar(p.progress, "error"); $("#label-status").textContent = "error: " + p.error; btn.disabled = false; return; }
     setTimeout(tick, 600);
   };
   tick();

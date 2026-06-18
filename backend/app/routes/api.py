@@ -268,18 +268,20 @@ def audition(request: Request, file_id: str, track_index: int) -> FileResponse:
 
 
 @router.get("/clip/{file_id}")
-def clip(request: Request, file_id: str, start: float = 0.0, dur: float = 5.0) -> FileResponse:
-    """Preview clip starting at `start` (downmix of all tracks). Powers jump-to-line and
-    jump-to-position in the editor — input-seek makes it instant even on huge files."""
+def clip(request: Request, file_id: str, start: float = 0.0, dur: float = 5.0,
+         track: int | None = None) -> FileResponse:
+    """Preview clip starting at `start`. Downmix of all tracks by default; pass `track` to
+    isolate one speaker's stream (per-line preview in the multi-track editor). Powers
+    jump-to-line and jump-to-position — input-seek makes it instant even on huge files."""
     entry = request.app.state.uploads.get(file_id)
     if entry is None:
         raise HTTPException(404, f"unknown file_id {file_id}")
     dur = max(0.5, min(dur, 120.0))  # cap clip length
     clips = request.app.state.upload_dir / "clips"
     clips.mkdir(exist_ok=True)
-    dest = clips / f"{file_id}_{start:.2f}_{dur:.2f}.wav"
+    dest = clips / f"{file_id}_{start:.2f}_{dur:.2f}_{track}.wav"
     if not dest.exists():
-        extract_clip(entry["path"], dest, start, dur, len(entry["source"].tracks))
+        extract_clip(entry["path"], dest, start, dur, len(entry["source"].tracks), track=track)
     return FileResponse(dest, media_type="audio/wav")
 
 

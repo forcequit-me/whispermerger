@@ -1,7 +1,7 @@
 # WhisperMerger — Build Status
 
 Snapshot of what's built vs. outstanding, mapped against `whispermerger-prd.md` (FR-\* IDs)
-and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-10.
+and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-11.
 
 ## Summary
 
@@ -91,6 +91,37 @@ all their lines** (new request).
   flushes; safe since temp is wiped on next startup).
 - Tests: `test_export.py` (padding shift/clamp + padded export timecodes) and `test_extract.py`
   (`compute_peaks` shape/range). **70 GPU-independent tests pass.**
+
+## UI redesign + reliability (2026-06-11)
+
+- **Design system docs (new, repo root):** `PRODUCT.md` (register=product, users, brand
+  personality, anti-references, design principles, a11y targets) and `DESIGN.md` + `DESIGN.json`
+  (tokens + components, North Star **"The Workbench"**). Generated via the impeccable skill so
+  future UI work stays on-brand.
+- **Visual overhaul:** `favicon.svg` + header brand mark; **all emoji-as-icons replaced with
+  inline SVG** (play/pause/close/up/down/warn + speaker swatch); **monospace numerics** for every
+  readout (timecodes/durations/counts/%); darker tinted base (`--bg #0e1014`) for clearer panel
+  separation; header reworked — tabs then a quiet right-aligned **Shutdown** (muted, red on hover)
+  + a thin accent rule; working width widened (`main` 1400, Label tab uncapped for the waveform).
+- **Entry states:** each tab now opens with a **full-bleed "loader" entry zone** (waveform mark,
+  headline, primary action, `1 · 2 · 3` step hint) that swaps to the working panels the moment
+  files load; the Edit drop zone collapses on load with a **"Load another…"** reset. Fixes the
+  bare "button in an empty box" empty states.
+- **Progress everywhere:** Transcribe keeps the **stage stepper** (Extract → Transcribe → Merge)
+  + big %; **progress bars added to Batch (overall) and Label**, so every processing tab shows
+  one (previously Transcribe only).
+- **Split-lane:** DAW **time ruler** (m:ss ticks), taller lanes with a centre gridline, sticky
+  **swatch + name + region-count** headers (identity survives without colour — colourblind-safe).
+- **Spacebar transport:** play/pause the most-recently-played audio (track preview, per-line clip,
+  or the Label waveform) unless focus is in a text field; play/pause glyphs reflect real state.
+- **Accessibility (WCAG AA pass):** accent `:focus-visible` ring on every control; Edit drop zone
+  made keyboard-reachable + `aria-label`'d; `prefers-reduced-motion` honoured; radio/range accent
+  colours.
+- **Reliability:** every job-start POST and **polling loop** (`pollJob` / `pollBatch` / label
+  `poll`) now uses an **abort-timeout fetch** (`fetchTO`) and **survives transient server
+  unresponsiveness** (first-run model load ties the server up) instead of silently freezing at
+  "starting…"; clearer "still working… first-run model load" messaging. Cache-busting `?v=` on
+  css/js so stale assets don't linger during iteration.
 
 ## Partial / outstanding (v1 polish)
 

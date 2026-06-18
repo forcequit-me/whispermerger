@@ -79,12 +79,15 @@ def concat_wavs(wav_paths: list[str | Path], dest: str | Path) -> tuple[float, l
 
 
 def extract_clip(src: str | Path, dest: str | Path, start: float, duration: float,
-                 num_streams: int) -> Path:
-    """Extract a short preview clip starting at `start` (a downmix of all audio streams so
-    you hear the whole moment). Input-side seek (`-ss` before `-i`) is instant even on a
-    50+ GB / multi-hour file — it never reads the whole container."""
+                 num_streams: int, track: int | None = None) -> Path:
+    """Extract a short preview clip starting at `start`. By default a downmix of all audio
+    streams (hear the whole moment); pass `track` to isolate one stream (`-map 0:a:track`) so a
+    per-line preview plays only that speaker's mic. Input-side seek (`-ss` before `-i`) is
+    instant even on a 50+ GB / multi-hour file — it never reads the whole container."""
     dest = Path(dest)
-    if num_streams <= 1:
+    if track is not None:
+        amap = ["-map", f"0:a:{track}"]
+    elif num_streams <= 1:
         amap = ["-map", "0:a:0"]
     else:
         inputs = "".join(f"[0:a:{i}]" for i in range(num_streams))

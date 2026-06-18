@@ -31,7 +31,8 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   Overlapping speech is supported and flagged.
 - **Editor** — inline edit speaker/text/timing, global speaker rename, remove a speaker and
   all their lines, add/remove lines, keyboard shortcuts, conflict highlighting, per-line audio
-  preview (▶ a line or drag a jump bar — instant input-seek clips, works on huge files).
+  preview (play a line or drag a jump bar — instant input-seek clips, works on huge files).
+  **Spacebar** toggles play/pause on whatever you last played (unless you're typing in a field).
 - **Waveform + scrubbing in every editor** — drawn from server-computed downsampled peaks
   (`/api/peaks`), so the browser never downloads full audio (scales to 100+ GB files). Click to
   play from any point; **horizontal zoom** for precision (zoomed all the way out shows the whole
@@ -41,12 +42,19 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   word timestamps (toggleable subtitle limits). **Pad (s)** extends each segment's start/end by N
   seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.
 - **Caching** — WhisperX output is cached by file hash + model, so re-runs skip transcription.
-- **Stage-aware progress + timing** — jobs and batches report the current stage (Extracting ·
-  Transcribing · Merging, per track) and total elapsed wall time, so a long run never looks stuck.
+- **Stage-aware progress + timing** — every processing tab shows a progress bar with the current
+  stage (Transcribe & Merge has an Extract → Transcribe → Merge stepper; Batch shows overall +
+  per-project; Label shows job progress) and total elapsed wall time, so a long run never looks
+  stuck. Polling is hang-proofed: if the server goes briefly unresponsive (e.g. loading ~3 GB of
+  models on the first run) the UI keeps waiting and recovers instead of freezing.
 - **Storage-clean** — extracted audio is deleted right after use, and the working dir is wiped on
   startup; only the small transcription cache persists. Nothing piles up.
 - **One-click start/stop** — `Startup.bat` launches the server and opens the UI; `Shutdown.bat`
-  (or the **⏻ Shutdown** button in the header) stops it.
+  (or the **Shutdown** button at the top-right of the header) stops it.
+- **DAW-style UI** — dark "workbench" theme, full-width waveforms, monospace timecodes, inline-SVG
+  icons (no emoji), big drop/choose entry zones per tab, and a keyboard-accessible (WCAG AA focus
+  rings, reduced-motion, colourblind-safe lanes) layout. Design system captured in
+  [`PRODUCT.md`](PRODUCT.md) + [`DESIGN.md`](DESIGN.md).
 
 ## Requirements
 
@@ -68,8 +76,9 @@ python -m uvicorn app.main:app --port 8756
 ```
 
 Then open **http://localhost:8756** (Startup.bat opens it for you). Stop with `Shutdown.bat` or
-the **⏻ Shutdown** button in the header. First transcription downloads the models (~3 GB) and
-loads them into VRAM (~30–60 s) before running.
+the **Shutdown** button at the top-right of the header. First transcription downloads the models
+(~3 GB) and loads them into VRAM (~30–60 s) before running — the progress bar keeps waiting through
+this one-time load rather than looking frozen.
 
 **Performance (real-world):** a 56 GB / 1h51m OBS recording with **4 audio tracks** transcribed
 end-to-end (extract → transcribe+align → merge) in **~10 minutes** on an RTX 3080 Ti — ~7.4 h of

@@ -1,5 +1,27 @@
 "use strict";
 
+// --- surface any uncaught JS error on the page (so it can be screenshotted, no DevTools) ---
+function showFatal(msg) {
+  let bar = document.getElementById("js-error-bar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "js-error-bar";
+    bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#e0625e;" +
+      "color:#0b1220;font:12px/1.4 ui-monospace,monospace;padding:10px 14px;white-space:pre-wrap;" +
+      "max-height:45vh;overflow:auto;border-top:2px solid #0b1220";
+    (document.body || document.documentElement).appendChild(bar);
+  }
+  bar.textContent = "⚠ JS error (please screenshot this):\n" + msg;
+}
+window.addEventListener("error", (e) => {
+  const where = e.error && e.error.stack ? e.error.stack : `${e.filename}:${e.lineno}:${e.colno}`;
+  showFatal((e.message || e.error) + "\n" + where);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e.reason || {};
+  showFatal("unhandled promise rejection: " + (r.message || r) + "\n" + (r.stack || ""));
+});
+
 // --- tiny helpers ----------------------------------------------------------------------
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, props = {}, ...kids) => {
@@ -66,6 +88,16 @@ function fmtElapsed(s) {
 }
 window.fmtElapsed = fmtElapsed;
 
+// fetch with an abort-timeout, so a wedged/slow request can never freeze a polling loop
+// forever (the server goes briefly unresponsive while it loads models on the first run).
+async function fetchTO(url, opts = {}, ms = 15000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+  finally { clearTimeout(timer); }
+}
+window.fetchTO = fetchTO;   // labeltrack.js (module) reuses it
+
 // --- shutdown --------------------------------------------------------------------------
 $("#shutdown-btn").onclick = async () => {
   if (!confirm("Stop the WhisperMerger server?")) return;
@@ -90,9 +122,11 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 // =======================================================================================
 // Preview audio: jump-to-position via instant input-seek clips (works on huge files).
 let previewAudio = null;
-function playClip(fileId, start, dur) {
+function playClip(fileId, start, dur, track) {
   if (previewAudio) previewAudio.pause();
-  previewAudio = new Audio(`/api/clip/${fileId}?start=${start}&dur=${Math.max(2, Math.min(dur, 30))}`);
+  let url = `/api/clip/${fileId}?start=${start}&dur=${Math.max(2, Math.min(dur, 30))}`;
+  if (track != null) url += `&track=${track}`;   // isolate one speaker's stream; omit → downmix
+  previewAudio = new Audio(url);
   previewAudio.play();
   wmTransport.set(htmlPlayer(previewAudio));
 }
@@ -105,8 +139,12 @@ function fmtClock(s) {
 function renderEditor(container, merged, preview) {
   if (preview !== undefined) container._preview = preview;  // persist across re-renders
   preview = container._preview || null;
+  // Per-speaker export toggles, keyed to the loaded transcript: a new `merged` resets them,
+  // in-place re-renders (same object) keep them.
+  if (container._merged !== merged) { container._merged = merged; container._disabled = new Set(); }
   container.innerHTML = "";
-  container.append(buildToolbar(container, merged), buildExportPanel(merged));
+  container.append(buildToolbar(container, merged), buildSpeakerBar(container, merged),
+    buildExportPanel(container, merged));
   if (preview) { container.append(buildPreviewBar(preview)); container.append(buildWaveform(preview)); }
   container.append(buildTable(container, merged, preview));
 }
@@ -223,6 +261,26 @@ function buildToolbar(container, merged) {
     el("div", { className: "spacer" }), addBtn);
 }
 
+// Per-speaker include/exclude toggle. A disabled speaker is dropped from every export (all
+// formats) and dimmed in the table — non-destructive, unlike "Remove speaker" above.
+function buildSpeakerBar(container, merged) {
+  const disabled = container._disabled;
+  const counts = {};
+  merged.segments.forEach((s) => { counts[s.speaker] = (counts[s.speaker] || 0) + 1; });
+  const chips = distinctSpeakers(merged).map((spk) => {
+    const off = disabled.has(spk);
+    const chip = el("button", { className: "spk-toggle" + (off ? " off" : ""),
+      title: off ? "Excluded from export — click to include" : "Click to exclude from export" },
+      el("span", { className: "spk-dot" }),
+      el("span", { textContent: spk }),
+      el("span", { className: "spk-count", textContent: counts[spk] }));
+    chip.onclick = () => { off ? disabled.delete(spk) : disabled.add(spk); renderEditor(container, merged); };
+    return chip;
+  });
+  return el("div", { className: "row spk-bar", style: "margin-bottom:12px" },
+    el("span", { className: "muted", textContent: "Include:" }), ...chips);
+}
+
 function buildTable(container, merged, preview) {
   const tbody = el("tbody");
   const table = el("table", { className: "editor" },
@@ -232,7 +290,10 @@ function buildTable(container, merged, preview) {
       el("th", { textContent: "Flags" }), el("th", { textContent: "" }))),
     tbody);
 
-  merged.segments.forEach((seg, i) => tbody.append(buildRow(container, merged, seg, i, preview)));
+  merged.segments.forEach((seg, i) => {
+    if (container._disabled.has(seg.speaker)) return;  // hidden — toggle the speaker back on to show
+    tbody.append(buildRow(container, merged, seg, i, preview));
+  });
   return table;
 }
 
@@ -249,21 +310,23 @@ function buildRow(container, merged, seg, i, preview) {
   start.onchange = () => { seg.start = parseTime(start.value); };
   end.onchange = () => { seg.end = parseTime(end.value); };
 
-  const txt = el("input", { value: seg.text });
+  const txt = el("textarea", { value: seg.text, rows: 1 });
   txt.oninput = () => {
     seg.text = txt.value;
+    autoGrow(txt);                        // height tracks wrapped/multi-line content
     if (seg.words && seg.words.length && !seg.flags.includes("edited")) {
       seg.flags.push("edited");           // text changed -> word timings may be stale
       renderFlags(flagsCell, seg);
       tr.classList.add("flag-edited");
     }
   };
+  // Enter inserts a line break (natural textarea behavior). Escape reverts; Ctrl+↑/↓ moves rows.
   txt.onkeydown = (e) => {
-    if (e.key === "Enter") { e.preventDefault(); focusRow(container, i + 1); }
-    else if (e.key === "Escape") { Object.assign(seg, JSON.parse(snapshot)); renderEditor(container, merged); }
-    else if (e.key === "ArrowDown" && e.ctrlKey) { e.preventDefault(); focusRow(container, i + 1); }
-    else if (e.key === "ArrowUp" && e.ctrlKey) { e.preventDefault(); focusRow(container, i - 1); }
+    if (e.key === "Escape") { Object.assign(seg, JSON.parse(snapshot)); renderEditor(container, merged); }
+    else if (e.key === "ArrowDown" && e.ctrlKey) { e.preventDefault(); focusSibling(tr, 1); }
+    else if (e.key === "ArrowUp" && e.ctrlKey) { e.preventDefault(); focusSibling(tr, -1); }
   };
+  requestAnimationFrame(() => autoGrow(txt));   // size to initial content once in the DOM
 
   const flagsCell = el("td");
   renderFlags(flagsCell, seg);
@@ -274,7 +337,9 @@ function buildRow(container, merged, seg, i, preview) {
   const actions = el("td", {});
   if (preview) {
     const jump = el("button", { className: "ghost icon-only", title: "Play from here" }, icon("play"));
-    jump.onclick = () => playClip(preview.file_id, seg.start, seg.end - seg.start);
+    // play only this speaker's stream when we know the mapping (multi-track source); else downmix
+    const track = preview.trackOf ? preview.trackOf[seg.speaker] : undefined;
+    jump.onclick = () => playClip(preview.file_id, seg.start, seg.end - seg.start, track);
     actions.append(jump);
   }
   actions.append(del);
@@ -296,9 +361,17 @@ function renderFlags(cell, seg) {
   for (const f of seg.flags || []) cell.append(el("span", { className: `chip ${f}`, textContent: f }));
 }
 
-function focusRow(container, i) {
-  const rows = container.querySelectorAll("table.editor tbody tr");
-  if (i >= 0 && i < rows.length) rows[i]._textInput.focus();
+// Move focus to the adjacent rendered row's text (skips hidden/filtered rows automatically).
+function focusSibling(tr, dir) {
+  const next = dir > 0 ? tr.nextElementSibling : tr.previousElementSibling;
+  if (next && next._textInput) next._textInput.focus();
+}
+
+// Grow a text cell's textarea to fit its content (top stays put, bottom extends).
+function autoGrow(ta) {
+  if (!ta.scrollHeight) return;   // not laid out (e.g. hidden tab) — keep CSS min-height
+  ta.style.height = "auto";
+  ta.style.height = ta.scrollHeight + "px";
 }
 
 // timecode helpers for the editor inputs (HH:MM:SS.ss <-> seconds)
@@ -314,7 +387,7 @@ function parseTime(v) {
 }
 
 // --- export panel ----------------------------------------------------------------------
-function buildExportPanel(merged) {
+function buildExportPanel(container, merged) {
   const format = el("select");
   ["srt", "txt", "csv", "json"].forEach((f) => format.append(el("option", { value: f, textContent: f.toUpperCase() })));
   const filename = el("input", { value: "transcript", size: 14 });
@@ -338,7 +411,10 @@ function buildExportPanel(merged) {
       min_duration: +minDur.value, show_speakers: showSpk.checked,
       pad_seconds: +pad.value,
     };
-    await downloadExport(merged, format.value, filename.value || "transcript", options);
+    // Drop toggled-off speakers (all formats) — the backend just renders what we send.
+    const segs = merged.segments.filter((s) => !container._disabled.has(s.speaker));
+    if (!segs.length) { alert("All speakers are toggled off — nothing to export."); return; }
+    await downloadExport({ ...merged, segments: segs }, format.value, filename.value || "transcript", options);
   };
 
   const field = (label, node) => el("label", { className: "field" }, el("span", { textContent: label }), node);
@@ -366,6 +442,9 @@ async function downloadExport(merged, format, filename, options) {
 // Transcribe & Merge tab
 // =======================================================================================
 const uploaded = [];  // [{file_id, source}]
+
+// Declared before initTranscribeTab() runs — it calls syncDetect() immediately at load.
+const MERGE_THRESHOLD_IDS = ["opt-backchannel", "opt-bc-words", "opt-overlap", "opt-bleed-win", "opt-bleed-sim"];
 
 (function initTranscribeTab() {
   $("#choose-btn").onclick = () => browseFiles($("#choose-btn"));
@@ -430,7 +509,9 @@ function renderSources() {
       el("span", { className: "dur", textContent: `${it.source.duration.toFixed(1)}s` })));
 
     // FR-TK-4: track selector only when more than one stream.
-    if (it.source.tracks.length > 1) {
+    if (!it.source.tracks.length) {
+      box.append(el("div", { className: "err", textContent: "No audio tracks found in this file — it can't be transcribed." }));
+    } else if (it.source.tracks.length > 1) {
       it.source.tracks.forEach((t) => {
         const sel = el("input", { type: "checkbox", checked: t.selected });
         sel.onchange = () => { t.selected = sel.checked; };
@@ -461,8 +542,6 @@ function renderSources() {
   });
 }
 
-const MERGE_THRESHOLD_IDS = ["opt-backchannel", "opt-bc-words", "opt-overlap", "opt-bleed-win", "opt-bleed-sim"];
-
 function gatherOptions() {
   return {
     detect_conflicts: $("#opt-detect").checked,
@@ -487,27 +566,52 @@ async function runPipeline() {
   $("#progress-wrap").classList.add("show");
   setProgress(0, "starting…");
 
-  const res = await fetch("/api/transcribe", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sources, options: gatherOptions() }),
-  });
+  let res;
+  try {
+    res = await fetchTO("/api/transcribe", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sources, options: gatherOptions() }),
+    }, 30000);
+  } catch (e) {
+    setProgress(0, "couldn't reach the server to start — is it still running?");
+    runBtn.disabled = false; return;
+  }
   if (!res.ok) { setProgress(0, "error: " + (await res.text())); runBtn.disabled = false; return; }
   const { job_id } = await res.json();
   pollJob(job_id, runBtn);
 }
 
-async function pollJob(jobId, runBtn) {
+function pollJob(jobId, runBtn) {
+  let fails = 0;
   const tick = async () => {
-    const p = await (await fetch(`/api/progress/${jobId}`)).json();
+    let p;
+    try {
+      const r = await fetchTO(`/api/progress/${jobId}`);
+      if (!r.ok) throw new Error(await r.text());
+      p = await r.json();
+      fails = 0;
+    } catch (e) {
+      // Server briefly unresponsive (first-run model load ties it up) — keep waiting, never freeze.
+      $("#progress-msg").textContent = (++fails > 5)
+        ? "still working… first-run model load can take a few minutes (watch the server window)"
+        : "working… waiting for the server";
+      setTimeout(tick, 1200);
+      return;
+    }
     setProgress(p.progress, `${p.message || p.status}${p.elapsed ? " · " + fmtElapsed(p.elapsed) : ""}`);
     if (p.status === "done") {
-      const merged = await (await fetch(`/api/result/${jobId}`)).json();
-      $("#result-panel").style.display = "";
-      // preview audio only when one source (merged timeline == that file's timeline)
-      const preview = uploaded.length === 1
-        ? { file_id: uploaded[0].file_id, duration: uploaded[0].source.duration } : null;
-      renderEditor($("#editor-transcribe"), merged, preview);
-      setProgress(1, "done");
+      try {
+        const merged = await (await fetchTO(`/api/result/${jobId}`)).json();
+        $("#result-panel").style.display = "";
+        // preview audio only when one source (merged timeline == that file's timeline).
+        // trackOf maps speaker → audio-stream index so a per-line preview plays just that mic.
+        const preview = uploaded.length === 1
+          ? { file_id: uploaded[0].file_id, duration: uploaded[0].source.duration,
+              trackOf: Object.fromEntries(uploaded[0].source.tracks.map((t) => [t.speaker, t.track_index])) }
+          : null;
+        renderEditor($("#editor-transcribe"), merged, preview);
+        setProgress(1, "done");
+      } catch (e) { setProgress(1, "done — but couldn't load the result: " + e.message); }
       runBtn.disabled = false;
       return;
     }
@@ -550,10 +654,10 @@ let editMerged = null, editPreview = null;
   const dz = $("#dropzone-edit"), input = $("#file-input-edit");
   dz.onclick = () => input.click();
   dz.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } };
-  input.onchange = () => input.files[0] && readJsonFile(input.files[0]);
+  input.onchange = () => input.files[0] && readTranscriptFile(input.files[0]);
   dz.ondragover = (e) => { e.preventDefault(); dz.classList.add("over"); };
   dz.ondragleave = () => dz.classList.remove("over");
-  dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove("over"); e.dataTransfer.files[0] && readJsonFile(e.dataTransfer.files[0]); };
+  dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove("over"); e.dataTransfer.files[0] && readTranscriptFile(e.dataTransfer.files[0]); };
   $("#json-load").onclick = () => loadEdit($("#json-in").value);
   $("#edit-attach").onclick = attachEditAudio;
   $("#edit-load-another").onclick = resetEdit;
@@ -581,18 +685,18 @@ async function attachEditAudio() {
   renderEditor($("#editor-edit"), editMerged, editPreview);
 }
 
-function readJsonFile(file) {
+function readTranscriptFile(file) {
   const r = new FileReader();
-  r.onload = () => loadEdit(r.result);
+  r.onload = () => loadEdit(r.result, file.name);
   r.readAsText(file);
 }
 
-function loadEdit(text) {
+function loadEdit(text, name) {
   const errSpan = $("#json-err");
   errSpan.textContent = "";
   let merged;
-  try { merged = JSON.parse(text); } catch (e) { errSpan.textContent = "Invalid JSON"; return; }
-  if (!merged || !Array.isArray(merged.segments)) { errSpan.textContent = "Missing segments[]"; return; }
+  try { merged = parseTranscript(text, name); }
+  catch (e) { errSpan.textContent = e.message || "Couldn't read this file"; return; }
   merged.version = merged.version || "1.0";
   merged.sources = merged.sources || [];
   merged.segments.forEach((s) => { s.words = s.words || []; s.flags = s.flags || []; });
@@ -602,6 +706,112 @@ function loadEdit(text) {
   $("#paste-details").style.display = "none";
   $("#edit-panel").style.display = "";
   renderEditor($("#editor-edit"), merged, null);  // no source yet — Attach audio to enable preview
+}
+
+// --- transcript import: parse any format we export back into a {segments:[...]} object ---
+// JSON keeps word-level timings; SRT/TXT/CSV are lossy (words:[]), mirroring backend/app/export.py.
+function parseTranscript(text, name) {
+  const ext = (name || "").toLowerCase().split(".").pop();
+  const fmt = ["json", "srt", "csv", "txt"].includes(ext) ? ext : sniffFormat(text);
+  let merged;
+  if (fmt === "json") merged = parseJsonTranscript(text);
+  else if (fmt === "csv") merged = { segments: parseCsv(text) };
+  else if (fmt === "srt") merged = { segments: parseSrt(text) };
+  else merged = { segments: parseTxt(text) };
+  if (!merged || !Array.isArray(merged.segments) || !merged.segments.length)
+    throw new Error("No transcript lines found in this file");
+  return merged;
+}
+
+function sniffFormat(text) {
+  const t = (text || "").trim();
+  if (t.startsWith("{") || t.startsWith("[{")) return "json";
+  if (/^\s*start\s*,\s*end\s*,\s*speaker/i.test(t)) return "csv";
+  if (/^\s*\[\d\d?:\d\d:\d\d/.test(t)) return "txt";   // [hh:mm:ss,mmm --> ...] text
+  if (/-->/.test(t)) return "srt";
+  return "json";
+}
+
+function parseJsonTranscript(text) {
+  let merged;
+  try { merged = JSON.parse(text); } catch (e) { throw new Error("Invalid JSON"); }
+  if (!merged || !Array.isArray(merged.segments)) throw new Error("Missing segments[]");
+  return merged;
+}
+
+// "HH:MM:SS,mmm" -> seconds (tolerates "." as the millisecond separator)
+function parseSrtTime(v) {
+  const m = String(v).trim().match(/(\d+):(\d\d):(\d\d)[,.](\d{1,3})/);
+  if (!m) return 0;
+  return +m[1] * 3600 + +m[2] * 60 + +m[3] + +(`0.${m[4]}`);
+}
+
+// Pull a leading "Name: " speaker label off a line (as written by show_speakers exports).
+function splitSpeaker(s) {
+  const m = s.match(/^([^:]{1,40}):\s(.*)$/);
+  return m ? { speaker: m[1].trim(), text: m[2] } : { speaker: "Speaker", text: s };
+}
+
+function parseSrt(text) {
+  const segs = [];
+  for (const block of text.replace(/\r/g, "").split(/\n\s*\n/)) {
+    const lines = block.split("\n").filter((l) => l.trim() !== "");
+    if (!lines.length) continue;
+    let i = /^\d+$/.test(lines[0].trim()) ? 1 : 0;   // optional cue-index line
+    const tc = lines[i] && lines[i].match(/(.+?)\s*-->\s*(.+)/);
+    if (!tc) continue;
+    const { speaker, text: t } = splitSpeaker(lines.slice(i + 1).join(" ").trim());
+    segs.push({ speaker, start: parseSrtTime(tc[1]), end: parseSrtTime(tc[2]), text: t, words: [], flags: [] });
+  }
+  return segs;
+}
+
+function parseTxt(text) {
+  const segs = [];
+  for (const raw of text.replace(/\r/g, "").split("\n")) {
+    const m = raw.trim().match(/^\[(.+?)\s*-->\s*(.+?)\]\s*(.*)$/);
+    if (!m) continue;
+    const { speaker, text: t } = splitSpeaker(m[3]);
+    segs.push({ speaker, start: parseSrtTime(m[1]), end: parseSrtTime(m[2]), text: t, words: [], flags: [] });
+  }
+  return segs;
+}
+
+// Minimal RFC-4180 reader (handles quoted fields with commas/newlines/"" escapes).
+function parseCsvRows(text) {
+  const rows = [], s = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  let row = [], field = "", inQ = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inQ) {
+      if (c === '"') { if (s[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function parseCsv(text) {
+  const rows = parseCsvRows(text).filter((r) => r.some((c) => c !== ""));
+  if (!rows.length) return [];
+  const head = rows[0].map((h) => h.trim().toLowerCase());
+  const hasHeader = head[0] === "start" && head[1] === "end";
+  const at = hasHeader
+    ? { start: head.indexOf("start"), end: head.indexOf("end"), speaker: head.indexOf("speaker"),
+        text: head.indexOf("text"), flags: head.indexOf("flags") }
+    : { start: 0, end: 1, speaker: 2, text: 3, flags: 4 };
+  return (hasHeader ? rows.slice(1) : rows).map((r) => ({
+    speaker: (r[at.speaker] || "Speaker").trim(),
+    start: parseFloat(r[at.start]) || 0,
+    end: parseFloat(r[at.end]) || 0,
+    text: r[at.text] || "",
+    words: [],
+    flags: (at.flags >= 0 ? (r[at.flags] || "") : "").split("|").map((f) => f.trim()).filter(Boolean),
+  }));
 }
 
 // =======================================================================================
@@ -728,9 +938,14 @@ function runBatch() {
 async function startBatch(body) {
   const btn = $("#run-batch");
   btn.disabled = true;
-  const res = await fetch("/api/batch", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetchTO("/api/batch", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }, 30000);
+  } catch (e) {
+    $("#batch-err").textContent = "couldn't reach the server to start the batch."; btn.disabled = false; return;
+  }
   if (!res.ok) { $("#batch-err").textContent = "Batch failed: " + (await res.text()); btn.disabled = false; return; }
   const { batch_id } = await res.json();
   $("#batch-status-panel").style.display = "";
@@ -739,7 +954,12 @@ async function startBatch(body) {
 
 function pollBatch(id, btn) {
   const tick = async () => {
-    const b = await (await fetch(`/api/batch/${id}`)).json();
+    let b;
+    try {
+      const r = await fetchTO(`/api/batch/${id}`);
+      if (!r.ok) throw new Error(await r.text());
+      b = await r.json();
+    } catch (e) { setTimeout(tick, 1500); return; }   // transient — keep waiting, don't die
     renderBatchStatus(b);
     if (b.status === "done") { btn.disabled = false; return; }
     setTimeout(tick, 800);
@@ -748,10 +968,13 @@ function pollBatch(id, btn) {
 }
 
 function renderBatchStatus(b) {
+  const pct = Math.round((b.progress || 0) * 100);
+  $("#batch-bar").style.width = pct + "%";
+  $("#batch-pct").textContent = pct + "%";
   const root = $("#batch-status");
   root.innerHTML = "";
   root.append(el("div", { className: "muted", style: "margin-bottom:6px",
-    textContent: `Overall: ${Math.round((b.progress || 0) * 100)}% · ${fmtElapsed(b.elapsed)}` }));
+    textContent: `Overall: ${pct}% · ${fmtElapsed(b.elapsed)}` }));
   b.projects.forEach((p) => {
     const pct = Math.round((p.progress || 0) * 100);
     const state = p.status === "running" ? `running ${pct}% · ${fmtElapsed(p.elapsed)}` : p.status;

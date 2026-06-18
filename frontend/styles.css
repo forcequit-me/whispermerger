@@ -172,13 +172,29 @@ table.editor tr.flag-backchannel { background: rgba(91, 157, 255, .07); }
 table.editor tr.flag-bleed_suspected { background: rgba(224, 98, 94, .07); }
 table.editor td.tc input { width: 78px; }
 table.editor td.spk input { width: 96px; }
-table.editor td.txt input { width: 100%; }
+table.editor td.txt textarea {
+  width: 100%; resize: none; overflow: hidden;
+  white-space: pre-wrap; overflow-wrap: anywhere;   /* wrap + honor manual breaks; break long tokens */
+  line-height: 1.4; min-height: 34px; display: block; vertical-align: top;
+}
 table.editor tr.editing { background: var(--panel-2); }
 .chip { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-right: 4px; }
 .chip.overlap { background: rgba(217,164,65,.2); color: var(--overlap); }
 .chip.backchannel { background: rgba(91,157,255,.2); color: var(--backchannel); }
 .chip.bleed_suspected { background: rgba(224,98,94,.2); color: var(--bleed); }
 .chip.edited, .chip.preferred { background: rgba(87,184,148,.2); color: var(--ok); }
+
+/* per-speaker export toggle bar (shared editor) */
+.spk-bar { flex-wrap: wrap; gap: 6px; }
+.spk-toggle {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 12px; padding: 3px 10px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+}
+.spk-toggle .spk-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+.spk-toggle .spk-count { color: var(--muted); font-size: 10px; font-family: var(--mono); }
+.spk-toggle.off { opacity: .55; text-decoration: line-through; }
+.spk-toggle.off .spk-dot { background: var(--muted); }
 
 /* split-lane view (Label Track) — DAW-style stacked speaker lanes */
 #label-lanes { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 8px 10px; }

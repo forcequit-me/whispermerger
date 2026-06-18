@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhisperMerger</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=10" />
 </head>
 <body>
   <header>
@@ -87,8 +87,12 @@
       </div>
 
       <div class="panel" id="batch-status-panel" style="display:none">
-        <h2>Progress</h2>
-        <div id="batch-status"></div>
+        <div class="progress-head">
+          <h2>Progress</h2>
+          <span class="progress-pct" id="batch-pct">0%</span>
+        </div>
+        <div class="bar"><div id="batch-bar"></div></div>
+        <div id="batch-status" style="margin-top:12px"></div>
       </div>
     </section>
 
@@ -220,6 +224,14 @@
           <button id="label-run" class="primary">Transcribe labeled regions</button>
           <span id="label-status" class="muted"></span>
         </div>
+        <div class="progress-wrap" id="label-progress" style="margin-top:12px">
+          <div class="progress-head">
+            <h2>Progress</h2>
+            <span class="progress-pct" id="label-pct">0%</span>
+          </div>
+          <div class="bar"><div id="label-bar"></div></div>
+          <div class="progress-msg" id="label-progress-msg"></div>
+        </div>
       </div>
 
       <div class="panel" id="label-result-panel" style="display:none">
@@ -245,11 +257,11 @@
         <ol class="entry-steps">
           <li><b>1</b> Drop or choose</li><li><b>2</b> Edit</li><li><b>3</b> Export</li>
         </ol>
-        <p class="entry-note muted">drop a .json here, or click to choose</p>
-        <input id="file-input-edit" type="file" accept=".json" class="hidden" />
+        <p class="entry-note muted">drop a .json / .srt / .txt / .csv here, or click to choose</p>
+        <input id="file-input-edit" type="file" accept=".json,.srt,.txt,.csv" class="hidden" />
       </div>
       <details class="paste-details" id="paste-details" style="margin-top:12px">
-        <summary class="muted">or paste JSON</summary>
+        <summary class="muted">or paste JSON / SRT / TXT / CSV</summary>
         <textarea id="json-in" class="json-in" placeholder='{"version":"1.0","segments":[...]}'></textarea>
         <div style="margin-top:8px"><button id="json-load" class="ghost">Load pasted JSON</button>
           <span id="json-err" class="err"></span></div>
@@ -266,7 +278,7 @@
     </section>
   </main>
 
-  <script src="app.js"></script>
-  <script type="module" src="labeltrack.js"></script>
+  <script src="app.js?v=10"></script>
+  <script type="module" src="labeltrack.js?v=7"></script>
 </body>
 </html>
