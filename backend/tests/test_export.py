@@ -23,6 +23,14 @@ def test_export_all_writes_four_files(tmp_path):
     assert all(p.exists() and p.read_text(encoding="utf-8") for p in written)
 
 
+def test_export_all_formats_filter(tmp_path):
+    m = _merged(Segment(speaker="Max", start=0, end=1, text="hello", words=_words("hello", 0)))
+    written = export_all(m, tmp_path / "proj", "proj", formats=["txt"])
+    assert {p.name for p in written} == {"proj.txt"}
+    assert not (tmp_path / "proj" / "proj.srt").exists()
+    assert not (tmp_path / "proj" / "proj.json").exists()
+
+
 def test_timecode_format():
     assert _timecode(0) == "00:00:00,000"
     assert _timecode(3661.5) == "01:01:01,500"

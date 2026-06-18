@@ -115,6 +115,8 @@ class ExportRequest(BaseModel):
 class BatchProjectIn(BaseModel):
     name: str
     sources: list[SourceSelection]
+    per_file: bool = False                  # one transcript per file (vs merge/sequence)
+    formats: list[str] | None = None        # which exports to write; None = all four
 
 
 class BatchRequest(BaseModel):
@@ -493,10 +495,16 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
         raise HTTPException(400, "output_folder required when output_mode='folder'")
     cache = request.app.state.cache
 
-    projects = [
-        ProjectInput(name=p.name, prepared=_prepare_sources(request.app.state, p.sources))
-        for p in body.projects
-    ]
+    projects = []
+    for p in body.projects:
+        if p.formats is not None and not [f for f in p.formats if f in _FORMATS]:
+            raise HTTPException(400, "choose at least one format")
+        projects.append(ProjectInput(
+            name=p.name,
+            prepared=_prepare_sources(request.app.state, p.sources),
+            per_file=p.per_file,
+            formats=p.formats,
+        ))
     options = body.options.to_options()
     batch = request.app.state.batches.create([p.name for p in body.projects])
 

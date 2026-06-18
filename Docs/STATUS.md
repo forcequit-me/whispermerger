@@ -52,8 +52,9 @@ speaker's lines from the table and from every export) (new requests).
 ## Built beyond the PRD (this chat)
 
 - **Batch "transcription studio"** — Method 1 (a project's session files auto-merge sequentially
-  with cumulative offsets) + Method 2 (queue many projects, each auto-exports all formats to its
-  own subfolder). Per-project error isolation; cache-resumable. New `batch.py` + `/api/batch`.
+  with cumulative offsets) + Method 2 (queue many projects, each exports to its own subfolder).
+  Output is now selectable (see 2026-06-18 note): merge vs one-transcript-per-file and which
+  formats. Per-project error isolation; cache-resumable. New `batch.py` + `/api/batch`.
 - **In-place file reads via a native picker** (`/api/browse`, `/api/browse-folder`) — no upload/
   copy, so 100–200 GB files work. Replaced the byte-upload flow.
 - Toggleable conflict detection and subtitle limits; timestamps added to TXT export.
@@ -161,7 +162,26 @@ tabs (Transcribe & Merge, Label Track, Edit Transcript) at once. No backend chan
   `table.editor:not(.has-notes) .notes-col` until a visible line carries a flag (conflict or
   `edited`); editing a word-timed line reveals it live (`tr.closest("table.editor").add("has-notes")`)
   without losing focus.
-- Asset cache-bust bumped to `?v=12` (css + js).
+- Asset cache-bust bumped to `?v=13` (css + js).
+
+## Batch output settings — global + per-project (2026-06-18)
+
+Lets a big library export the way the user wants (e.g. ~200h → one TXT per recording to feed an AI).
+
+- **Format selection** — `export.export_all(..., formats=None)` filters which of srt/txt/csv/json
+  to write (`None` = all four, unchanged default). Plumbed through `batch.run_batch` per project.
+- **Per-file vs merge, per project** — `batch.ProjectInput` gains `per_file` + `formats`;
+  `run_batch` either merges a project's files (default) or runs the pipeline per source file and
+  writes one transcript each (basename = source file stem, de-duped) into the project folder.
+  Per-file progress aggregates as "file X/N". `routes/api.py` `BatchProjectIn` carries `per_file`
+  + `formats` (validated non-empty).
+- **UI: global defaults + override** — Batch output panel has global "one transcript per file" +
+  format checkboxes; each project card has an "Override output settings" toggle revealing its own
+  per-file + format picks. The frontend resolves global-vs-override into concrete per-project
+  values before POSTing, so the backend has no global/override logic. Timing UI unchanged
+  (per-project + total elapsed already tracked).
+- Tests: `test_export.py` (formats filter) + `test_batch.py` (per-file → one transcript per source;
+  formats filter limits a merge project).
 
 ## Partial / outstanding (v1 polish)
 

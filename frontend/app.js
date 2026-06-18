@@ -867,6 +867,36 @@ function renderProjects() {
   projects.forEach((proj, pi) => root.append(buildProjectCard(proj, pi)));
 }
 
+// Global batch output defaults (read live from the Output panel checkboxes).
+function globalFormats() { return [...document.querySelectorAll(".batch-fmt:checked")].map((c) => c.value); }
+function globalPerFile() { return $("#batch-perfile").checked; }
+
+// Per-project output settings: inherit the global defaults, or override for this project alone.
+function buildProjectOutput(proj) {
+  const ov = el("input", { type: "checkbox", checked: !!proj.override });
+  ov.onchange = () => {
+    proj.override = ov.checked;
+    if (proj.override && !proj.formats) { proj.formats = globalFormats(); proj.perFile = globalPerFile(); }
+    renderProjects();
+  };
+  const row = el("div", { className: "row", style: "margin-top:6px" },
+    el("label", { className: "opt" }, ov, "Override output settings"));
+  if (!proj.override) {
+    row.append(el("span", { className: "muted", textContent: "using global defaults" }));
+    return row;
+  }
+  const pf = el("input", { type: "checkbox", checked: !!proj.perFile });
+  pf.onchange = () => { proj.perFile = pf.checked; };
+  const fmtChecks = ["srt", "txt", "csv", "json"].map((f) =>
+    el("input", { type: "checkbox", value: f, checked: (proj.formats || []).includes(f) }));
+  fmtChecks.forEach((cb) => { cb.onchange = () => { proj.formats = fmtChecks.filter((c) => c.checked).map((c) => c.value); }; });
+  row.append(
+    el("label", { className: "opt" }, pf, "One transcript per file"),
+    el("span", { className: "muted", textContent: "Formats:" }),
+    ...fmtChecks.map((cb) => el("label", { className: "opt" }, cb, cb.value.toUpperCase())));
+  return row;
+}
+
 function buildProjectCard(proj, pi) {
   const box = el("div", { className: "source" });
   const name = el("input", { value: proj.name, style: "font-weight:600; width:240px" });
@@ -878,6 +908,7 @@ function buildProjectCard(proj, pi) {
   removeProj.onclick = () => { projects.splice(pi, 1); renderProjects(); };
   box.append(el("div", { className: "name" },
     name, el("div", { className: "spacer" }), addFiles, removeProj));
+  box.append(buildProjectOutput(proj));
 
   proj.files.forEach((_, fi) => box.append(buildFileRow(proj, fi)));
   if (!proj.files.length) box.append(el("div", { className: "muted", textContent: "no files yet — click Add files" }));
@@ -940,12 +971,23 @@ function runBatch() {
   const mode = document.querySelector("input[name=outmode]:checked").value;
   if (mode === "folder" && !outputFolder) { err.textContent = "Choose an output folder."; return; }
 
+  // Resolve each project's output: its own settings if overriding, else the global defaults.
+  const gFormats = globalFormats(), gPerFile = globalPerFile();
+  const resolved = usable.map((p) => ({
+    p,
+    perFile: p.override ? !!p.perFile : gPerFile,
+    formats: p.override ? (p.formats || []) : gFormats,
+  }));
+  if (resolved.some((r) => !r.formats.length)) { err.textContent = "Pick at least one output format."; return; }
+
   const body = {
     output_mode: mode,
     output_folder: outputFolder,
     options: { detect_conflicts: $("#batch-detect").checked },
-    projects: usable.map((p) => ({
+    projects: resolved.map(({ p, perFile, formats }) => ({
       name: p.name,
+      per_file: perFile,
+      formats,
       sources: p.files.map((f, i) => ({
         file_id: f.file_id,
         sequence: i,

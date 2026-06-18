@@ -58,6 +58,29 @@ def test_error_isolation_continues_queue(two_stream_file, tmp_path):
     assert batch.projects[1].status is Status.DONE  # queue continued
 
 
+def test_per_file_writes_one_transcript_per_source(two_stream_file, tmp_path):
+    proj = ProjectInput("Library", [
+        _prepared(two_stream_file, "intro.mkv", 2.0, sequence=0),
+        _prepared(two_stream_file, "outro.mkv", 2.0, sequence=1),
+    ], per_file=True, formats=["txt"])
+    batch = _run([proj], output_mode="folder", output_folder=str(tmp_path))
+    assert batch.projects[0].status is Status.DONE
+    proj_dir = tmp_path / "Library"
+    assert (proj_dir / "intro.txt").exists()
+    assert (proj_dir / "outro.txt").exists()
+    # only the chosen format, and no merged <project>.* file
+    assert not (proj_dir / "intro.srt").exists()
+    assert not (proj_dir / "Library.txt").exists()
+
+
+def test_formats_filter_limits_merge_output(two_stream_file, tmp_path):
+    proj = ProjectInput("Solo", [_prepared(two_stream_file, "a.mkv", 2.0)], formats=["txt"])
+    _run([proj], output_mode="folder", output_folder=str(tmp_path))
+    assert (tmp_path / "Solo" / "Solo.txt").exists()
+    for ext in ("srt", "csv", "json"):
+        assert not (tmp_path / "Solo" / f"Solo.{ext}").exists()
+
+
 def test_output_mode_source_writes_next_to_file(two_stream_file, tmp_path):
     import shutil
     local = tmp_path / "session.mkv"

@@ -35,6 +35,8 @@ class Status(str, Enum):
 class ProjectInput:
     name: str
     prepared: list[PreparedSource]
+    per_file: bool = False                       # one transcript per source file (vs merge/sequence)
+    formats: Optional[list[str]] = None          # which exports to write; None = all four
 
 
 @dataclass
@@ -106,15 +108,34 @@ def run_batch(
         ps.started_at = time.time()
         ps.status = Status.RUNNING
         try:
-            merged = run_merge_pipeline(
-                project.prepared, transcribe_fn,
-                options=options,
-                progress_cb=lambda frac, msg: _set(ps, frac, msg),
-            )
             parent = _project_output_parent(project, output_mode, output_folder)
             base = _safe_name(project.name)
-            export_all(merged, parent / base, base)
-            ps.output_dir = str(parent / base)
+            out_dir = parent / base
+            if project.per_file:
+                # One transcript per source file, all into the project folder.
+                n = len(project.prepared) or 1
+                seen: dict[str, int] = {}
+                for i, src in enumerate(project.prepared):
+                    name = src.input.filename
+
+                    def cb(frac: float, msg: str, i=i, name=name) -> None:
+                        _set(ps, (i + frac) / n, f"file {i + 1}/{n}: {name} · {msg}")
+
+                    merged = run_merge_pipeline(
+                        [src], transcribe_fn, options=options, progress_cb=cb)
+                    stem = _safe_name(Path(name).stem)
+                    seen[stem] = seen.get(stem, 0) + 1
+                    if seen[stem] > 1:
+                        stem = f"{stem}_{seen[stem]}"
+                    export_all(merged, out_dir, stem, formats=project.formats)
+            else:
+                merged = run_merge_pipeline(
+                    project.prepared, transcribe_fn,
+                    options=options,
+                    progress_cb=lambda frac, msg: _set(ps, frac, msg),
+                )
+                export_all(merged, out_dir, base, formats=project.formats)
+            ps.output_dir = str(out_dir)
             ps.finished_at = time.time()
             ps.progress = 1.0
             ps.message = f"done in {ps.elapsed:.0f}s"

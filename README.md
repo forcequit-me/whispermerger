@@ -19,8 +19,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   audio streams per file, mixable in one project. Tracks default to Speaker 1, 2, … (editable).
 - **Merge engine** — interleaves speakers by time and flags conflicts: backchannel
   ("yeah"/"uh-huh"), genuine overlap, and mic bleed. Conflict detection is toggleable.
-- **Batch "studio"** — queue multiple projects at once; each project's session files merge
-  sequentially into one transcript and auto-export to its own subfolder. No babysitting.
+- **Batch "studio"** — queue multiple projects at once and run them unattended. Set **global
+  output defaults** (and override per project): **merge a project's files into one transcript** or
+  emit **one transcript per file**, and tick **which formats** to write (SRT/TXT/CSV/JSON). Each
+  project exports to its own subfolder; per-project + total elapsed shown live. No babysitting.
 - **Single-track labeling (v2)** — for one mixed track with multiple speakers (interview,
   podcast, collab): silero-VAD auto-detects speech on a WaveSurfer waveform, you assign regions
   to speakers (click / shift-click a run / ctrl-click; number keys; bulk-assign; duplicate a
@@ -97,8 +99,10 @@ track-audio, ~11,860 words. Comfortably beats the 12–20 min / 5 h target.
 
 - **Batch** (default tab) — *New project* → name it → *Add files* (native picker) → order
   with ↑/↓ → optionally name speakers → repeat for more projects → choose a single output
-  folder or "next to source files" → **Run batch**. Each project writes
-  `<output>/<project>/<project>.{srt,txt,csv,json}`. A failed project is skipped, not fatal.
+  folder or "next to source files" → set the **output defaults** (merge vs one-transcript-per-file,
+  and which formats; override per project as needed) → **Run batch**. Each project writes to
+  `<output>/<project>/` — either `<project>.{formats}` (merge) or one `<recording>.{formats}` per
+  file. A failed project is skipped, not fatal.
 - **Transcribe & Merge** — one-off: pick files, label tracks, run, edit, export.
 - **Label Track** — single-track files: add one (or several to sequence), auto-detected speech
   appears on a waveform, label regions per speaker, then transcribe into one transcript.

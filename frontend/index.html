@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhisperMerger</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=12" />
+  <link rel="stylesheet" href="styles.css?v=13" />
 </head>
 <body>
   <header>
@@ -56,7 +56,7 @@
         <ol class="entry-steps">
           <li><b>1</b> New project</li><li><b>2</b> Add files</li><li><b>3</b> Run batch</li>
         </ol>
-        <p class="entry-note muted">each project merges its files and exports SRT / TXT / CSV / JSON to its own folder</p>
+        <p class="entry-note muted">each project becomes one transcript — or one per file — exporting the formats you pick, to its own folder</p>
       </div>
 
       <div class="panel" id="batch-projects-panel" style="display:none">
@@ -79,7 +79,19 @@
           <label class="opt"><input type="checkbox" id="batch-detect" checked>
             Detect conflicts (backchannel / overlap / bleed)</label>
         </div>
-        <div class="muted" style="margin-top:6px">Each project saves to its own subfolder with all formats (SRT, TXT, CSV, JSON).</div>
+        <div class="row" style="margin-top:10px"><span class="muted">Default output — applies to every project unless a project overrides it:</span></div>
+        <div class="row" style="margin-top:4px">
+          <label class="opt"><input type="checkbox" id="batch-perfile">
+            One transcript per file <span class="muted">(otherwise a project's files merge/sequence into one)</span></label>
+        </div>
+        <div class="row" style="margin-top:4px">
+          <span class="muted">Formats:</span>
+          <label class="opt"><input type="checkbox" class="batch-fmt" value="srt" checked> SRT</label>
+          <label class="opt"><input type="checkbox" class="batch-fmt" value="txt" checked> TXT</label>
+          <label class="opt"><input type="checkbox" class="batch-fmt" value="csv" checked> CSV</label>
+          <label class="opt"><input type="checkbox" class="batch-fmt" value="json" checked> JSON</label>
+        </div>
+        <div class="muted" style="margin-top:6px">Each project saves to its own subfolder. Per project you can merge files into one transcript or export one transcript per file, and pick which formats to write.</div>
         <div class="row" style="margin-top:12px">
           <button id="run-batch" class="primary">Run batch</button>
           <span id="batch-err" class="err"></span>
@@ -278,7 +290,7 @@
     </section>
   </main>
 
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=13"></script>
   <script type="module" src="labeltrack.js?v=7"></script>
 </body>
 </html>

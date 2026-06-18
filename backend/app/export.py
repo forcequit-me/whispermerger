@@ -62,8 +62,12 @@ def to_csv(merged: MergedOutput) -> str:
 
 
 def export_all(merged: MergedOutput, out_dir: Path, basename: str,
-               opts: ExportOptions | None = None) -> list[Path]:
-    """Write all four formats as <basename>.{srt,txt,csv,json} into out_dir (batch export)."""
+               opts: ExportOptions | None = None,
+               formats: list[str] | None = None) -> list[Path]:
+    """Write the chosen formats as <basename>.{ext} into out_dir (batch export).
+
+    `formats` selects which of srt/txt/csv/json to write; None (default) writes all four.
+    """
     opts = opts or ExportOptions()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -73,10 +77,11 @@ def export_all(merged: MergedOutput, out_dir: Path, basename: str,
         "csv": lambda: to_csv(merged),
         "json": lambda: to_json(merged),
     }
+    chosen = [f for f in (formats or renderers) if f in renderers]
     written = []
-    for ext, render in renderers.items():
+    for ext in chosen:
         path = out_dir / f"{basename}.{ext}"
-        path.write_text(render(), encoding="utf-8")
+        path.write_text(renderers[ext](), encoding="utf-8")
         written.append(path)
     return written
 
