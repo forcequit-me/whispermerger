@@ -29,18 +29,25 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   views. **Horizontal zoom** (out = whole track in view) + **vertical/amplitude zoom** (for quiet
   audio) + optional **region padding** (widen detected speech a touch so words aren't clipped).
   Overlapping speech is supported and flagged.
-- **Editor** — inline edit speaker/text/timing, global speaker rename, remove a speaker and
-  all their lines, add/remove lines, keyboard shortcuts, conflict highlighting, per-line audio
+- **Editor** — inline edit speaker/text/timing (text cells **wrap and auto-grow** so long lines
+  stay fully visible instead of running off the edge), global speaker rename, **per-speaker
+  show/hide toggle** (hides a speaker's lines from the table _and_ from every export, non-
+  destructively — toggle them back anytime) alongside the destructive **remove a speaker and all
+  their lines**, add/remove lines, keyboard shortcuts, conflict highlighting, per-line audio
   preview (play a line or drag a jump bar — instant input-seek clips, works on huge files).
   **Spacebar** toggles play/pause on whatever you last played (unless you're typing in a field).
 - **Waveform + scrubbing in every editor** — drawn from server-computed downsampled peaks
   (`/api/peaks`), so the browser never downloads full audio (scales to 100+ GB files). Click to
   play from any point; **horizontal zoom** for precision (zoomed all the way out shows the whole
   file) and **vertical/amplitude zoom** to read quiet audio. In *Edit Transcript*, *Attach audio*
-  to a loaded JSON to enable the waveform + ▶ for verification.
+  to a loaded transcript to enable the waveform + ▶ for verification.
+- **Edit Transcript loads any of our formats** — drop/choose/paste a WhisperMerger **JSON, SRT,
+  TXT, or CSV** (format auto-detected); JSON round-trips word-level timing, the others import as
+  plain segments. Standard SRT from other tools loads too (the parser is generic).
 - **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing; SRT splits lines on real
   word timestamps (toggleable subtitle limits). **Pad (s)** extends each segment's start/end by N
   seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.
+  Speakers toggled off in the editor are dropped from whichever format you export.
 - **Caching** — WhisperX output is cached by file hash + model, so re-runs skip transcription.
 - **Stage-aware progress + timing** — every processing tab shows a progress bar with the current
   stage (Transcribe & Merge has an Extract → Transcribe → Merge stepper; Batch shows overall +
@@ -93,7 +100,8 @@ track-audio, ~11,860 words. Comfortably beats the 12–20 min / 5 h target.
 - **Transcribe & Merge** — one-off: pick files, label tracks, run, edit, export.
 - **Label Track** — single-track files: add one (or several to sequence), auto-detected speech
   appears on a waveform, label regions per speaker, then transcribe into one transcript.
-- **Edit Transcript** — load a WhisperMerger `.json` to tweak and re-export (e.g. a batch result).
+- **Edit Transcript** — load a WhisperMerger transcript in any export format (`.json` / `.srt` /
+  `.txt` / `.csv`, or paste it) to tweak and re-export (e.g. a batch result).
 
 ## Architecture
 

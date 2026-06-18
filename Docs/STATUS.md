@@ -1,7 +1,7 @@
 # WhisperMerger — Build Status
 
 Snapshot of what's built vs. outstanding, mapped against `whispermerger-prd.md` (FR-\* IDs)
-and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-11.
+and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-18.
 
 ## Summary
 
@@ -10,8 +10,9 @@ Both v1 (multi-track stems + batch studio) and v2 (single-track manual diarizati
 WSL2 not needed). Full pipeline works end-to-end: pick files → transcribe on GPU (WhisperX
 large-v3 + wav2vec2) → merge with conflict flags → edit → export. **Validated on a real 56 GB /
 1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **70 GPU-independent
-tests pass**; the GPU path passes the §11.3 smoke gate. Remaining work is optional polish (some
-`FR-UI-*` toggles) and foreign-format import.
+tests pass**; the GPU path passes the §11.3 smoke gate. The Edit tab now imports all of our
+export formats (JSON/SRT/TXT/CSV); remaining work is optional polish (some `FR-UI-*` toggles)
+and proprietary-format import (Descript/Premiere).
 
 ## Built ✅
 
@@ -45,7 +46,8 @@ retired (folded into the pipeline).
 
 **Editor (§8.6, partial):** FR-UI-1 inline edit speaker/text/timing · FR-UI-2 global rename ·
 FR-UI-8 custom export filename · FR-UI-10 conflict-flag highlighting. Plus **remove a speaker +
-all their lines** (new request).
+all their lines** (destructive) and a non-destructive **per-speaker show/hide toggle** (hides a
+speaker's lines from the table and from every export) (new requests).
 
 ## Built beyond the PRD (this chat)
 
@@ -123,6 +125,29 @@ all their lines** (new request).
   "starting…"; clearer "still working… first-run model load" messaging. Cache-busting `?v=` on
   css/js so stale assets don't linger during iteration.
 
+## Editor toggles + multi-format import + wrapping rows (2026-06-18)
+
+All front-end, in the shared editor (`renderEditor` in `app.js`) so they land in **all three**
+tabs (Transcribe & Merge, Label Track, Edit Transcript) at once. No backend changes.
+
+- **Per-speaker show/hide toggle** — new `buildSpeakerBar` renders an "Include:" chip per distinct
+  speaker (with line count); clicking toggles a `container._disabled` set. Disabled speakers are
+  **omitted from the table entirely** (`buildTable` skips their segments, preserving true indices
+  for delete/edit) **and filtered out of every export** (`buildExportPanel` posts only the kept
+  segments to `/api/export`). Non-destructive — distinct from the existing "Remove speaker". An
+  all-off export is blocked with a "nothing to export" alert. (Started as a dim/strike treatment;
+  switched to full hide for a cleaner view — `row-muted` styling removed.)
+- **Edit tab imports all export formats** — file picker/drop/paste now accept `.json/.srt/.txt/
+  .csv`; `parseTranscript(text, name)` dispatches by extension (sniff fallback) to JSON / SRT /
+  TXT / CSV parsers that mirror `export.py` (incl. a small RFC-4180 CSV reader and `Speaker:`
+  prefix stripping). JSON keeps `words`; the rest import with `words:[]`.
+- **Auto-growing, wrapping text cells** — the per-row text `<input>` became an auto-sizing
+  `<textarea>` (`autoGrow` sets height from `scrollHeight`); long lines now wrap and the row grows
+  **downward** (cells are `vertical-align: top`) instead of overflowing horizontally. **Enter now
+  inserts a line break** (line breaks persist in `seg.text` and ride through JSON/CSV cleanly,
+  fold into SRT wrapping); row navigation moved to sibling-based `focusSibling` for Ctrl+↑/↓ so it
+  skips hidden rows. Asset cache-bust bumped to `?v=10`.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected` and an `rms_fn` hook exists, but
@@ -132,12 +157,16 @@ all their lines** (new request).
   CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line
   starts at the previous line's end), not the full CC-placement logic.
-- **FR-UI-7 keyboard:** Enter (next), Escape (revert), Ctrl+↑/↓ (move) done; Ctrl+Enter and bare
-  arrow-up/down not bound.
+- **FR-UI-7 keyboard:** Escape (revert) and Ctrl+↑/↓ (move between rows) done. Enter now inserts
+  a line break inside a text cell (text cells became auto-growing textareas), so it no longer
+  advances rows; Ctrl+Enter and bare arrow-up/down not bound.
 - **FR-UI-6:** per-file framerate / timecode handling (for Edit mode) not implemented.
 - **FR-UI-9:** per-tab settings preservation not implemented.
-- **FR-MD-2 import:** Edit tab loads WhisperMerger JSON only; importing foreign transcripts
-  (Resolve / Premiere / Descript SRT etc.) is not built yet.
+- **FR-MD-2 import:** Edit tab now loads **all of our export formats** — JSON / SRT / TXT / CSV
+  (auto-detected by extension, with a content sniff fallback; parsers in `app.js` mirror
+  `export.py`). JSON round-trips word-level timing; SRT/TXT/CSV import as plain segments
+  (`words:[]`). Generic third-party SRT loads too (the parser isn't WhisperMerger-specific);
+  proprietary formats (Descript JSON, Premiere/Resolve XML) are still unsupported.
 
 ## Validation — real-world stress test ✅
 
