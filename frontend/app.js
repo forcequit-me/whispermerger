@@ -107,6 +107,24 @@ $("#shutdown-btn").onclick = async () => {
     "Server stopped — you can close this tab.</div>";
 };
 
+// --- clear cache -----------------------------------------------------------------------
+// Wipes the WhisperX-output cache so the next run transcribes cold (e.g. to benchmark real
+// GPU time). Confirm first — afterwards re-runs of the same files are no longer instant.
+$("#clear-cache-btn").onclick = async (e) => {
+  const btn = e.currentTarget;
+  if (!confirm("Delete all cached transcriptions? The next run will transcribe from scratch.")) return;
+  const label = btn.querySelector("span"), prev = label.textContent;
+  btn.disabled = true; label.textContent = "Clearing…";
+  try {
+    const r = await fetch("/api/cache/clear", { method: "POST" });
+    const data = r.ok ? await r.json() : null;
+    label.textContent = data ? `Cleared ${data.cleared}` : "Failed";
+  } catch (_) {
+    label.textContent = "Failed";
+  }
+  setTimeout(() => { label.textContent = prev; btn.disabled = false; }, 2000);
+};
+
 // --- tab switching ---------------------------------------------------------------------
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.onclick = () => {

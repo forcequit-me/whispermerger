@@ -73,7 +73,8 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   **`<name> Transcript (M-D-YYYY h-mm AMPM)`** so they're self-describing (batch auto-exports use it;
   the interactive Export filename is pre-filled with it and editable).
 - **Caching** — WhisperX output is cached by file hash + model + alignment + language, so re-runs
-  skip transcription (changing the language re-runs instead of returning a stale result).
+  skip transcription (changing the language re-runs instead of returning a stale result). A **Clear
+  cache** button in the header wipes it on demand, so you can force a cold-GPU run for benchmarking.
 - **Progress that means something** — every processing tab shows a progress bar with the current
   stage (Transcribe & Merge has an Extract → Transcribe → Merge stepper; Batch shows an overall bar
   plus a card per project; Label shows job progress) and total elapsed wall time. Progress is

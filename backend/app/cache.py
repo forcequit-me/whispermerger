@@ -53,3 +53,15 @@ class Cache:
         self._path(key).write_text(
             json.dumps(whisperx_output, ensure_ascii=False), encoding="utf-8"
         )
+
+    def clear(self) -> int:
+        """Delete every cached entry; returns how many were removed. Used to force a cold
+        (re)transcription, e.g. when benchmarking real GPU time."""
+        removed = 0
+        for p in self.dir.glob("*.json"):
+            try:
+                p.unlink()
+                removed += 1
+            except OSError:
+                pass
+        return removed

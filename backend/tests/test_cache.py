@@ -45,3 +45,12 @@ def test_put_get_roundtrip(tmp_path):
 def test_get_miss_returns_none(tmp_path):
     cache = Cache(tmp_path / "cache")
     assert cache.get("nope") is None
+
+
+def test_clear_removes_all_entries(tmp_path):
+    cache = Cache(tmp_path / "cache")
+    cache.put("k1", {"segments": []})
+    cache.put("k2", {"segments": []})
+    assert cache.clear() == 2
+    assert cache.get("k1") is None and cache.get("k2") is None
+    assert cache.clear() == 0                               # idempotent on an empty cache

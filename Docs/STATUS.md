@@ -291,8 +291,13 @@ Lets a big library export the way the user wants (e.g. ~200h → one TXT per rec
   (~1 s), which was yanking the scrollable `.batch-files` list back to the top so you could never
   watch the running file. It now snapshots each list's `scrollTop` (keyed by a `data-pidx` on the
   container) before the rebuild and restores it after.
+- **Clear-cache button** — a header **Clear cache** button (next to Shutdown) wipes the WhisperX
+  output cache so the next run transcribes cold, for benchmarking real GPU time. `Cache.clear()`
+  deletes every `*.json` entry and returns the count; `POST /api/cache/clear` exposes it; the button
+  confirms first and shows "Cleared N".
 - Tests: the touched modules (`test_extract`, `test_pipeline`, `test_batch`) stay green; new
-  `on_wait` is optional so existing callers/tests are unaffected. Assets `?v=20` (js) / `?v=17` (css).
+  `on_wait` is optional so existing callers/tests are unaffected; `test_cache` covers `clear()`.
+  Assets `?v=20` (js) / `?v=17` (css).
 
 ## Partial / outstanding (v1 polish)
 

@@ -45,6 +45,13 @@ def shutdown() -> dict:
     return {"stopping": True}
 
 
+@router.post("/cache/clear")
+def clear_cache(request: Request) -> dict:
+    """Wipe the WhisperX-output cache so the next run transcribes cold (e.g. to benchmark real
+    GPU time). Returns how many cached entries were removed."""
+    return {"cleared": request.app.state.cache.clear()}
+
+
 # --- request/response schemas ----------------------------------------------------------
 
 class UploadItem(BaseModel):
