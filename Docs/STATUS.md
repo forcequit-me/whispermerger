@@ -287,17 +287,25 @@ Lets a big library export the way the user wants (e.g. ~200h → one TXT per rec
   `on_wait`/`on_start` from the selected-track count), exposed via `FileStatusOut` + `_batch_out`.
   The frontend renders a small "track 2/5" pill on a running multi-track file row, so track progress
   is legible before the bar moves (single-track files show nothing — there's nothing to show).
-- **File list keeps its scroll position** — `renderBatchStatus` rebuilds the whole panel each poll
-  (~1 s), which was yanking the scrollable `.batch-files` list back to the top so you could never
-  watch the running file. It now snapshots each list's `scrollTop` (keyed by a `data-pidx` on the
-  container) before the rebuild and restores it after.
+- **File list scroll — in-place updates (no more snap, no more freeze)** — `renderBatchStatus`
+  used to wipe and rebuild the whole panel every poll (~1 s). The first pass added a
+  snapshot/restore of `.batch-files` `scrollTop` to stop the **snap-to-top**, but rebuilding the
+  scroll container each tick still **froze** trackpad momentum and dropped wheel events mid-scroll.
+  Now it reconciles in place: a structure signature (`batchId | ended | per-project file counts`)
+  gates a full rebuild; while that's stable (the normal case during a run) it updates the existing
+  nodes in place — `updateBatchItem` refreshes a card's non-scrolling head/bar/detail but keeps the
+  `.batch-files` node alive, and `updateBatchFile` mutates each row's chip/badge/message/bar/elapsed
+  by `data-fidx` without replacing the row. The scroll container is never torn out, so momentum and
+  wheel input are untouched. Build/update share extracted helpers (`projectHead`/`projectDetail`/
+  `projectActionBtn`, `fileActionBtn`/`fileDetailText`); action buttons carry `data-kind` so they're
+  swapped only when a row crosses active↔finished.
 - **Clear-cache button** — a header **Clear cache** button (next to Shutdown) wipes the WhisperX
   output cache so the next run transcribes cold, for benchmarking real GPU time. `Cache.clear()`
   deletes every `*.json` entry and returns the count; `POST /api/cache/clear` exposes it; the button
   confirms first and shows "Cleared N".
 - Tests: the touched modules (`test_extract`, `test_pipeline`, `test_batch`) stay green; new
   `on_wait` is optional so existing callers/tests are unaffected; `test_cache` covers `clear()`.
-  Assets `?v=20` (js) / `?v=17` (css).
+  Assets `?v=21` (js) / `?v=17` (css).
 
 ## Partial / outstanding (v1 polish)
 

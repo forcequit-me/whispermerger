@@ -1153,36 +1153,106 @@ function renderBatchStatus(b, id, btn) {
   const counts = { queued: 0, running: 0, done: 0, error: 0, canceled: 0 };
   b.projects.forEach((p) => { counts[p.status] = (counts[p.status] || 0) + 1; });
   const total = b.projects.length;
+  const ended = b.status === "done" || b.status === "canceled";
 
-  const root = $("#batch-status");
-  // The whole status panel is rebuilt every poll; snapshot each per-file list's scroll position
-  // (keyed by project index) so a rebuild mid-scroll doesn't yank the list back to the top.
-  const scrolls = {};
-  root.querySelectorAll(".batch-files").forEach((f) => {
-    if (f.dataset.pidx != null) scrolls[f.dataset.pidx] = f.scrollTop;
-  });
-  root.innerHTML = "";
-
-  // Plain-language summary so the numbers above aren't ambiguous.
-  root.append(el("div", { className: "batch-summary" },
-    el("span", { textContent: `${counts.done} of ${total} projects complete` }),
-    el("span", { className: "muted",
-      textContent: ` · overall ${pct}% (by audio length) · ${fmtElapsed(b.elapsed)}` })));
+  const summaryText = `${counts.done} of ${total} projects complete`;
+  const overallText = ` · overall ${pct}% (by audio length) · ${fmtElapsed(b.elapsed)}`;
   const parts = [];
   for (const [k, label] of [["running", "running"], ["queued", "queued"], ["done", "done"],
                             ["error", "failed"], ["canceled", "canceled"]]) {
     if (counts[k]) parts.push(`${counts[k]} ${label}`);
   }
-  root.append(el("div", { className: "batch-counts muted", textContent: parts.join("  ·  ") }));
+  const countsText = parts.join("  ·  ");
 
-  const ended = b.status === "done" || b.status === "canceled";
+  // Structure signature — only a change here (a different batch, a changed project/file count, or
+  // the batch ending) triggers a full rebuild. Status / % / message changes are applied in place,
+  // so the scrollable file list is never torn out from under an active scroll (rebuilding it every
+  // poll killed trackpad momentum and dropped wheel events — that was the "freeze").
+  const root = $("#batch-status");
+  const sig = `${b.id}|${ended ? 1 : 0}|` +
+    b.projects.map((p) => (p.files ? p.files.length : 0)).join(",");
+
+  if (root.dataset.sig === sig) {                          // steady state — surgical in-place update
+    root.querySelector(".batch-summary > :first-child").textContent = summaryText;
+    root.querySelector(".batch-summary > .muted").textContent = overallText;
+    root.querySelector(".batch-counts").textContent = countsText;
+    b.projects.forEach((p, i) =>
+      updateBatchItem(root.querySelector(`.batch-item[data-pidx="${i}"]`), p, i, id, btn, ended));
+    return;
+  }
+
+  // Structure changed (or first render) — full rebuild, preserving any file-list scroll positions.
+  const scrolls = {};
+  root.querySelectorAll(".batch-files").forEach((f) => {
+    if (f.dataset.pidx != null) scrolls[f.dataset.pidx] = f.scrollTop;
+  });
+  root.dataset.sig = sig;
+  root.innerHTML = "";
+  root.append(el("div", { className: "batch-summary" },
+    el("span", { textContent: summaryText }),
+    el("span", { className: "muted", textContent: overallText })));
+  root.append(el("div", { className: "batch-counts muted", textContent: countsText }));
   b.projects.forEach((p, i) => root.append(buildBatchItem(p, i, id, btn, ended)));
-
-  // Restore the per-file list scroll positions captured before the rebuild.
   root.querySelectorAll(".batch-files").forEach((f) => {
     if (f.dataset.pidx != null && scrolls[f.dataset.pidx] != null)
       f.scrollTop = scrolls[f.dataset.pidx];
   });
+}
+
+// Project action control: Cancel while active (queued/running) — the queue continues; Restart once
+// finished (re-runs mid-batch by queuing until the GPU frees, or immediately if the batch ended).
+// data-kind lets the in-place updater swap it only when the active↔finished state actually flips.
+function projectActionBtn(p, i, id, btn, ended) {
+  if (p.status === "running" || p.status === "queued") {
+    const cancel = el("button", { className: "ghost icon-only bi-act", title: "Cancel this item" }, icon("close"));
+    cancel.dataset.kind = "cancel";
+    cancel.onclick = async () => {
+      cancel.disabled = true; cancel.title = "Canceling…";
+      try { await fetch(`/api/batch/${id}/project/${i}/cancel`, { method: "POST" }); } catch {}
+    };
+    return cancel;
+  }
+  const restart = el("button", { className: "ghost bi-act", textContent: "Restart",
+    title: ended ? "Run this item again" : "Run this item again (queues until the batch frees up)" });
+  restart.dataset.kind = "restart";
+  restart.onclick = async () => {
+    restart.disabled = true; restart.textContent = "Restarting…";
+    try {
+      const r = await fetchTO(`/api/batch/${id}/retry`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projects: [i] }) }, 30000);
+      if (!r.ok) {
+        $("#batch-err").textContent = "Restart failed: " + (await r.text());
+        restart.disabled = false; restart.textContent = "Restart"; return;
+      }
+      if (ended) pollBatch(id, btn);                      // polling had stopped — resume it
+    } catch (e) {
+      $("#batch-err").textContent = "Couldn't reach server to restart.";
+      restart.disabled = false; restart.textContent = "Restart";
+    }
+  };
+  return restart;
+}
+
+function projectHead(p, i, id, btn, ended, meta) {
+  return el("div", { className: "batch-item-head" },
+    el("span", { className: "bi-name", textContent: p.name }),
+    el("span", { className: `chip-status ${meta.cls}`, textContent: meta.label }),
+    el("div", { className: "spacer" }),
+    el("span", { className: "muted bi-elapsed", textContent: fmtElapsed(p.elapsed) }),
+    projectActionBtn(p, i, id, btn, ended));
+}
+
+function projectDetail(p, meta, pct) {
+  if (p.error) return el("div", { className: "bi-msg bi-err" }, icon("warn", 13), " " + p.error);
+  if (p.status === "done") {
+    return el("div", { className: "bi-msg muted",
+      textContent: `${p.message || "done"}${p.output_dir ? " · " + p.output_dir : ""}` });
+  }
+  if (p.status === "running") {
+    return el("div", { className: "bi-msg muted", textContent: `${pct}% · ${p.message || ""}` });
+  }
+  return el("div", { className: "bi-msg muted", textContent: p.message || meta.label });
 }
 
 // One project row: name + status chip + (cancel | restart), its own progress bar + detail.
@@ -1190,74 +1260,82 @@ function buildBatchItem(p, i, id, btn, ended) {
   const meta = BATCH_STATE[p.status] || { label: p.status, cls: "queued" };
   const pct = Math.round((p.progress || 0) * 100);
   const card = el("div", { className: `batch-item state-${meta.cls}` });
-
-  const head = el("div", { className: "batch-item-head" },
-    el("span", { className: "bi-name", textContent: p.name }),
-    el("span", { className: `chip-status ${meta.cls}`, textContent: meta.label }),
-    el("div", { className: "spacer" }),
-    el("span", { className: "muted bi-elapsed", textContent: fmtElapsed(p.elapsed) }));
-
-  // Active item (running/queued): cancel just this one — the queue continues. Finished item
-  // (done/failed/canceled): restart it. Restart works mid-batch too — if the card is busy the
-  // item is queued to re-run when it frees up; otherwise a fresh run starts.
-  if (p.status === "running" || p.status === "queued") {
-    const cancel = el("button", { className: "ghost icon-only bi-act", title: "Cancel this item" }, icon("close"));
-    cancel.onclick = async () => {
-      cancel.disabled = true; cancel.title = "Canceling…";
-      try { await fetch(`/api/batch/${id}/project/${i}/cancel`, { method: "POST" }); } catch {}
-    };
-    head.append(cancel);
-  } else {
-    const restart = el("button", { className: "ghost bi-act", textContent: "Restart",
-      title: ended ? "Run this item again" : "Run this item again (queues until the batch frees up)" });
-    restart.onclick = async () => {
-      restart.disabled = true; restart.textContent = "Restarting…";
-      try {
-        const r = await fetchTO(`/api/batch/${id}/retry`,
-          { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projects: [i] }) }, 30000);
-        if (!r.ok) {
-          $("#batch-err").textContent = "Restart failed: " + (await r.text());
-          restart.disabled = false; restart.textContent = "Restart"; return;
-        }
-        if (ended) pollBatch(id, btn);                    // polling had stopped — resume it
-        // else: the live poller will show the item re-queued
-      } catch (e) {
-        $("#batch-err").textContent = "Couldn't reach server to restart.";
-        restart.disabled = false; restart.textContent = "Restart";
-      }
-    };
-    head.append(restart);
-  }
-  card.append(head);
-
+  card.dataset.pidx = String(i);
+  card.append(projectHead(p, i, id, btn, ended, meta));
   // Per-item bar — only once there's something to show (skip idle queued rows).
   if (p.status === "running" || (pct > 0 && pct < 100)) {
     card.append(el("div", { className: "bar bi-bar" }, el("div", { style: `width:${pct}%` })));
   }
-
-  // Detail line: error / output location / live message.
-  let detail;
-  if (p.error) {
-    detail = el("div", { className: "bi-msg bi-err" }, icon("warn", 13), " " + p.error);
-  } else if (p.status === "done") {
-    const txt = `${p.message || "done"}${p.output_dir ? " · " + p.output_dir : ""}`;
-    detail = el("div", { className: "bi-msg muted", textContent: txt });
-  } else if (p.status === "running") {
-    detail = el("div", { className: "bi-msg muted", textContent: `${pct}% · ${p.message || ""}` });
-  } else {
-    detail = el("div", { className: "bi-msg muted", textContent: p.message || meta.label });
-  }
-  card.append(detail);
-
+  card.append(projectDetail(p, meta, pct));
   // Per-file projects: a row per source file, each with its own status + cancel/restart.
   if (p.files && p.files.length) {
     const files = el("div", { className: "batch-files" });
-    files.dataset.pidx = String(i);          // lets renderBatchStatus preserve its scroll across polls
+    files.dataset.pidx = String(i);          // lets renderBatchStatus preserve its scroll across rebuilds
     p.files.forEach((f, fi) => files.append(buildBatchFile(f, i, fi, id, btn, ended)));
     card.append(files);
   }
   return card;
+}
+
+// Update a project card in place: refresh the (non-scrolling) head / bar / detail, but keep the
+// scrollable file-list node alive and update its rows in place — that's what stops the scroll freeze.
+function updateBatchItem(card, p, i, id, btn, ended) {
+  if (!card) return;
+  const meta = BATCH_STATE[p.status] || { label: p.status, cls: "queued" };
+  const pct = Math.round((p.progress || 0) * 100);
+  card.className = `batch-item state-${meta.cls}`;
+
+  const files = card.querySelector(".batch-files");        // the scroll container — must survive
+  [...card.children].forEach((c) => { if (c !== files) c.remove(); });
+  const frag = document.createDocumentFragment();
+  frag.append(projectHead(p, i, id, btn, ended, meta));
+  if (p.status === "running" || (pct > 0 && pct < 100)) {
+    frag.append(el("div", { className: "bar bi-bar" }, el("div", { style: `width:${pct}%` })));
+  }
+  frag.append(projectDetail(p, meta, pct));
+  if (files) card.insertBefore(frag, files); else card.append(frag);
+
+  if (files && p.files) {
+    p.files.forEach((f, fi) =>
+      updateBatchFile(files.querySelector(`.batch-file[data-fidx="${fi}"]`), f, i, fi, id, btn, ended));
+  }
+}
+
+// File action control (Cancel while active / Restart once finished), data-kind tagged for in-place swap.
+function fileActionBtn(f, pidx, fidx, id, btn, ended) {
+  if (f.status === "running" || f.status === "queued") {
+    const cancel = el("button", { className: "ghost icon-only bi-act", title: "Cancel this file" }, icon("close"));
+    cancel.dataset.kind = "cancel";
+    cancel.onclick = async () => {
+      cancel.disabled = true; cancel.title = "Canceling…";
+      try { await fetch(`/api/batch/${id}/project/${pidx}/file/${fidx}/cancel`, { method: "POST" }); } catch {}
+    };
+    return cancel;
+  }
+  const restart = el("button", { className: "ghost bi-act", textContent: "Restart",
+    title: ended ? "Run this file again" : "Run this file again (queues until the card frees up)" });
+  restart.dataset.kind = "restart";
+  restart.onclick = async () => {
+    restart.disabled = true; restart.textContent = "…";
+    try {
+      const r = await fetchTO(`/api/batch/${id}/project/${pidx}/file/${fidx}/restart`, { method: "POST" }, 30000);
+      if (!r.ok) {
+        $("#batch-err").textContent = "Restart failed: " + (await r.text());
+        restart.disabled = false; restart.textContent = "Restart"; return;
+      }
+      if (ended) pollBatch(id, btn);                      // polling had stopped — resume it
+    } catch (e) {
+      $("#batch-err").textContent = "Couldn't reach server to restart.";
+      restart.disabled = false; restart.textContent = "Restart";
+    }
+  };
+  return restart;
+}
+
+function fileDetailText(f, meta, pct) {
+  return f.error ? f.error
+    : (f.status === "done" ? (f.message || "done")
+       : (f.status === "running" ? `${pct}% · ${f.message || ""}` : (f.message || meta.label)));
 }
 
 // One file row inside a per-file project: name + status chip + cancel/restart + its own bar.
@@ -1265,10 +1343,9 @@ function buildBatchFile(f, pidx, fidx, id, btn, ended) {
   const meta = BATCH_STATE[f.status] || { label: f.status, cls: "queued" };
   const pct = Math.round((f.progress || 0) * 100);
   const row = el("div", { className: `batch-file state-${meta.cls}` });
+  row.dataset.fidx = String(fidx);
 
-  const detail = f.error ? f.error
-    : (f.status === "done" ? (f.message || "done")
-       : (f.status === "running" ? `${pct}% · ${f.message || ""}` : (f.message || meta.label)));
+  const detail = fileDetailText(f, meta, pct);
   const msg = el("span", { className: "muted bf-msg", textContent: detail, title: detail });
   if (f.error) msg.style.color = "var(--bleed)";
 
@@ -1281,37 +1358,52 @@ function buildBatchFile(f, pidx, fidx, id, btn, ended) {
     head.append(el("span", { className: "muted bf-trk",
       textContent: `track ${f.track || 1}/${f.tracks}` }));
   }
-  head.append(el("div", { className: "spacer" }), msg);
-
-  if (f.status === "running" || f.status === "queued") {
-    const cancel = el("button", { className: "ghost icon-only bi-act", title: "Cancel this file" }, icon("close"));
-    cancel.onclick = async () => {
-      cancel.disabled = true; cancel.title = "Canceling…";
-      try { await fetch(`/api/batch/${id}/project/${pidx}/file/${fidx}/cancel`, { method: "POST" }); } catch {}
-    };
-    head.append(cancel);
-  } else {
-    const restart = el("button", { className: "ghost bi-act", textContent: "Restart",
-      title: ended ? "Run this file again" : "Run this file again (queues until the card frees up)" });
-    restart.onclick = async () => {
-      restart.disabled = true; restart.textContent = "…";
-      try {
-        const r = await fetchTO(`/api/batch/${id}/project/${pidx}/file/${fidx}/restart`, { method: "POST" }, 30000);
-        if (!r.ok) {
-          $("#batch-err").textContent = "Restart failed: " + (await r.text());
-          restart.disabled = false; restart.textContent = "Restart"; return;
-        }
-        if (ended) pollBatch(id, btn);                    // polling had stopped — resume it
-      } catch (e) {
-        $("#batch-err").textContent = "Couldn't reach server to restart.";
-        restart.disabled = false; restart.textContent = "Restart";
-      }
-    };
-    head.append(restart);
-  }
+  head.append(el("div", { className: "spacer" }), msg, fileActionBtn(f, pidx, fidx, id, btn, ended));
   row.append(head);
   if (f.status === "running" || (pct > 0 && pct < 100)) {
     row.append(el("div", { className: "bar bf-bar" }, el("div", { style: `width:${pct}%` })));
   }
   return row;
+}
+
+// Update a file row in place — mutate fields only, never replace the row node, so the list's scroll
+// position and momentum survive every poll.
+function updateBatchFile(row, f, pidx, fidx, id, btn, ended) {
+  if (!row) return;
+  const meta = BATCH_STATE[f.status] || { label: f.status, cls: "queued" };
+  const pct = Math.round((f.progress || 0) * 100);
+  row.className = `batch-file state-${meta.cls}`;
+  const head = row.querySelector(".bf-head");
+
+  const chip = head.querySelector(".chip-status");
+  chip.className = `chip-status ${meta.cls}`;
+  chip.textContent = meta.label;
+
+  let trk = head.querySelector(".bf-trk");
+  if (f.status === "running" && f.tracks > 1) {
+    if (!trk) { trk = el("span", { className: "muted bf-trk" }); head.insertBefore(trk, head.querySelector(".spacer")); }
+    trk.textContent = `track ${f.track || 1}/${f.tracks}`;
+  } else if (trk) {
+    trk.remove();
+  }
+
+  const detail = fileDetailText(f, meta, pct);
+  const msg = head.querySelector(".bf-msg");
+  msg.textContent = detail; msg.title = detail;
+  msg.style.color = f.error ? "var(--bleed)" : "";
+
+  const act = head.querySelector(".bi-act");
+  const wantKind = (f.status === "running" || f.status === "queued") ? "cancel" : "restart";
+  if (!act || act.dataset.kind !== wantKind) {             // only swap when active↔finished flips
+    const fresh = fileActionBtn(f, pidx, fidx, id, btn, ended);
+    if (act) act.replaceWith(fresh); else head.append(fresh);
+  }
+
+  let bar = row.querySelector(".bf-bar");
+  if (f.status === "running" || (pct > 0 && pct < 100)) {
+    if (!bar) { bar = el("div", { className: "bar bf-bar" }, el("div", {})); row.append(bar); }
+    bar.firstChild.style.width = pct + "%";
+  } else if (bar) {
+    bar.remove();
+  }
 }
