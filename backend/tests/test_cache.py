@@ -21,6 +21,14 @@ def test_key_depends_on_model_and_align(tmp_path):
     assert k1 != k2 != k3 and k1 != k3
 
 
+def test_key_depends_on_language(tmp_path):
+    f = _write(tmp_path / "a.wav")
+    auto = cache_key(f, "large-v3", "wav2vec2")            # None -> "auto"
+    en = cache_key(f, "large-v3", "wav2vec2", "en")
+    es = cache_key(f, "large-v3", "wav2vec2", "es")
+    assert auto != en != es and auto != es
+
+
 def test_key_depends_on_content(tmp_path):
     a = _write(tmp_path / "a.wav", b"aaa")
     b = _write(tmp_path / "b.wav", b"bbb")

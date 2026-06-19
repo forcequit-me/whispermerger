@@ -21,6 +21,11 @@ class JobStatus(str, Enum):
     RUNNING = "running"
     DONE = "done"
     ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+class JobCancelled(Exception):
+    """Raised through the progress callback when a job cancel is requested."""
 
 
 # A pipeline reports progress through this callback: fraction in [0,1] + a status message.
@@ -38,8 +43,15 @@ class Job:
     started_at: float = 0.0
     finished_at: float = 0.0
     _thread: Optional[threading.Thread] = field(default=None, repr=False)
+    _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
+
+    def cancel(self) -> None:
+        """Request cancellation; takes effect at the next progress checkpoint (stage boundary)."""
+        self._cancel.set()
 
     def _set_progress(self, fraction: float, message: str) -> None:
+        if self._cancel.is_set():
+            raise JobCancelled()
         self.progress = max(0.0, min(1.0, fraction))
         self.message = message
 
@@ -74,8 +86,13 @@ class JobRegistry:
             try:
                 job.result = work(job._set_progress)
                 job.finished_at = time.time()
-                job._set_progress(1.0, f"done in {job.elapsed:.0f}s")
+                job.progress = 1.0
+                job.message = f"done in {job.elapsed:.0f}s"
                 job.status = JobStatus.DONE
+            except JobCancelled:  # cooperative cancel at a stage boundary
+                job.finished_at = time.time()
+                job.message = "cancelled"
+                job.status = JobStatus.CANCELLED
             except Exception as exc:  # surface failure via the job, not a crashed thread
                 job.finished_at = time.time()
                 job.error = str(exc)

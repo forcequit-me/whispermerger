@@ -42,6 +42,9 @@ MODEL_NAME = "large-v3"
 COMPUTE_TYPE = "float16"
 DEVICE = "cuda"
 ALIGN_TAG = "wav2vec2"  # alignment method, part of the cache key (FR-CA-2)
+# Optional language override: set WHISPERMERGER_LANGUAGE=en to skip auto-detect (and the
+# per-language align-model download it can trigger). Unset = auto-detect (original behavior).
+LANGUAGE = os.environ.get("WHISPERMERGER_LANGUAGE") or None
 
 _torch_load_patched = False
 
@@ -87,26 +90,29 @@ def transcribe_track(
     device: str = DEVICE,
     batch_size: int = 16,
     cache: Optional[Cache] = None,
+    language: Optional[str] = LANGUAGE,
 ) -> dict:
-    """Transcribe + align one mono/16k WAV. Returns the WhisperX output dict (cache-aware)."""
+    """Transcribe + align one mono/16k WAV. Returns the WhisperX output dict (cache-aware).
+    `language` (e.g. "en") forces both transcription and alignment to that code; None
+    auto-detects (and may fetch that language's align model on first use)."""
     import whisperx
 
-    key = cache_key(audio_path, model_name, ALIGN_TAG) if cache else None
+    key = cache_key(audio_path, model_name, ALIGN_TAG, language) if cache else None
     if cache and (hit := cache.get(key)) is not None:
         return hit
 
     audio = whisperx.load_audio(str(audio_path))
     model = _load_model(model_name, compute_type, device)
-    result = model.transcribe(audio, batch_size=batch_size)  # VAD on by default
+    result = model.transcribe(audio, batch_size=batch_size, language=language)  # VAD on by default
 
-    language = result.get("language", "en")
-    align_model, metadata = _load_align(language, device)
+    detected = result.get("language", "en")
+    align_model, metadata = _load_align(detected, device)
     aligned = whisperx.align(
         result["segments"], align_model, metadata, audio, device,
         return_char_alignments=False,
     )
 
-    output = {"language": language, "segments": aligned["segments"]}
+    output = {"language": detected, "segments": aligned["segments"]}
     if cache:
         cache.put(key, output)
     return output

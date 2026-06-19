@@ -23,10 +23,14 @@ def file_sha256(path: str | Path) -> str:
     return h.hexdigest()
 
 
-def cache_key(audio_path: str | Path, model: str, align_model: str) -> str:
-    """Stable key for one transcription: audio content + model + alignment model."""
+def cache_key(audio_path: str | Path, model: str, align_model: str,
+              language: str | None = None) -> str:
+    """Stable key for one transcription: audio content + model + alignment model + the
+    requested language ("auto" when unset, so an auto-detect run can't collide with a
+    forced-language one)."""
     digest = file_sha256(audio_path)
-    return hashlib.sha256(f"{digest}|{model}|{align_model}".encode()).hexdigest()
+    lang = language or "auto"
+    return hashlib.sha256(f"{digest}|{model}|{align_model}|{lang}".encode()).hexdigest()
 
 
 class Cache:

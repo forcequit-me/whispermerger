@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from ..batch import ProjectInput, run_batch
+from ..batch import ProjectInput, Status, _RunSpec, run_batch
 from ..diarize import detect_speech, transcribe_regions
 from ..export import ExportOptions, pad_segments, to_csv, to_json, to_srt, to_txt
 from ..extract import compute_peaks, concat_wavs, extract_clip, extract_sample, extract_track
@@ -79,6 +79,7 @@ class MergeOptionsIn(BaseModel):
 class TranscribeRequest(BaseModel):
     sources: list[SourceSelection]
     options: MergeOptionsIn = MergeOptionsIn()
+    language: str | None = None              # force a language code; None = auto-detect
 
 
 class JobCreated(BaseModel):
@@ -124,10 +125,15 @@ class BatchRequest(BaseModel):
     output_mode: Literal["folder", "source"] = "folder"
     output_folder: str | None = None
     options: MergeOptionsIn = MergeOptionsIn()
+    language: str | None = None              # force a language code; None = auto-detect
 
 
 class BatchCreated(BaseModel):
     batch_id: str
+
+
+class RetryRequest(BaseModel):
+    projects: list[int] | None = None        # project indices to retry; None = all failed/canceled
 
 
 class ProjectStatusOut(BaseModel):
@@ -179,6 +185,13 @@ class CombineResult(BaseModel):
 
 class AddPathRequest(BaseModel):
     paths: list[str]
+
+
+# Audio/video extensions the batch "Folder" picker ingests (recursively).
+_MEDIA_EXTS = {
+    ".mkv", ".mov", ".mp4", ".m4v", ".avi", ".webm", ".flv", ".ts", ".m2ts", ".mpg", ".mpeg",
+    ".wmv", ".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wma", ".aiff", ".aif",
+}
 
 
 def _register(app_state, file_path: Path, display_name: str) -> UploadItem:
@@ -251,6 +264,32 @@ def _native_pick_dir() -> str:
 def browse_folder() -> dict:
     """Native folder picker — used to choose the batch output directory."""
     return {"path": _native_pick_dir()}
+
+
+@router.post("/add-folder", response_model=list[UploadItem])
+def add_folder(request: Request) -> list[UploadItem]:
+    """Native folder picker → register every audio/video file under it (recursively), in
+    place. The 'Folder' counterpart to /browse for a batch project's add button. Display
+    name is the path relative to the chosen folder so nested files stay distinguishable;
+    unreadable / audio-less files are skipped rather than failing the whole scan."""
+    folder = _native_pick_dir()
+    if not folder:
+        return []
+    root = Path(folder)
+    if not root.is_dir():
+        raise HTTPException(404, f"not a folder: {folder}")
+    items: list[UploadItem] = []
+    for p in sorted(root.rglob("*")):
+        if not (p.is_file() and p.suffix.lower() in _MEDIA_EXTS):
+            continue
+        try:
+            item = _register(request.app.state, p, str(p.relative_to(root)))
+        except Exception:
+            continue
+        if not item.source.tracks:
+            continue
+        items.append(item)
+    return items
 
 
 # --- audition (FR-TK-3) ----------------------------------------------------------------
@@ -419,7 +458,7 @@ def transcribe(request: Request, body: TranscribeRequest) -> JobCreated:
     def work(progress) -> MergedOutput:
         return run_merge_pipeline(
             prepared,
-            lambda wav: transcribe_track(wav, cache=cache),
+            lambda wav: transcribe_track(wav, cache=cache, language=body.language),
             options=options,
             progress_cb=progress,
         )
@@ -447,6 +486,17 @@ def result(request: Request, job_id: str) -> MergedOutput:
     if job.result is None:
         raise HTTPException(409, f"job not done (status={job.status.value})")
     return job.result
+
+
+@router.post("/cancel/{job_id}")
+def cancel_job(request: Request, job_id: str) -> dict:
+    """Request job cancellation — takes effect at the next stage boundary (the in-flight
+    extract/transcribe/merge stage finishes first)."""
+    job = request.app.state.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    job.cancel()
+    return {"canceling": True}
 
 
 # --- export (FR-EX-*) ------------------------------------------------------------------
@@ -508,24 +558,19 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
     options = body.options.to_options()
     batch = request.app.state.batches.create([p.name for p in body.projects])
 
-    def work() -> None:
-        run_batch(
-            batch, projects,
-            lambda wav: transcribe_track(wav, cache=cache),
-            output_mode=body.output_mode,
-            output_folder=body.output_folder,
-            options=options,
-        )
+    def transcribe_fn(wav: str) -> dict:
+        return transcribe_track(wav, cache=cache, language=body.language)
 
-    request.app.state.batches.run(batch, work)
+    request.app.state.batches.set_spec(batch.id, _RunSpec(
+        projects=projects, transcribe_fn=transcribe_fn,
+        output_mode=body.output_mode, output_folder=body.output_folder, options=options))
+    request.app.state.batches.run(batch, lambda: run_batch(
+        batch, projects, transcribe_fn,
+        output_mode=body.output_mode, output_folder=body.output_folder, options=options))
     return BatchCreated(batch_id=batch.id)
 
 
-@router.get("/batch/{batch_id}", response_model=BatchStatusOut)
-def batch_status(request: Request, batch_id: str) -> BatchStatusOut:
-    batch = request.app.state.batches.get(batch_id)
-    if batch is None:
-        raise HTTPException(404, "unknown batch")
+def _batch_out(batch) -> BatchStatusOut:
     return BatchStatusOut(
         id=batch.id, status=batch.status.value, progress=batch.progress, elapsed=batch.elapsed,
         projects=[ProjectStatusOut(name=p.name, status=p.status.value, progress=p.progress,
@@ -533,3 +578,40 @@ def batch_status(request: Request, batch_id: str) -> BatchStatusOut:
                                    output_dir=p.output_dir, error=p.error)
                   for p in batch.projects],
     )
+
+
+@router.get("/batch/{batch_id}", response_model=BatchStatusOut)
+def batch_status(request: Request, batch_id: str) -> BatchStatusOut:
+    batch = request.app.state.batches.get(batch_id)
+    if batch is None:
+        raise HTTPException(404, "unknown batch")
+    return _batch_out(batch)
+
+
+@router.post("/batch/{batch_id}/cancel")
+def cancel_batch(request: Request, batch_id: str) -> dict:
+    """Request batch cancellation — stops at the next file/project boundary (the file
+    currently transcribing finishes); remaining projects are marked canceled."""
+    if not request.app.state.batches.cancel(batch_id):
+        raise HTTPException(404, "unknown batch")
+    return {"canceling": True}
+
+
+@router.post("/batch/{batch_id}/retry", response_model=BatchStatusOut)
+def retry_batch(request: Request, batch_id: str,
+                body: RetryRequest | None = None) -> BatchStatusOut:
+    """Re-run projects in a batch (default: all errored/canceled), reusing the same batch +
+    its persisted run spec. Caching makes already-transcribed files instant."""
+    batch = request.app.state.batches.get(batch_id)
+    if batch is None:
+        raise HTTPException(404, "unknown batch")
+    if body and body.projects:
+        indices = [i for i in body.projects if 0 <= i < len(batch.projects)]
+    else:
+        indices = [i for i, p in enumerate(batch.projects)
+                   if p.status in (Status.ERROR, Status.CANCELED)]
+    if not indices:
+        raise HTTPException(400, "no failed or canceled projects to retry")
+    if not request.app.state.batches.retry(batch_id, indices):
+        raise HTTPException(409, "batch cannot be retried")
+    return _batch_out(batch)

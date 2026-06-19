@@ -47,6 +47,24 @@ def test_browse_cancelled_returns_empty(client, monkeypatch):
     assert client.post("/api/browse").json() == []
 
 
+def test_add_folder_recursive_registers_media(client, two_stream_file, monkeypatch, tmp_path):
+    import shutil
+    (tmp_path / "sub").mkdir()
+    shutil.copy(two_stream_file, tmp_path / "a.mkv")
+    shutil.copy(two_stream_file, tmp_path / "sub" / "b.mkv")
+    (tmp_path / "notes.txt").write_text("not media")          # skipped by extension filter
+    monkeypatch.setattr(routes.api, "_native_pick_dir", lambda: str(tmp_path))
+    r = client.post("/api/add-folder")
+    assert r.status_code == 200
+    names = sorted(it["source"]["filename"].replace("\\", "/") for it in r.json())
+    assert names == ["a.mkv", "sub/b.mkv"]                    # recursive, relative display names
+
+
+def test_add_folder_cancelled_returns_empty(client, monkeypatch):
+    monkeypatch.setattr(routes.api, "_native_pick_dir", lambda: "")
+    assert client.post("/api/add-folder").json() == []
+
+
 def test_export_inline_srt(client):
     merged = {"version": "1.0", "sources": [], "segments": [
         {"speaker": "Max", "start": 0.0, "end": 1.0, "text": "hello",

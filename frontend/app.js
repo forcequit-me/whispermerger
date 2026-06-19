@@ -593,7 +593,7 @@ async function runPipeline() {
   try {
     res = await fetchTO("/api/transcribe", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sources, options: gatherOptions() }),
+      body: JSON.stringify({ sources, options: gatherOptions(), language: $("#opt-language").value || null }),
     }, 30000);
   } catch (e) {
     setProgress(0, "couldn't reach the server to start — is it still running?");
@@ -606,6 +606,13 @@ async function runPipeline() {
 
 function pollJob(jobId, runBtn) {
   let fails = 0;
+  const cancelBtn = $("#cancel-job");
+  cancelBtn.style.display = ""; cancelBtn.disabled = false; cancelBtn.textContent = "Cancel";
+  cancelBtn.onclick = async () => {
+    cancelBtn.disabled = true; cancelBtn.textContent = "Canceling…";
+    try { await fetch(`/api/cancel/${jobId}`, { method: "POST" }); } catch {}
+  };
+  const finish = () => { runBtn.disabled = false; cancelBtn.style.display = "none"; cancelBtn.textContent = "Cancel"; };
   const tick = async () => {
     let p;
     try {
@@ -635,10 +642,11 @@ function pollJob(jobId, runBtn) {
         renderEditor($("#editor-transcribe"), merged, preview);
         setProgress(1, "done");
       } catch (e) { setProgress(1, "done — but couldn't load the result: " + e.message); }
-      runBtn.disabled = false;
+      finish();
       return;
     }
-    if (p.status === "error") { setProgress(p.progress, "error: " + p.error); runBtn.disabled = false; return; }
+    if (p.status === "cancelled") { setProgress(p.progress, "canceled"); finish(); return; }
+    if (p.status === "error") { setProgress(p.progress, "error: " + p.error); finish(); return; }
     setTimeout(tick, 500);
   };
   tick();
@@ -901,8 +909,8 @@ function buildProjectCard(proj, pi) {
   const box = el("div", { className: "source" });
   const name = el("input", { value: proj.name, style: "font-weight:600; width:240px" });
   name.oninput = () => { proj.name = name.value; };
-  const addFiles = el("button", { className: "ghost", textContent: "Add files" });
-  addFiles.onclick = () => addProjectFiles(proj);
+  const addFiles = el("button", { className: "ghost", textContent: "Add files / folder" });
+  addFiles.onclick = () => addToProject(proj, addFiles);
   const removeProj = el("button", { className: "ghost icon-btn", title: "Remove project" },
     icon("close"), "Remove project");
   removeProj.onclick = () => { projects.splice(pi, 1); renderProjects(); };
@@ -948,11 +956,39 @@ function buildFileRow(proj, fi) {
   return wrap;
 }
 
-async function addProjectFiles(proj) {
+// The project add button offers Files or Folder — one native dialog each, since Windows
+// can't pick both in one window. "Folder" pulls in every audio/video file underneath,
+// recursively; per-file output then lands next to each source (nested tree preserved).
+function addToProject(proj, btn) {
+  const open = btn.parentElement.querySelector(".addmenu");
+  if (open) { open.remove(); return; }                 // click again to dismiss
+  const filesBtn = el("button", { className: "ghost", textContent: "Files…" });
+  const folderBtn = el("button", { className: "ghost", textContent: "Folder…" });
+  const menu = el("span", { className: "addmenu", style: "display:inline-flex; gap:6px; margin-left:6px" },
+    filesBtn, folderBtn);
+  filesBtn.onclick = () => { menu.remove(); pickFiles(proj); };
+  folderBtn.onclick = () => { menu.remove(); pickFolder(proj); };
+  btn.insertAdjacentElement("afterend", menu);
+}
+
+async function pickFiles(proj) {
   $("#batch-err").textContent = "";
   const res = await fetch("/api/browse", { method: "POST" });
   if (!res.ok) { $("#batch-err").textContent = "Picker failed: " + (await res.text()); return; }
   proj.files.push(...(await res.json()));
+  renderProjects();
+}
+
+async function pickFolder(proj) {
+  $("#batch-err").textContent = "Scanning folder for audio/video…";
+  let res;
+  try {
+    res = await fetchTO("/api/add-folder", { method: "POST" }, 600000);
+  } catch (e) { $("#batch-err").textContent = "Folder scan timed out."; return; }
+  if (!res.ok) { $("#batch-err").textContent = "Folder scan failed: " + (await res.text()); return; }
+  const found = await res.json();
+  $("#batch-err").textContent = found.length ? "" : "No audio/video files found in that folder.";
+  proj.files.push(...found);
   renderProjects();
 }
 
@@ -984,6 +1020,7 @@ function runBatch() {
     output_mode: mode,
     output_folder: outputFolder,
     options: { detect_conflicts: $("#batch-detect").checked },
+    language: $("#batch-language").value || null,
     projects: resolved.map(({ p, perFile, formats }) => ({
       name: p.name,
       per_file: perFile,
@@ -1018,6 +1055,13 @@ async function startBatch(body) {
 }
 
 function pollBatch(id, btn) {
+  const cancelBtn = $("#cancel-batch"), retryBtn = $("#retry-batch");
+  cancelBtn.style.display = ""; cancelBtn.disabled = false; cancelBtn.textContent = "Cancel batch";
+  retryBtn.style.display = "none";
+  cancelBtn.onclick = async () => {
+    cancelBtn.disabled = true; cancelBtn.textContent = "Canceling… (current file finishes)";
+    try { await fetch(`/api/batch/${id}/cancel`, { method: "POST" }); } catch {}
+  };
   const tick = async () => {
     let b;
     try {
@@ -1026,7 +1070,27 @@ function pollBatch(id, btn) {
       b = await r.json();
     } catch (e) { setTimeout(tick, 1500); return; }   // transient — keep waiting, don't die
     renderBatchStatus(b);
-    if (b.status === "done") { btn.disabled = false; return; }
+    if (b.status === "done" || b.status === "canceled") {
+      btn.disabled = false;
+      cancelBtn.style.display = "none";
+      const failed = b.projects.filter((p) => p.status === "error" || p.status === "canceled").length;
+      if (failed) {
+        retryBtn.style.display = "";
+        retryBtn.disabled = false;
+        retryBtn.textContent = `Retry ${failed} failed/canceled`;
+        retryBtn.onclick = async () => {
+          retryBtn.disabled = true;
+          try {
+            const r = await fetchTO(`/api/batch/${id}/retry`,
+              { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, 30000);
+            if (!r.ok) { $("#batch-err").textContent = "Retry failed: " + (await r.text()); retryBtn.disabled = false; return; }
+            retryBtn.style.display = "none";
+            pollBatch(id, btn);                        // resume polling the same batch
+          } catch (e) { $("#batch-err").textContent = "Couldn't reach server for retry."; retryBtn.disabled = false; }
+        };
+      }
+      return;
+    }
     setTimeout(tick, 800);
   };
   tick();

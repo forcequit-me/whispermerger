@@ -22,7 +22,17 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
 - **Batch "studio"** — queue multiple projects at once and run them unattended. Set **global
   output defaults** (and override per project): **merge a project's files into one transcript** or
   emit **one transcript per file**, and tick **which formats** to write (SRT/TXT/CSV/JSON). Each
-  project exports to its own subfolder; per-project + total elapsed shown live. No babysitting.
+  project exports to its own subfolder — or, with *one transcript per file* + *next to source*,
+  each transcript lands **beside its own source file** (nested folders preserved). Add files
+  individually **or point at a folder** to pull in every audio/video file underneath (subfolders
+  included). Per-project + total elapsed shown live. No babysitting.
+- **Language** — transcription **auto-detects per file** by default; a **Language** dropdown (in
+  Batch and Transcribe & Merge) can force a specific language, which skips detection and avoids the
+  first-use download of that language's wav2vec2 alignment model.
+- **Cancel & retry** — cancel a running batch or a single Transcribe/Label job (cooperative: it
+  stops at the next file boundary, so the file currently transcribing finishes); after a batch
+  ends, **retry just the failed/canceled projects** in one click — caching makes already-done files
+  instant.
 - **Single-track labeling (v2)** — for one mixed track with multiple speakers (interview,
   podcast, collab): silero-VAD auto-detects speech on a WaveSurfer waveform, you assign regions
   to speakers (click / shift-click a run / ctrl-click; number keys; bulk-assign; duplicate a
@@ -52,7 +62,8 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   word timestamps (toggleable subtitle limits). **Pad (s)** extends each segment's start/end by N
   seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.
   Speakers toggled off in the editor are dropped from whichever format you export.
-- **Caching** — WhisperX output is cached by file hash + model, so re-runs skip transcription.
+- **Caching** — WhisperX output is cached by file hash + model + alignment + language, so re-runs
+  skip transcription (changing the language re-runs instead of returning a stale result).
 - **Stage-aware progress + timing** — every processing tab shows a progress bar with the current
   stage (Transcribe & Merge has an Extract → Transcribe → Merge stepper; Batch shows overall +
   per-project; Label shows job progress) and total elapsed wall time, so a long run never looks
@@ -97,7 +108,8 @@ track-audio, ~11,860 words. Comfortably beats the 12–20 min / 5 h target.
 
 ## Using it
 
-- **Batch** (default tab) — *New project* → name it → *Add files* (native picker) → order
+- **Batch** (default tab) — *New project* → name it → *Add files / folder* (native picker — pick
+  files, or a whole folder scanned recursively for audio/video) → order
   with ↑/↓ → optionally name speakers → repeat for more projects → choose a single output
   folder or "next to source files" → set the **output defaults** (merge vs one-transcript-per-file,
   and which formats; override per project as needed) → **Run batch**. Each project writes to

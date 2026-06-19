@@ -43,3 +43,19 @@ def test_failed_job_captures_error():
 
 def test_get_unknown_job_returns_none():
     assert JobRegistry().get("nope") is None
+
+
+def test_cancel_sets_cancelled_status():
+    reg = JobRegistry()
+    job = reg.create()
+
+    def work(progress):
+        progress(0.1, "stage one")      # checkpoint before cancel — proceeds
+        job.cancel()                     # request cancellation
+        progress(0.2, "stage two")      # next checkpoint raises -> cancelled
+        return MergedOutput()
+
+    reg.run(job, work)
+    _wait(job)
+    assert job.status is JobStatus.CANCELLED
+    assert job.result is None

@@ -1,7 +1,7 @@
 # WhisperMerger — Build Status
 
 Snapshot of what's built vs. outstanding, mapped against `whispermerger-prd.md` (FR-\* IDs)
-and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-18.
+and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-19.
 
 ## Summary
 
@@ -9,7 +9,7 @@ Both v1 (multi-track stems + batch studio) and v2 (single-track manual diarizati
 **built and running** on native Windows + RTX 3080 Ti (the build plan's env was validated;
 WSL2 not needed). Full pipeline works end-to-end: pick files → transcribe on GPU (WhisperX
 large-v3 + wav2vec2) → merge with conflict flags → edit → export. **Validated on a real 56 GB /
-1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **70 GPU-independent
+1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **81 GPU-independent
 tests pass**; the GPU path passes the §11.3 smoke gate. The Edit tab now imports all of our
 export formats (JSON/SRT/TXT/CSV); remaining work is optional polish (some `FR-UI-*` toggles)
 and proprietary-format import (Descript/Premiere).
@@ -39,7 +39,7 @@ FR-WD-3 SRT line splits use real word timestamps.
 **Export (§8.7):** FR-EX-1 SRT/TXT/CSV/JSON · FR-EX-2 word-level SRT splits. All four formats
 carry start+end timing; subtitle limits (CPL / max-lines / min-duration) toggleable.
 
-**Caching (§8.8):** FR-CA-1/2/3 SHA-256(file)+model+align key; re-runs skip transcription.
+**Caching (§8.8):** FR-CA-1/2/3 SHA-256(file)+model+align+language key; re-runs skip transcription.
 
 **Modes (§8.9):** FR-MD-1 Transcribe & Merge · FR-MD-2 Edit Transcript · FR-MD-3 sequence-only
 retired (folded into the pipeline).
@@ -182,6 +182,55 @@ Lets a big library export the way the user wants (e.g. ~200h → one TXT per rec
   (per-project + total elapsed already tracked).
 - Tests: `test_export.py` (formats filter) + `test_batch.py` (per-file → one transcript per source;
   formats filter limits a merge project).
+
+## Language selection + download reliability (2026-06-19)
+
+- **Forceable transcription language** — a **Language** dropdown (Batch output panel +
+  Transcribe & Merge options), default **Auto-detect**. `routes/api.py` `TranscribeRequest` /
+  `BatchRequest` carry `language`; it threads to `transcribe.transcribe_track(..., language=)`,
+  which passes it to `model.transcribe` and forces the matching wav2vec2 align model. Choosing a
+  language skips Whisper's per-file detection and the first-use download of that language's align
+  model.
+- **Cache key includes language** — `cache.cache_key(..., language)` adds the requested language
+  ("auto" when unset) so an auto-detect run and a forced-language run can't return each other's
+  cached results. New `test_cache.py::test_key_depends_on_language`.
+- **HF Xet downloader disabled** (`HF_HUB_DISABLE_XET=1` in `Startup.bat`) — the Xet transfer
+  backend hung indefinitely mid-download on the model CDN (CloudFront), wedging a batch with the
+  GPU idle; plain HTTPS is reliable. Related Windows gotcha worth knowing: **QuickEdit Mode** —
+  clicking in the server console pauses the next stdout write and freezes uvicorn's event loop
+  until a key is pressed.
+- Tests: **74 GPU-independent tests pass.**
+
+## Batch folder ingest + per-file nested output (2026-06-19)
+
+- **"Add files / folder" per project** — the project add button now opens a tiny Files/Folder
+  chooser (Windows can't pick both in one native dialog). **Files** → `/api/browse` (unchanged);
+  **Folder** → new `/api/add-folder` opens the native folder picker and registers **every
+  audio/video file underneath, recursively** (`_MEDIA_EXTS` filter), display name = path relative
+  to the chosen folder so nested files stay distinguishable; unreadable / audio-less files are
+  skipped, not fatal.
+- **Per-file output preserves the tree** — `batch.run_batch`, in `per_file` + `output_mode="source"`,
+  now writes each transcript **next to its own source file** (`Path(src.path).parent`) instead of
+  collapsing them into the first file's folder; dedupe is per-destination. So a folder of nested
+  recordings yields transcripts beside each original.
+- Tests: `test_api.py` (recursive `/add-folder` + cancel) and `test_batch.py`
+  (`test_per_file_source_writes_beside_each_source`). **77 GPU-independent tests pass.** Assets `?v=15`.
+
+## Job & batch cancel + retry (2026-06-19)
+
+- **Cancel is cooperative** (a thread can't safely be killed mid-WhisperX), so it lands at the next
+  stage/file boundary — the in-flight file finishes. `jobs.Job.cancel()` sets a `threading.Event`
+  the progress callback checks (raises `JobCancelled` → status `cancelled`); `batch` mirrors it with
+  a `cancelled` flag checked between projects/files (raises `Cancelled` → `canceled`), remaining
+  projects marked canceled. Endpoints: `POST /api/cancel/{job_id}`, `POST /api/batch/{id}/cancel`.
+- **Retry failed/canceled projects** — `BatchRegistry` persists a `_RunSpec` (projects + transcribe
+  fn + output settings) per batch; `POST /api/batch/{id}/retry` re-runs the errored/canceled projects
+  (or an explicit index list) in the same BatchStatus. Cache makes already-done files instant. The
+  per-project loop was extracted into `_process_project` / `_run_projects` so run and retry share it.
+- **UI** — **Cancel** on the Transcribe progress panel; **Cancel batch** + **Retry N failed/canceled**
+  on the batch panel.
+- Tests: `test_jobs.py` (cooperative cancel) + `test_batch.py` (cancel-before-run, mid-batch cancel
+  stops the queue, retry re-runs a repaired project). **81 GPU-independent tests pass.** Assets `?v=16`.
 
 ## Partial / outstanding (v1 polish)
 

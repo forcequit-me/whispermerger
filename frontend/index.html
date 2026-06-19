@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhisperMerger</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=13" />
+  <link rel="stylesheet" href="styles.css?v=14" />
 </head>
 <body>
   <header>
@@ -79,6 +79,25 @@
           <label class="opt"><input type="checkbox" id="batch-detect" checked>
             Detect conflicts (backchannel / overlap / bleed)</label>
         </div>
+        <div class="row" style="margin-top:6px">
+          <label class="field"><span>Language</span>
+            <select id="batch-language">
+              <option value="">Auto-detect</option>
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="it">Italian</option>
+              <option value="pt">Portuguese</option>
+              <option value="nl">Dutch</option>
+              <option value="no">Norwegian</option>
+              <option value="sv">Swedish</option>
+              <option value="da">Danish</option>
+              <option value="ja">Japanese</option>
+              <option value="zh">Chinese</option>
+            </select></label>
+          <span class="muted">Auto-detect picks per file; choosing a language skips detection (and avoids first-use language-model downloads).</span>
+        </div>
         <div class="row" style="margin-top:10px"><span class="muted">Default output — applies to every project unless a project overrides it:</span></div>
         <div class="row" style="margin-top:4px">
           <label class="opt"><input type="checkbox" id="batch-perfile">
@@ -104,6 +123,10 @@
           <span class="progress-pct" id="batch-pct">0%</span>
         </div>
         <div class="bar"><div id="batch-bar"></div></div>
+        <div class="row" style="margin-top:8px">
+          <button id="cancel-batch" class="ghost" style="display:none">Cancel batch</button>
+          <button id="retry-batch" class="ghost" style="display:none">Retry failed</button>
+        </div>
         <div id="batch-status" style="margin-top:12px"></div>
       </div>
     </section>
@@ -142,6 +165,22 @@
             Detect conflicts (backchannel / overlap / bleed)</label>
         </div>
         <div class="row">
+          <label class="field"><span>Language</span>
+            <select id="opt-language">
+              <option value="">Auto-detect</option>
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="it">Italian</option>
+              <option value="pt">Portuguese</option>
+              <option value="nl">Dutch</option>
+              <option value="no">Norwegian</option>
+              <option value="sv">Swedish</option>
+              <option value="da">Danish</option>
+              <option value="ja">Japanese</option>
+              <option value="zh">Chinese</option>
+            </select></label>
           <label class="field"><span>Backchannel</span>
             <select id="opt-backchannel">
               <option value="parenthetical">parenthetical</option>
@@ -165,6 +204,8 @@
       <div class="panel progress-wrap" id="progress-wrap">
         <div class="progress-head">
           <h2>Progress</h2>
+          <div class="spacer"></div>
+          <button id="cancel-job" class="ghost" style="display:none">Cancel</button>
           <span class="progress-pct" id="progress-pct">0%</span>
         </div>
         <ol class="stage-steps" id="stage-steps">
@@ -290,7 +331,7 @@
     </section>
   </main>
 
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=16"></script>
   <script type="module" src="labeltrack.js?v=7"></script>
 </body>
 </html>
