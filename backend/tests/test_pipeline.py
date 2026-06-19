@@ -47,6 +47,20 @@ def test_pipeline_skips_unselected_tracks(two_stream_file):
     assert {s.speaker for s in out.segments} == {"Speaker 1"}
 
 
+def test_pipeline_cleans_temp_dirs(two_stream_file):
+    # Prefetch uses a per-run tmpdir with per-file subdirs — it must leave nothing behind.
+    import glob
+    import os
+    import tempfile
+    root = tempfile.gettempdir()
+    before = set(glob.glob(os.path.join(root, "wm_pipe_*")))
+    src = InputSource(filename="x.mkv", duration=2.0,
+                      tracks=[Track(track_index=0, speaker="A"), Track(track_index=1, speaker="B")])
+    run_merge_pipeline([PreparedSource(str(two_stream_file), src)], _stub_transcribe)
+    after = set(glob.glob(os.path.join(root, "wm_pipe_*")))
+    assert after <= before                      # no run tmpdir left behind
+
+
 def test_pipeline_sequential_offsets(two_stream_file):
     # Two files, one selected track each, sequence 0 then 1 -> second offset by first's duration.
     a = InputSource(filename="a.mkv", duration=4.0, sequence=0,

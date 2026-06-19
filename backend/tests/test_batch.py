@@ -1,6 +1,7 @@
 """Batch orchestration tests — real ffmpeg files + a stub transcribe (no GPU)."""
 
 import json
+from pathlib import Path
 
 from app.batch import BatchRegistry, ProjectInput, Status, _RunSpec, run_batch
 from app.models import InputSource, Track
@@ -10,6 +11,13 @@ from app.pipeline import PreparedSource
 def _stub(_wav):
     return {"segments": [{"start": 0.0, "end": 1.0, "text": "hi",
                           "words": [{"word": "hi", "start": 0.0, "end": 1.0}]}]}
+
+
+def _find(directory, stem, ext):
+    """The exported transcript for `stem` in `directory` under the naming scheme
+    `<stem> Transcript (M-D-YYYY h-mm AMPM).<ext>`, or None if absent."""
+    matches = list(Path(directory).glob(f"{stem} Transcript (*).{ext}"))
+    return matches[0] if matches else None
 
 
 def _prepared(path, name, duration, sequence=0, speaker="Speaker 1"):
@@ -33,7 +41,7 @@ def test_writes_all_formats_per_project(two_stream_file, tmp_path):
     assert all(p.status is Status.DONE for p in batch.projects)
     for name in ("Performance Poser", "Whiteout"):
         for ext in ("srt", "txt", "csv", "json"):
-            assert (tmp_path / name / f"{name}.{ext}").exists()
+            assert _find(tmp_path / name, name, ext), f"{name}.{ext}"
 
 
 def test_sequential_offsets_within_project(two_stream_file, tmp_path):
@@ -43,7 +51,8 @@ def test_sequential_offsets_within_project(two_stream_file, tmp_path):
         _prepared(two_stream_file, "s2.mkv", 3.0, sequence=1),
     ])
     _run([proj], output_mode="folder", output_folder=str(tmp_path))
-    data = json.loads((tmp_path / "Multi" / "Multi.json").read_text(encoding="utf-8"))
+    f = _find(tmp_path / "Multi", "Multi", "json")
+    data = json.loads(f.read_text(encoding="utf-8"))
     assert [s["start"] for s in data["segments"]] == [0.0, 4.0]
 
 
@@ -66,11 +75,11 @@ def test_per_file_writes_one_transcript_per_source(two_stream_file, tmp_path):
     batch = _run([proj], output_mode="folder", output_folder=str(tmp_path))
     assert batch.projects[0].status is Status.DONE
     proj_dir = tmp_path / "Library"
-    assert (proj_dir / "intro.txt").exists()
-    assert (proj_dir / "outro.txt").exists()
+    assert _find(proj_dir, "intro", "txt")
+    assert _find(proj_dir, "outro", "txt")
     # only the chosen format, and no merged <project>.* file
-    assert not (proj_dir / "intro.srt").exists()
-    assert not (proj_dir / "Library.txt").exists()
+    assert not _find(proj_dir, "intro", "srt")
+    assert not _find(proj_dir, "Library", "txt")
 
 
 def test_per_file_source_writes_beside_each_source(two_stream_file, tmp_path):
@@ -86,17 +95,17 @@ def test_per_file_source_writes_beside_each_source(two_stream_file, tmp_path):
     ], per_file=True, formats=["txt"])
     batch = _run([proj], output_mode="source")
     assert batch.projects[0].status is Status.DONE
-    assert (a.parent / "ep1.txt").exists()           # beside its own source
-    assert (b.parent / "ep2.txt").exists()           # nested location preserved
-    assert not (a.parent / "ep2.txt").exists()       # not collapsed together
+    assert _find(a.parent, "ep1", "txt")             # beside its own source
+    assert _find(b.parent, "ep2", "txt")             # nested location preserved
+    assert not _find(a.parent, "ep2", "txt")         # not collapsed together
 
 
 def test_formats_filter_limits_merge_output(two_stream_file, tmp_path):
     proj = ProjectInput("Solo", [_prepared(two_stream_file, "a.mkv", 2.0)], formats=["txt"])
     _run([proj], output_mode="folder", output_folder=str(tmp_path))
-    assert (tmp_path / "Solo" / "Solo.txt").exists()
+    assert _find(tmp_path / "Solo", "Solo", "txt")
     for ext in ("srt", "csv", "json"):
-        assert not (tmp_path / "Solo" / f"Solo.{ext}").exists()
+        assert not _find(tmp_path / "Solo", "Solo", ext)
 
 
 def test_cancel_before_run_marks_all_canceled(two_stream_file, tmp_path):
@@ -106,7 +115,7 @@ def test_cancel_before_run_marks_all_canceled(two_stream_file, tmp_path):
     batch.cancelled = True
     run_batch(batch, projects, _stub, output_mode="folder", output_folder=str(tmp_path))
     assert all(p.status is Status.CANCELED for p in batch.projects)
-    assert not (tmp_path / "A" / "A.srt").exists()
+    assert not _find(tmp_path / "A", "A", "srt")
 
 
 def test_cancel_mid_batch_stops_queue(two_stream_file, tmp_path):
@@ -120,7 +129,7 @@ def test_cancel_mid_batch_stops_queue(two_stream_file, tmp_path):
 
     run_batch(batch, projects, stub, output_mode="folder", output_folder=str(tmp_path))
     assert batch.projects[1].status is Status.CANCELED        # B never started
-    assert not (tmp_path / "B" / "B.srt").exists()
+    assert not _find(tmp_path / "B", "B", "srt")
 
 
 def test_retry_reruns_selected_project(two_stream_file, tmp_path):
@@ -140,8 +149,86 @@ def test_retry_reruns_selected_project(two_stream_file, tmp_path):
     while batch.status not in (Status.DONE, Status.CANCELED) and _t.time() < deadline:
         _t.sleep(0.02)
     assert batch.projects[1].status is Status.DONE
-    assert (tmp_path / "B" / "B.srt").exists()
+    assert _find(tmp_path / "B", "B", "srt")
     assert batch.projects[0].status is Status.DONE
+
+
+def test_transcript_basename_format():
+    import time
+    from app.batch import transcript_basename
+    when = time.mktime((2026, 6, 19, 2, 2, 0, 0, 0, -1))      # 2:02 AM, Jun 19 2026
+    assert transcript_basename("My Project", when) == "My Project Transcript (6-19-2026 2-02 AM)"
+    pm = time.mktime((2026, 12, 5, 14, 5, 0, 0, 0, -1))       # 2:05 PM, Dec 5
+    assert transcript_basename("X", pm) == "X Transcript (12-5-2026 2-05 PM)"
+
+
+def test_export_names_share_one_timestamp_across_formats(two_stream_file, tmp_path):
+    import re
+    proj = ProjectInput("Solo", [_prepared(two_stream_file, "a.mkv", 2.0)], formats=["srt", "txt"])
+    _run([proj], output_mode="folder", output_folder=str(tmp_path))
+    srt = _find(tmp_path / "Solo", "Solo", "srt")
+    txt = _find(tmp_path / "Solo", "Solo", "txt")
+    assert srt and txt
+    assert re.fullmatch(r"Solo Transcript \(\d{1,2}-\d{1,2}-\d{4} \d{1,2}-\d{2} [AP]M\)", srt.stem)
+    assert srt.stem == txt.stem                  # all formats of one project share the stamp
+
+
+def test_cancel_queued_project_skips_it_continues_queue(two_stream_file, tmp_path):
+    reg = BatchRegistry()
+    projects = [ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0)]),
+                ProjectInput("B", [_prepared(two_stream_file, "b.mkv", 2.0)])]
+    batch = reg.create(["A", "B"])
+    assert reg.cancel_project(batch.id, 0)               # cancel A before the run
+    run_batch(batch, projects, _stub, output_mode="folder", output_folder=str(tmp_path))
+    assert batch.projects[0].status is Status.CANCELED   # A skipped
+    assert batch.projects[1].status is Status.DONE       # queue continued to B
+    assert not _find(tmp_path / "A", "A", "srt")
+    assert _find(tmp_path / "B", "B", "srt")
+
+
+def test_cancel_running_project_stops_it_not_queue(two_stream_file, tmp_path):
+    reg = BatchRegistry()
+    batch = reg.create(["A", "B"])
+    projects = [ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0)]),
+                ProjectInput("B", [_prepared(two_stream_file, "b.mkv", 2.0)])]
+
+    def stub(_wav):                                       # cancel A while it transcribes
+        reg.cancel_project(batch.id, 0)
+        return _stub(_wav)
+
+    run_batch(batch, projects, stub, output_mode="folder", output_folder=str(tmp_path))
+    assert batch.projects[0].status is Status.CANCELED   # A stopped at its next boundary
+    assert batch.projects[1].status is Status.DONE       # B still ran
+    assert _find(tmp_path / "B", "B", "srt")
+
+
+def test_retry_clears_project_cancel(two_stream_file, tmp_path):
+    import time as _t
+    reg = BatchRegistry()
+    projects = [ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0)])]
+    batch = reg.create(["A"])
+    reg.set_spec(batch.id, _RunSpec(projects, _stub, "folder", str(tmp_path), None))
+    assert reg.cancel_project(batch.id, 0)
+    run_batch(batch, projects, _stub, output_mode="folder", output_folder=str(tmp_path))
+    assert batch.projects[0].status is Status.CANCELED
+    assert reg.retry(batch.id, [0])                       # restart just this item
+    deadline = _t.time() + 5
+    while batch.status not in (Status.DONE, Status.CANCELED) and _t.time() < deadline:
+        _t.sleep(0.02)
+    assert batch.projects[0].status is Status.DONE        # cancel_requested was cleared
+    assert _find(tmp_path / "A", "A", "srt")
+
+
+def test_retry_while_running_queues_instead_of_starting(two_stream_file, tmp_path):
+    reg = BatchRegistry()
+    projects = [ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0)])]
+    batch = reg.create(["A"])
+    reg.set_spec(batch.id, _RunSpec(projects, _stub, "folder", str(tmp_path), None))
+    batch.status = Status.RUNNING                # pretend the worker is mid-batch
+    assert reg.retry(batch.id, [0])
+    assert batch.rerun_pending == [0]            # queued for the busy worker to drain
+    assert batch.projects[0].status is Status.QUEUED
+    assert batch.status is Status.RUNNING        # did NOT start a second worker / finalize
 
 
 def test_output_mode_source_writes_next_to_file(two_stream_file, tmp_path):
@@ -151,4 +238,4 @@ def test_output_mode_source_writes_next_to_file(two_stream_file, tmp_path):
     proj = ProjectInput("NextTo", [_prepared(local, "session.mkv", 2.0)])
     batch = _run([proj], output_mode="source")
     assert batch.projects[0].output_dir == str(tmp_path / "NextTo")
-    assert (tmp_path / "NextTo" / "NextTo.srt").exists()
+    assert _find(tmp_path / "NextTo", "NextTo", "srt")

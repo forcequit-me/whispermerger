@@ -3,7 +3,9 @@
 import json
 import subprocess
 
-from app.extract import extract_track, extracted_audio
+import pytest
+
+from app.extract import extract_ahead, extract_track, extracted_audio
 
 
 def _probe_audio(path):
@@ -65,3 +67,67 @@ def test_extracted_audio_context_cleans_up(two_stream_file):
         tmpdir = paths[0].parent
     assert not any(p.exists() for p in paths)  # files removed
     assert not tmpdir.exists()                  # temp dir removed
+
+
+# --- extract_ahead (prefetch iterator) — pure-Python, no ffmpeg ---------------------------
+
+def test_extract_ahead_preserves_order_and_results():
+    items = [1, 2, 3, 4]
+    out = list(extract_ahead(items, lambda x: x * 10))
+    assert out == [(1, 10), (2, 20), (3, 30), (4, 40)]
+
+
+def test_extract_ahead_prefetches_one_ahead():
+    # While the consumer holds item 1, item 2's extraction has already STARTED in the worker
+    # (that overlap is the whole point — extraction runs during transcription).
+    import threading
+    started = {1: threading.Event(), 2: threading.Event(), 3: threading.Event()}
+    yielded = []
+
+    def extract_one(x):
+        started[x].set()
+        return x
+
+    for item, _ in extract_ahead([1, 2, 3], extract_one):
+        yielded.append(item)
+        if item == 1:
+            assert started[2].wait(timeout=2)   # next item is being extracted while we hold this one
+            assert not started[3].is_set()       # but only one ahead (depth 1)
+
+    assert yielded == [1, 2, 3]                   # each yielded exactly once, in order
+
+
+def test_extract_ahead_error_surfaces_at_its_item():
+    seen = []
+
+    def extract_one(x):
+        if x == 2:
+            raise RuntimeError("boom on 2")
+        return x
+
+    gen = extract_ahead([1, 2, 3], extract_one)
+    seen.append(next(gen))                 # item 1 yields fine
+    with pytest.raises(RuntimeError, match="boom on 2"):
+        next(gen)                          # item 2's error surfaces here, not swallowed
+    assert seen == [(1, 1)]
+
+
+def test_extract_ahead_stops_prefetch_when_cancelled():
+    extracted = []
+    cancelled = {"v": False}
+
+    def extract_one(x):
+        extracted.append(x)
+        return x
+
+    out = []
+    for item, _ in extract_ahead([1, 2, 3, 4], extract_one,
+                                 is_cancelled=lambda: cancelled["v"]):
+        out.append(item)
+        if item == 1:
+            cancelled["v"] = True          # request cancel after the first item
+            break
+
+    # Item 2 may have been prefetched before cancel; items 3/4 must never be extracted.
+    assert out == [1]
+    assert 3 not in extracted and 4 not in extracted

@@ -41,6 +41,11 @@ _ensure_cuda_dlls()
 MODEL_NAME = "large-v3"
 COMPUTE_TYPE = "float16"
 DEVICE = "cuda"
+# Transcription batch size (WhisperX batched inference). Higher = more GPU throughput per pass,
+# at the cost of VRAM. 16 is safe on 12 GB / large-v3 fp16; bump (24, 32) and validate no OOM on
+# a real run. Not part of cache_key — output is identical regardless, so changing it never busts
+# the cache.
+BATCH_SIZE = int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))
 ALIGN_TAG = "wav2vec2"  # alignment method, part of the cache key (FR-CA-2)
 # Optional language override: set WHISPERMERGER_LANGUAGE=en to skip auto-detect (and the
 # per-language align-model download it can trigger). Unset = auto-detect (original behavior).
@@ -88,7 +93,7 @@ def transcribe_track(
     model_name: str = MODEL_NAME,
     compute_type: str = COMPUTE_TYPE,
     device: str = DEVICE,
-    batch_size: int = 16,
+    batch_size: int = BATCH_SIZE,
     cache: Optional[Cache] = None,
     language: Optional[str] = LANGUAGE,
 ) -> dict:

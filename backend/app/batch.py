@@ -19,7 +19,7 @@ from typing import Callable, Optional
 
 from .export import export_all
 from .merge import MergeOptions
-from .pipeline import PreparedSource, run_merge_pipeline
+from .pipeline import PreparedSource, run_merge_pipeline, run_per_file_pipeline
 
 TranscribeFn = Callable[[str], dict]
 
@@ -54,6 +54,7 @@ class ProjectStatus:
     error: Optional[str] = None
     started_at: float = 0.0
     finished_at: float = 0.0
+    cancel_requested: bool = False               # cancel just this project (queue continues)
 
     @property
     def elapsed(self) -> float:
@@ -70,6 +71,10 @@ class BatchStatus:
     started_at: float = 0.0
     finished_at: float = 0.0
     cancelled: bool = False
+    # Project indices requested for re-run while the worker is busy — the worker drains these
+    # when it frees up (one GPU, so re-runs queue instead of starting a competing thread).
+    rerun_pending: list[int] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def progress(self) -> float:
@@ -89,6 +94,16 @@ def _safe_name(name: str) -> str:
     """Filesystem-safe folder/file base name."""
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip().strip(".")
     return cleaned or "project"
+
+
+def transcript_basename(base: str, when: Optional[float] = None) -> str:
+    """Self-describing export name: `<base> Transcript (M-D-YYYY h-mm AMPM)`, e.g.
+    `Project 1 Transcript (6-19-2026 2-02 AM)`. Dash (not colon) in the time so it's a legal
+    Windows filename. `when` defaults to now — pass it once per file so all formats share a stamp."""
+    t = time.localtime(when)
+    h = t.tm_hour % 12 or 12
+    ap = "AM" if t.tm_hour < 12 else "PM"
+    return f"{_safe_name(base)} Transcript ({t.tm_mon}-{t.tm_mday}-{t.tm_year} {h}-{t.tm_min:02d} {ap})"
 
 
 def _project_output_parent(project: ProjectInput, output_mode: str, output_folder: Optional[str]) -> Path:
@@ -136,32 +151,29 @@ def _process_project(
         if project.per_file:
             # One transcript per source file. In "source" mode each lands next to its own
             # source file (so a nested folder tree is preserved); otherwise all go to the
-            # project's output folder.
-            n = len(project.prepared) or 1
+            # project's output folder. Prefetch overlaps the next file's extraction with the
+            # current file's transcription (run_per_file_pipeline); on_file exports each result.
             seen: dict[tuple[str, str], int] = {}
-            for i, src in enumerate(project.prepared):
-                if is_cancelled():
-                    raise Cancelled()
-                name = src.input.filename
 
-                def cb(frac: float, msg: str, i=i, name=name) -> None:
-                    _set(ps, (i + frac) / n, f"file {i + 1}/{n}: {name} · {msg}")
-
-                merged = run_merge_pipeline(
-                    [src], transcribe_fn, options=options,
-                    progress_cb=_guard(cb, is_cancelled))
+            def on_file(i: int, src: PreparedSource, merged, seen=seen) -> None:
                 dest = Path(src.path).parent if output_mode == "source" else out_dir
-                stem = _safe_name(Path(name).stem)
+                stem = _safe_name(Path(src.input.filename).stem)
                 seen[(str(dest), stem)] = seen.get((str(dest), stem), 0) + 1
                 if seen[(str(dest), stem)] > 1:
                     stem = f"{stem}_{seen[(str(dest), stem)]}"
-                export_all(merged, dest, stem, formats=project.formats)
+                export_all(merged, dest, transcript_basename(stem), formats=project.formats)
+
+            run_per_file_pipeline(
+                project.prepared, transcribe_fn, on_file, options=options,
+                progress_cb=_guard(lambda frac, msg: _set(ps, frac, msg), is_cancelled),
+                is_cancelled=is_cancelled)
             ps.output_dir = str(parent if output_mode == "source" else out_dir)
         else:
             merged = run_merge_pipeline(
                 project.prepared, transcribe_fn, options=options,
-                progress_cb=_guard(lambda frac, msg: _set(ps, frac, msg), is_cancelled))
-            export_all(merged, out_dir, base, formats=project.formats)
+                progress_cb=_guard(lambda frac, msg: _set(ps, frac, msg), is_cancelled),
+                is_cancelled=is_cancelled)
+            export_all(merged, out_dir, transcript_basename(base), formats=project.formats)
             ps.output_dir = str(out_dir)
         ps.finished_at = time.time()
         ps.progress = 1.0
@@ -192,12 +204,22 @@ def _run_projects(
     for project, ps in pairs:
         if is_cancelled():
             break
+        if ps.cancel_requested:                       # this item canceled before it ran — skip it
+            ps.status = Status.CANCELED
+            ps.message = "canceled"
+            continue
+
+        def proj_cancelled(ps=ps) -> bool:            # batch-wide OR this one project
+            return is_cancelled() or ps.cancel_requested
+
         try:
             _process_project(project, ps, transcribe_fn, output_mode=output_mode,
                              output_folder=output_folder, options=options,
-                             is_cancelled=is_cancelled)
+                             is_cancelled=proj_cancelled)
         except Cancelled:
-            break
+            if is_cancelled():                        # whole-batch cancel stops the queue
+                break
+            # single-item cancel: this project is marked CANCELED, the queue continues
     if is_cancelled():
         for _, ps in pairs:
             if ps.status in (Status.QUEUED, Status.RUNNING):
@@ -265,37 +287,79 @@ class BatchRegistry:
         batch.cancelled = True
         return True
 
+    def cancel_project(self, batch_id: str, index: int) -> bool:
+        """Cancel ONE project — the queue continues to the next. Takes effect at that project's
+        next stage boundary (or immediately if it hasn't started yet)."""
+        batch = self.get(batch_id)
+        if batch is None or not (0 <= index < len(batch.projects)):
+            return False
+        batch.projects[index].cancel_requested = True
+        return True
+
+    @staticmethod
+    def _reset_ps(ps: ProjectStatus) -> None:
+        """Put a project back to a fresh QUEUED state so it can run (again)."""
+        ps.status = Status.QUEUED
+        ps.error = None
+        ps.progress = 0.0
+        ps.message = ""
+        ps.started_at = 0.0
+        ps.finished_at = 0.0
+        ps.cancel_requested = False
+
+    def _run_indices(self, batch: BatchStatus, spec: _RunSpec, indices: list[int]) -> None:
+        pairs = [(spec.projects[i], batch.projects[i]) for i in indices]
+        _run_projects(pairs, spec.transcribe_fn, output_mode=spec.output_mode,
+                      output_folder=spec.output_folder, options=spec.options,
+                      is_cancelled=lambda: batch.cancelled)
+
     def run(self, batch: BatchStatus, work: Callable[[], None]) -> None:
+        """Run `work` on a background thread, then keep draining any re-runs requested while it
+        ran (so a single worker, single GPU, processes everything in sequence)."""
         def _target() -> None:
             batch.started_at = time.time()
             batch.status = Status.RUNNING
             try:
                 work()
+                while True:
+                    spec = self._specs.get(batch.id)
+                    with batch.lock:
+                        pending = [] if (spec is None or batch.cancelled) else batch.rerun_pending
+                        batch.rerun_pending = []
+                        if not pending:
+                            # Finalize under the lock so a re-run request can't slip in after we've
+                            # decided to stop (it would see RUNNING, enqueue, and never get drained).
+                            batch.finished_at = time.time()
+                            batch.status = Status.CANCELED if batch.cancelled else Status.DONE
+                            return
+                    self._run_indices(batch, spec, pending)
             finally:
-                batch.finished_at = time.time()
-                batch.status = Status.CANCELED if batch.cancelled else Status.DONE
+                if batch.status is Status.RUNNING:   # safety net if work() raised unexpectedly
+                    batch.finished_at = time.time()
+                    batch.status = Status.CANCELED if batch.cancelled else Status.DONE
         threading.Thread(target=_target, daemon=True).start()
 
     def retry(self, batch_id: str, indices: list[int]) -> bool:
-        """Re-run the given project indices using the stored spec, reusing the same
-        BatchStatus so the UI keeps polling one batch. False if unknown / no spec."""
+        """Re-run the given project indices, reusing the same BatchStatus so the UI keeps polling
+        one batch. If the batch is still running, the indices are queued and run when the GPU frees
+        up; if idle, a worker starts immediately. False only on unknown batch / bad indices."""
         batch = self.get(batch_id)
         spec = self._specs.get(batch_id)
         if batch is None or spec is None:
             return False
         if not all(0 <= i < len(batch.projects) for i in indices):
             return False
-        batch.cancelled = False
-        pairs = [(spec.projects[i], batch.projects[i]) for i in indices]
-        for _, ps in pairs:
-            ps.status = Status.QUEUED
-            ps.error = None
-            ps.progress = 0.0
-            ps.message = ""
-            ps.started_at = 0.0
-            ps.finished_at = 0.0
-        self.run(batch, lambda: _run_projects(
-            pairs, spec.transcribe_fn, output_mode=spec.output_mode,
-            output_folder=spec.output_folder, options=spec.options,
-            is_cancelled=lambda: batch.cancelled))
+        for i in indices:
+            self._reset_ps(batch.projects[i])
+        start = False
+        with batch.lock:
+            for i in indices:
+                if i not in batch.rerun_pending:
+                    batch.rerun_pending.append(i)
+            if batch.status is not Status.RUNNING:   # claim it so a second caller won't also start
+                batch.status = Status.RUNNING
+                batch.cancelled = False
+                start = True
+        if start:
+            self.run(batch, lambda: None)            # worker drains rerun_pending
         return True

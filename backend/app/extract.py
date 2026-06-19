@@ -10,8 +10,9 @@ from __future__ import annotations
 import contextlib
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator, Optional
 
 
 def extract_track(src: str | Path, track_index: int, dest: str | Path) -> Path:
@@ -57,6 +58,25 @@ def extract_tracks(src: str | Path, track_indices: list[int], dest_dir: str | Pa
         outs[ti] = dest
     subprocess.run(args, check=True, capture_output=True)
     return outs
+
+
+def extract_ahead(items: list, extract_one: Callable, *,
+                  is_cancelled: Optional[Callable[[], bool]] = None) -> Iterator[tuple]:
+    """Yield ``(item, extract_one(item))`` in order, running the NEXT item's extraction in a
+    background thread (prefetch depth 1) while the consumer handles the current one. A single
+    worker means at most one item is extracted ahead, so the GPU stays fed without piling up
+    disk usage. Stops prefetching once ``is_cancelled()`` is true; an extraction error surfaces
+    when its item is reached (per-item isolation — it is not swallowed in the worker thread)."""
+    if not items:
+        return
+    is_cancelled = is_cancelled or (lambda: False)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(extract_one, items[0])
+        for i, item in enumerate(items):
+            result = fut.result()                       # block until this item is extracted
+            fut = (pool.submit(extract_one, items[i + 1])
+                   if i + 1 < len(items) and not is_cancelled() else None)
+            yield item, result
 
 
 def concat_wavs(wav_paths: list[str | Path], dest: str | Path) -> tuple[float, list[float]]:

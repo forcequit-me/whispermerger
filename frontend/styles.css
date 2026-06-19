@@ -227,6 +227,32 @@ table.editor tr.editing { background: var(--panel-2); }
 .lane-axis .tick span { position: absolute; bottom: 7px; left: 3px; font-size: 10px; color: var(--muted);
   white-space: nowrap; font-variant-numeric: tabular-nums; }
 
+/* progress caption: one line under a bar explaining what the % counts */
+.progress-note { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+/* batch progress — per-project cards with status chips + per-item cancel/restart */
+.batch-summary { font-size: 13px; margin-bottom: 4px; }
+.batch-counts { font-size: 12px; margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+.batch-item { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2);
+  padding: 10px 12px; margin-bottom: 8px; }
+.batch-item.state-error { border-color: rgba(224, 98, 94, .5); }
+.batch-item-head { display: flex; align-items: center; gap: 10px; }
+.bi-name { font-weight: 600; }
+.bi-elapsed { font-size: 12px; font-variant-numeric: tabular-nums; }
+.batch-item .bi-bar { height: 6px; margin: 8px 0 6px; }
+.bi-msg { font-size: 12px; margin-top: 4px; word-break: break-word; }
+.bi-msg.bi-err { color: var(--bleed); display: flex; align-items: center; gap: 3px; }
+.bi-act { font-size: 12px; padding: 4px 8px; }
+
+/* per-project status chip */
+.chip-status { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; font-weight: 600;
+  padding: 2px 8px; border-radius: 10px; flex: none;
+  background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+.chip-status.running { color: var(--accent); border-color: rgba(91,157,255,.5); background: rgba(91,157,255,.12); }
+.chip-status.done { color: var(--ok); border-color: rgba(87,184,148,.5); background: rgba(87,184,148,.12); }
+.chip-status.error { color: var(--bleed); border-color: rgba(224,98,94,.5); background: rgba(224,98,94,.12); }
+.chip-status.canceled { color: var(--overlap); border-color: rgba(217,164,65,.5); background: rgba(217,164,65,.12); }
+
 .muted { color: var(--muted); }
 .spacer { flex: 1; }
 .hidden { display: none; }

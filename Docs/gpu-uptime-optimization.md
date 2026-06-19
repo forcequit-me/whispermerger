@@ -1,6 +1,17 @@
 # Handoff — GPU uptime / batch speed optimization
 
-**Status:** analysis + plan only. **Nothing implemented yet.** Last updated 2026-06-19.
+**Status:** #1 (prefetch) + #2 (batch_size knob) **implemented** 2026-06-19. #3 skipped as planned.
+
+**What shipped:**
+- Prefetch depth-1 via `extract.extract_ahead` (generic iterator). `pipeline.run_merge_pipeline`
+  consumes it (single-job + multi-file merge projects); new `pipeline.run_per_file_pipeline` drives
+  it across a project's files for the per-file batch case (`batch._process_project`). Each file
+  extracts into its own temp subdir so prefetched WAVs don't collide; cleanup via `shutil.rmtree`.
+- `transcribe.BATCH_SIZE` = `int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))`. **Still default
+  16** — tune on the real 3080 Ti (try 24/32, largest with no OOM) and record the value here.
+- Cancel: prefetch stops promptly via `is_cancelled` threaded through both pipelines.
+
+Original analysis below (kept for reference).
 
 **Goal:** keep the GPU busy a higher fraction of batch wall time. Today the GPU idles while
 each file's audio is extracted; we want to overlap that CPU/disk work with transcription.

@@ -597,6 +597,15 @@ def cancel_batch(request: Request, batch_id: str) -> dict:
     return {"canceling": True}
 
 
+@router.post("/batch/{batch_id}/project/{idx}/cancel")
+def cancel_batch_project(request: Request, batch_id: str, idx: int) -> dict:
+    """Cancel one project in a batch — the file currently transcribing finishes, that project is
+    marked canceled, and the queue continues to the next project (unlike whole-batch cancel)."""
+    if not request.app.state.batches.cancel_project(batch_id, idx):
+        raise HTTPException(404, "unknown batch or project")
+    return {"canceling": True}
+
+
 @router.post("/batch/{batch_id}/retry", response_model=BatchStatusOut)
 def retry_batch(request: Request, batch_id: str,
                 body: RetryRequest | None = None) -> BatchStatusOut:

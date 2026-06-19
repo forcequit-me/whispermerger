@@ -410,10 +410,31 @@ function parseTime(v) {
 }
 
 // --- export panel ----------------------------------------------------------------------
+// Default export name: "<base> Transcript (M-D-YYYY h-mm AMPM)" — mirrors the backend batch
+// naming so an interactively-exported file looks like a batch-exported one. Dash (not colon) in
+// the time keeps it a legal filename.
+function transcriptName(base) {
+  const d = new Date();
+  let h = d.getHours() % 12; if (h === 0) h = 12;
+  const ap = d.getHours() < 12 ? "AM" : "PM";
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const stamp = `${d.getMonth() + 1}-${d.getDate()}-${d.getFullYear()} ${h}-${mm} ${ap}`;
+  return `${base || "transcript"} Transcript (${stamp})`;
+}
+
+// Base name from the loaded transcript's first source (stem), stripping any prior
+// " Transcript (…)" so re-exporting an exported file doesn't compound the label.
+function exportBase(merged) {
+  const src = merged.sources && merged.sources[0] && merged.sources[0].filename;
+  let base = src ? src.replace(/\.[^.]+$/, "") : "transcript";       // drop extension
+  base = base.replace(/\s*Transcript \([^)]*\)\s*$/, "").trim();
+  return base || "transcript";
+}
+
 function buildExportPanel(container, merged) {
   const format = el("select");
   ["srt", "txt", "csv", "json"].forEach((f) => format.append(el("option", { value: f, textContent: f.toUpperCase() })));
-  const filename = el("input", { value: "transcript", size: 14 });
+  const filename = el("input", { value: transcriptName(exportBase(merged)), size: 36 });
   const applyLimits = el("input", { type: "checkbox", checked: true });
   const cpl = el("input", { type: "number", value: 42 });
   const maxLines = el("input", { type: "number", value: 2 });
@@ -1069,7 +1090,7 @@ function pollBatch(id, btn) {
       if (!r.ok) throw new Error(await r.text());
       b = await r.json();
     } catch (e) { setTimeout(tick, 1500); return; }   // transient — keep waiting, don't die
-    renderBatchStatus(b);
+    renderBatchStatus(b, id, btn);
     if (b.status === "done" || b.status === "canceled") {
       btn.disabled = false;
       cancelBtn.style.display = "none";
@@ -1096,26 +1117,107 @@ function pollBatch(id, btn) {
   tick();
 }
 
-function renderBatchStatus(b) {
+// status word -> { display label, css class } for the per-item chip.
+const BATCH_STATE = {
+  queued:   { label: "Queued",   cls: "queued" },
+  running:  { label: "Running",  cls: "running" },
+  done:     { label: "Done",     cls: "done" },
+  error:    { label: "Failed",   cls: "error" },
+  canceled: { label: "Canceled", cls: "canceled" },
+};
+
+function renderBatchStatus(b, id, btn) {
+  // Overall bar: project-weighted (each project counts equally toward 100%, regardless of size).
   const pct = Math.round((b.progress || 0) * 100);
   $("#batch-bar").style.width = pct + "%";
   $("#batch-pct").textContent = pct + "%";
+
+  const counts = { queued: 0, running: 0, done: 0, error: 0, canceled: 0 };
+  b.projects.forEach((p) => { counts[p.status] = (counts[p.status] || 0) + 1; });
+  const total = b.projects.length;
+
   const root = $("#batch-status");
   root.innerHTML = "";
-  root.append(el("div", { className: "muted", style: "margin-bottom:6px",
-    textContent: `Overall: ${pct}% · ${fmtElapsed(b.elapsed)}` }));
-  b.projects.forEach((p) => {
-    const pct = Math.round((p.progress || 0) * 100);
-    const state = p.status === "running" ? `running ${pct}% · ${fmtElapsed(p.elapsed)}` : p.status;
-    const detail = p.error ? p.error
-      : (p.status === "done" ? `${p.message} · ${p.output_dir || ""}` : p.message || "");
-    const detailSpan = el("span", { className: "muted", textContent: detail, style: "flex:1" });
-    if (p.error) { detailSpan.prepend(icon("warn", 13), " "); detailSpan.style.color = "var(--bleed)"; }
-    const line = el("div", { className: "track-row" },
-      el("span", { textContent: p.name, style: "width:200px; font-weight:600" }),
-      el("span", { className: "muted", textContent: state, style: "width:120px" }),
-      detailSpan);
-    if (p.status === "error") line.classList.add("flag-bleed_suspected");
-    root.append(line);
-  });
+
+  // Plain-language summary so the numbers above aren't ambiguous.
+  root.append(el("div", { className: "batch-summary" },
+    el("span", { textContent: `${counts.done} of ${total} projects complete` }),
+    el("span", { className: "muted",
+      textContent: ` · overall ${pct}% (project-weighted) · ${fmtElapsed(b.elapsed)}` })));
+  const parts = [];
+  for (const [k, label] of [["running", "running"], ["queued", "queued"], ["done", "done"],
+                            ["error", "failed"], ["canceled", "canceled"]]) {
+    if (counts[k]) parts.push(`${counts[k]} ${label}`);
+  }
+  root.append(el("div", { className: "batch-counts muted", textContent: parts.join("  ·  ") }));
+
+  const ended = b.status === "done" || b.status === "canceled";
+  b.projects.forEach((p, i) => root.append(buildBatchItem(p, i, id, btn, ended)));
+}
+
+// One project row: name + status chip + (cancel | restart), its own progress bar + detail.
+function buildBatchItem(p, i, id, btn, ended) {
+  const meta = BATCH_STATE[p.status] || { label: p.status, cls: "queued" };
+  const pct = Math.round((p.progress || 0) * 100);
+  const card = el("div", { className: `batch-item state-${meta.cls}` });
+
+  const head = el("div", { className: "batch-item-head" },
+    el("span", { className: "bi-name", textContent: p.name }),
+    el("span", { className: `chip-status ${meta.cls}`, textContent: meta.label }),
+    el("div", { className: "spacer" }),
+    el("span", { className: "muted bi-elapsed", textContent: fmtElapsed(p.elapsed) }));
+
+  // Active item (running/queued): cancel just this one — the queue continues. Finished item
+  // (done/failed/canceled): restart it. Restart works mid-batch too — if the card is busy the
+  // item is queued to re-run when it frees up; otherwise a fresh run starts.
+  if (p.status === "running" || p.status === "queued") {
+    const cancel = el("button", { className: "ghost icon-only bi-act", title: "Cancel this item" }, icon("close"));
+    cancel.onclick = async () => {
+      cancel.disabled = true; cancel.title = "Canceling…";
+      try { await fetch(`/api/batch/${id}/project/${i}/cancel`, { method: "POST" }); } catch {}
+    };
+    head.append(cancel);
+  } else {
+    const restart = el("button", { className: "ghost bi-act", textContent: "Restart",
+      title: ended ? "Run this item again" : "Run this item again (queues until the batch frees up)" });
+    restart.onclick = async () => {
+      restart.disabled = true; restart.textContent = "Restarting…";
+      try {
+        const r = await fetchTO(`/api/batch/${id}/retry`,
+          { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projects: [i] }) }, 30000);
+        if (!r.ok) {
+          $("#batch-err").textContent = "Restart failed: " + (await r.text());
+          restart.disabled = false; restart.textContent = "Restart"; return;
+        }
+        if (ended) pollBatch(id, btn);                    // polling had stopped — resume it
+        // else: the live poller will show the item re-queued
+      } catch (e) {
+        $("#batch-err").textContent = "Couldn't reach server to restart.";
+        restart.disabled = false; restart.textContent = "Restart";
+      }
+    };
+    head.append(restart);
+  }
+  card.append(head);
+
+  // Per-item bar — only once there's something to show (skip idle queued rows).
+  if (p.status === "running" || (pct > 0 && pct < 100)) {
+    card.append(el("div", { className: "bar bi-bar" }, el("div", { style: `width:${pct}%` })));
+  }
+
+  // Detail line: error / output location / live message.
+  let detail;
+  if (p.error) {
+    detail = el("div", { className: "bi-msg bi-err" }, icon("warn", 13), " " + p.error);
+  } else if (p.status === "done") {
+    const txt = `${p.message || "done"}${p.output_dir ? " · " + p.output_dir : ""}`;
+    detail = el("div", { className: "bi-msg muted", textContent: txt });
+  } else if (p.status === "running") {
+    detail = el("div", { className: "bi-msg muted", textContent: `${pct}% · ${p.message || ""}` });
+  } else {
+    detail = el("div", { className: "bi-msg muted", textContent: p.message || meta.label });
+  }
+  card.append(detail);
+  return card;
 }

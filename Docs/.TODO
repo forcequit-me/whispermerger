@@ -1,9 +1,5 @@
-Revise progress tracking for batch processing and other, better UI and more clear on what % and other numbers are actually counting.
-
 Anything to include from Transcript Merger (UI theme or methodology for handling overlaps [who stopped talking last?])
 
 Test Features
 
 Test Editing Video
-
-GPU uptime / batch speed optimization — overlap audio extraction with transcription (prefetch) + tune batch_size. Analysis + implementation plan in Docs/gpu-uptime-optimization.md (NOT yet implemented).

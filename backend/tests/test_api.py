@@ -196,7 +196,27 @@ def test_batch_flow_writes_outputs(client, two_stream_file, tmp_path, monkeypatc
     assert body["status"] == "done"
     assert body["projects"][0]["status"] == "done"
     assert body["elapsed"] >= 0 and body["projects"][0]["elapsed"] >= 0
-    assert (tmp_path / "Perf Poser" / "Perf Poser.srt").exists()
+    assert list((tmp_path / "Perf Poser").glob("Perf Poser Transcript (*).srt"))
+
+
+def test_batch_project_cancel_endpoint(client, two_stream_file, tmp_path, monkeypatch):
+    monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    r = client.post("/api/batch", json={
+        "output_mode": "folder", "output_folder": str(tmp_path),
+        "projects": [{"name": "P1", "sources": [
+            {"file_id": file_id, "sequence": 0,
+             "tracks": [{"track_index": 0, "speaker": "Speaker 1", "selected": True}]}]}]})
+    batch_id = r.json()["batch_id"]
+    # valid per-project cancel is accepted; bad project index / unknown batch -> 404
+    assert client.post(f"/api/batch/{batch_id}/project/0/cancel").json()["canceling"]
+    assert client.post(f"/api/batch/{batch_id}/project/99/cancel").status_code == 404
+    assert client.post("/api/batch/nope/project/0/cancel").status_code == 404
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if client.get(f"/api/batch/{batch_id}").json()["status"] in ("done", "canceled"):
+            break
+        time.sleep(0.02)
 
 
 def test_batch_folder_mode_requires_folder(client, two_stream_file):
