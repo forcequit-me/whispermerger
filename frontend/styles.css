@@ -253,6 +253,8 @@ table.editor tr.editing { background: var(--panel-2); }
 .bf-head { display: flex; align-items: center; gap: 8px; }
 .bf-name { font-size: 12px; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bf-msg { font-size: 11px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bf-trk { font-size: 10px; padding: 1px 6px; border-radius: 8px; flex: none; white-space: nowrap;
+  background: rgba(91,157,255,.12); border: 1px solid rgba(91,157,255,.5); color: var(--accent); }
 .batch-file .bf-bar { height: 4px; margin-top: 6px; }
 .batch-file .chip-status { font-size: 9px; padding: 1px 6px; }
 

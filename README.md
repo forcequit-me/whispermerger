@@ -28,7 +28,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   included). **Extraction is prefetched** — the next file's audio is pulled while the GPU transcribes
   the current one, so the card never idles between files. A per-project card shows live status +
   progress + elapsed; one-transcript-per-file projects expand to **a row per file** with its own
-  status and Cancel/Restart. No babysitting.
+  status, **live track N/M progress** (for multi-track files), per-file elapsed (which counts the
+  ffmpeg **extraction**, not just transcription, so a cache-hit re-run still reflects real work),
+  and Cancel/Restart. The file list **keeps its scroll position** as it refreshes, so a long queue
+  doesn't snap back to the top every second. No babysitting.
 - **Language** — transcription **auto-detects per file** by default; a **Language** dropdown (in
   Batch and Transcribe & Merge) can force a specific language, which skips detection and avoids the
   first-use download of that language's wav2vec2 alignment model.

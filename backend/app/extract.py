@@ -61,18 +61,26 @@ def extract_tracks(src: str | Path, track_indices: list[int], dest_dir: str | Pa
 
 
 def extract_ahead(items: list, extract_one: Callable, *,
-                  is_cancelled: Optional[Callable[[], bool]] = None) -> Iterator[tuple]:
+                  is_cancelled: Optional[Callable[[], bool]] = None,
+                  on_wait: Optional[Callable[[object], None]] = None) -> Iterator[tuple]:
     """Yield ``(item, extract_one(item))`` in order, running the NEXT item's extraction in a
     background thread (prefetch depth 1) while the consumer handles the current one. A single
     worker means at most one item is extracted ahead, so the GPU stays fed without piling up
     disk usage. Stops prefetching once ``is_cancelled()`` is true; an extraction error surfaces
-    when its item is reached (per-item isolation — it is not swallowed in the worker thread)."""
+    when its item is reached (per-item isolation — it is not swallowed in the worker thread).
+
+    ``on_wait(item)`` fires the instant an item becomes the consumer's active work — right before
+    we block on its extraction. Anything still extracting at that point was not hidden behind the
+    previous item, so a per-item timer started here counts the un-prefetched extraction wait plus
+    the work that follows, without double-counting the overlap (FR timer accuracy)."""
     if not items:
         return
     is_cancelled = is_cancelled or (lambda: False)
     with ThreadPoolExecutor(max_workers=1) as pool:
         fut = pool.submit(extract_one, items[0])
         for i, item in enumerate(items):
+            if on_wait:
+                on_wait(item)
             result = fut.result()                       # block until this item is extracted
             fut = (pool.submit(extract_one, items[i + 1])
                    if i + 1 < len(items) and not is_cancelled() else None)

@@ -52,6 +52,8 @@ class FileStatus:
     progress: float = 0.0
     message: str = ""
     weight: float = 0.0                          # audio seconds × selected tracks (progress weight)
+    track: int = 0                               # 1-based index of the track currently transcribing
+    tracks: int = 0                              # total selected tracks in this file
     output_dir: Optional[str] = None
     error: Optional[str] = None
     started_at: float = 0.0
@@ -205,17 +207,32 @@ def _process_project(
             files = ps.files
             seen: dict[tuple[str, str], int] = {}
 
+            def on_wait(i: int, src: PreparedSource) -> None:
+                # Extraction for this file is about to be waited on — start its clock here so
+                # "done in Xs" counts the ffmpeg extraction, not just transcription.
+                fs = files[i]
+                fs.status = Status.RUNNING
+                fs.started_at = fs.started_at or time.time()
+                fs.finished_at = 0.0
+                fs.error = None
+                fs.tracks = _selected_count(src)
+                fs.message = "extracting audio"
+                _recalc_project(ps)
+
             def on_start(i: int, src: PreparedSource) -> None:
                 fs = files[i]
                 fs.status = Status.RUNNING
                 fs.started_at = fs.started_at or time.time()
                 fs.finished_at = 0.0
                 fs.error = None
+                fs.tracks = _selected_count(src)
                 fs.message = "transcribing"
                 _recalc_project(ps)
 
             def on_track(i: int, j: int, total_tracks: int, speaker: str) -> None:
                 fs = files[i]
+                fs.track = j + 1
+                fs.tracks = total_tracks
                 fs.progress = j / max(total_tracks, 1)
                 fs.message = f"track {j + 1}/{total_tracks} · {speaker}"
                 _recalc_project(ps)
@@ -254,7 +271,8 @@ def _process_project(
             run_per_file_pipeline(
                 project.prepared, transcribe_fn, pending, options=options, is_cancelled=is_cancelled,
                 on_start=on_start, on_track=on_track, on_done=on_done, on_error=on_error,
-                on_skip=on_skip, is_file_cancelled=lambda i: files[i].cancel_requested)
+                on_skip=on_skip, is_file_cancelled=lambda i: files[i].cancel_requested,
+                on_wait=on_wait)
             if is_cancelled():
                 raise Cancelled()
             ps.output_dir = str(parent if output_mode == "source" else out_dir)
@@ -479,6 +497,8 @@ class BatchRegistry:
         fs.error = None
         fs.progress = 0.0
         fs.message = ""
+        fs.track = 0
+        fs.tracks = 0
         fs.started_at = 0.0
         fs.finished_at = 0.0
         fs.cancel_requested = False

@@ -1137,6 +1137,12 @@ function renderBatchStatus(b, id, btn) {
   const total = b.projects.length;
 
   const root = $("#batch-status");
+  // The whole status panel is rebuilt every poll; snapshot each per-file list's scroll position
+  // (keyed by project index) so a rebuild mid-scroll doesn't yank the list back to the top.
+  const scrolls = {};
+  root.querySelectorAll(".batch-files").forEach((f) => {
+    if (f.dataset.pidx != null) scrolls[f.dataset.pidx] = f.scrollTop;
+  });
   root.innerHTML = "";
 
   // Plain-language summary so the numbers above aren't ambiguous.
@@ -1153,6 +1159,12 @@ function renderBatchStatus(b, id, btn) {
 
   const ended = b.status === "done" || b.status === "canceled";
   b.projects.forEach((p, i) => root.append(buildBatchItem(p, i, id, btn, ended)));
+
+  // Restore the per-file list scroll positions captured before the rebuild.
+  root.querySelectorAll(".batch-files").forEach((f) => {
+    if (f.dataset.pidx != null && scrolls[f.dataset.pidx] != null)
+      f.scrollTop = scrolls[f.dataset.pidx];
+  });
 }
 
 // One project row: name + status chip + (cancel | restart), its own progress bar + detail.
@@ -1223,6 +1235,7 @@ function buildBatchItem(p, i, id, btn, ended) {
   // Per-file projects: a row per source file, each with its own status + cancel/restart.
   if (p.files && p.files.length) {
     const files = el("div", { className: "batch-files" });
+    files.dataset.pidx = String(i);          // lets renderBatchStatus preserve its scroll across polls
     p.files.forEach((f, fi) => files.append(buildBatchFile(f, i, fi, id, btn, ended)));
     card.append(files);
   }
@@ -1243,9 +1256,14 @@ function buildBatchFile(f, pidx, fidx, id, btn, ended) {
 
   const head = el("div", { className: "bf-head" },
     el("span", { className: "bf-name", textContent: f.name, title: f.name }),
-    el("span", { className: `chip-status ${meta.cls}`, textContent: meta.label }),
-    el("div", { className: "spacer" }),
-    msg);
+    el("span", { className: `chip-status ${meta.cls}`, textContent: meta.label }));
+  // Multi-track files: show which track is transcribing (track 2/5) so progress is legible even
+  // before the bar moves. Single-track files have nothing useful to show here.
+  if (f.status === "running" && f.tracks > 1) {
+    head.append(el("span", { className: "muted bf-trk",
+      textContent: `track ${f.track || 1}/${f.tracks}` }));
+  }
+  head.append(el("div", { className: "spacer" }), msg);
 
   if (f.status === "running" || f.status === "queued") {
     const cancel = el("button", { className: "ghost icon-only bi-act", title: "Cancel this file" }, icon("close"));

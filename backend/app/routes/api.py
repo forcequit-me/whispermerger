@@ -141,6 +141,8 @@ class FileStatusOut(BaseModel):
     status: str
     progress: float
     message: str
+    track: int = 0                           # 1-based index of the track currently transcribing
+    tracks: int = 0                          # total selected tracks in this file
     elapsed: float = 0.0
     output_dir: str | None = None
     error: str | None = None
@@ -589,6 +591,7 @@ def _batch_out(batch) -> BatchStatusOut:
                                    output_dir=p.output_dir, error=p.error,
                                    files=[FileStatusOut(name=f.name, status=f.status.value,
                                                         progress=f.progress, message=f.message,
+                                                        track=f.track, tracks=f.tracks,
                                                         elapsed=f.elapsed, output_dir=f.output_dir,
                                                         error=f.error)
                                           for f in p.files])

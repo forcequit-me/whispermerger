@@ -110,6 +110,7 @@ def run_per_file_pipeline(
     on_error: Callable[[int, "PreparedSource", Exception], None],
     on_skip: Callable[[int, "PreparedSource"], None],
     is_file_cancelled: Callable[[int], bool],
+    on_wait: Optional[Callable[[int, "PreparedSource"], None]] = None,
 ) -> None:
     """Transcribe the given file positions (one transcript each) with depth-1 prefetch: while one
     file transcribes, the next extracts in the background. Per-file lifecycle is reported through
@@ -124,7 +125,8 @@ def run_per_file_pipeline(
     try:
         items = [(i, prepared[i]) for i in indices]
         for (i, p), wavs in extract_ahead(items, lambda it: _extract_into(tmpdir, it[1]),
-                                          is_cancelled=cancelled):
+                                          is_cancelled=cancelled,
+                                          on_wait=(lambda it: on_wait(it[0], it[1])) if on_wait else None):
             if cancelled():
                 break
             if is_file_cancelled(i):

@@ -273,6 +273,27 @@ Lets a big library export the way the user wants (e.g. ~200h → one TXT per rec
   (per-project cancel endpoint + per-file in the flow). **98 GPU-independent tests pass.** Assets
   `?v=19` (js) / `?v=16` (css).
 
+## Per-file timer accuracy, scroll retention, track badge (2026-06-19)
+
+- **Per-file timer now counts extraction** — `extract.extract_ahead` gained an `on_wait(item)`
+  callback fired the instant an item becomes the consumer's active work (right before we block on
+  its extraction). `run_per_file_pipeline` forwards it; `batch._process_project.on_wait` stamps
+  `FileStatus.started_at` (status→RUNNING, "extracting audio") there. Result: per-file elapsed /
+  "done in Xs" includes the ffmpeg extraction, not just transcription. It's prefetch-aware — only
+  extraction **not** hidden behind the previous file's transcription is counted, so per-file times
+  stay non-overlapping and sum to wall clock. Fixes the cache-hit re-run case where every file read
+  "done in 0s" while the project clock kept climbing (the extraction wasn't attributed anywhere).
+- **Per-file track N/M badge** — `FileStatus` gained `track`/`tracks` (set in `on_track`, primed in
+  `on_wait`/`on_start` from the selected-track count), exposed via `FileStatusOut` + `_batch_out`.
+  The frontend renders a small "track 2/5" pill on a running multi-track file row, so track progress
+  is legible before the bar moves (single-track files show nothing — there's nothing to show).
+- **File list keeps its scroll position** — `renderBatchStatus` rebuilds the whole panel each poll
+  (~1 s), which was yanking the scrollable `.batch-files` list back to the top so you could never
+  watch the running file. It now snapshots each list's `scrollTop` (keyed by a `data-pidx` on the
+  container) before the rebuild and restores it after.
+- Tests: the touched modules (`test_extract`, `test_pipeline`, `test_batch`) stay green; new
+  `on_wait` is optional so existing callers/tests are unaffected. Assets `?v=20` (js) / `?v=17` (css).
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected` and an `rms_fn` hook exists, but
