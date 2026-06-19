@@ -25,14 +25,19 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   project exports to its own subfolder — or, with *one transcript per file* + *next to source*,
   each transcript lands **beside its own source file** (nested folders preserved). Add files
   individually **or point at a folder** to pull in every audio/video file underneath (subfolders
-  included). Per-project + total elapsed shown live. No babysitting.
+  included). **Extraction is prefetched** — the next file's audio is pulled while the GPU transcribes
+  the current one, so the card never idles between files. A per-project card shows live status +
+  progress + elapsed; one-transcript-per-file projects expand to **a row per file** with its own
+  status and Cancel/Restart. No babysitting.
 - **Language** — transcription **auto-detects per file** by default; a **Language** dropdown (in
   Batch and Transcribe & Merge) can force a specific language, which skips detection and avoids the
   first-use download of that language's wav2vec2 alignment model.
-- **Cancel & retry** — cancel a running batch or a single Transcribe/Label job (cooperative: it
-  stops at the next file boundary, so the file currently transcribing finishes); after a batch
-  ends, **retry just the failed/canceled projects** in one click — caching makes already-done files
-  instant.
+- **Cancel & restart, per item** — cancel the **whole batch**, a **single project** (the queue
+  continues to the next), or a **single file** inside a one-transcript-per-file project (the other
+  files keep going) — all cooperative, stopping at the next boundary so the in-flight file finishes.
+  **Restart** any finished project or file: while the batch is still running it re-queues to run when
+  the GPU frees up; once the batch is done it starts immediately. Caching makes unchanged files
+  instant. Single Transcribe/Label jobs are cancelable too.
 - **Single-track labeling (v2)** — for one mixed track with multiple speakers (interview,
   podcast, collab): silero-VAD auto-detects speech on a WaveSurfer waveform, you assign regions
   to speakers (click / shift-click a run / ctrl-click; number keys; bulk-assign; duplicate a
@@ -61,14 +66,18 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
 - **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing; SRT splits lines on real
   word timestamps (toggleable subtitle limits). **Pad (s)** extends each segment's start/end by N
   seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.
-  Speakers toggled off in the editor are dropped from whichever format you export.
+  Speakers toggled off in the editor are dropped from whichever format you export. Files are named
+  **`<name> Transcript (M-D-YYYY h-mm AMPM)`** so they're self-describing (batch auto-exports use it;
+  the interactive Export filename is pre-filled with it and editable).
 - **Caching** — WhisperX output is cached by file hash + model + alignment + language, so re-runs
   skip transcription (changing the language re-runs instead of returning a stale result).
-- **Stage-aware progress + timing** — every processing tab shows a progress bar with the current
-  stage (Transcribe & Merge has an Extract → Transcribe → Merge stepper; Batch shows overall +
-  per-project; Label shows job progress) and total elapsed wall time, so a long run never looks
-  stuck. Polling is hang-proofed: if the server goes briefly unresponsive (e.g. loading ~3 GB of
-  models on the first run) the UI keeps waiting and recovers instead of freezing.
+- **Progress that means something** — every processing tab shows a progress bar with the current
+  stage (Transcribe & Merge has an Extract → Transcribe → Merge stepper; Batch shows an overall bar
+  plus a card per project; Label shows job progress) and total elapsed wall time. Progress is
+  **weighted by audio length × track count**, not a naive file/track count — so a long recording
+  moves the bar more than a short clip and it no longer lurches. Polling is hang-proofed: if the
+  server goes briefly unresponsive (e.g. loading ~3 GB of models on the first run) the UI keeps
+  waiting and recovers instead of freezing.
 - **Storage-clean** — extracted audio is deleted right after use, and the working dir is wiped on
   startup; only the small transcription cache persists. Nothing piles up.
 - **One-click start/stop** — `Startup.bat` launches the server and opens the UI; `Shutdown.bat`
@@ -104,7 +113,10 @@ this one-time load rather than looking frozen.
 
 **Performance (real-world):** a 56 GB / 1h51m OBS recording with **4 audio tracks** transcribed
 end-to-end (extract → transcribe+align → merge) in **~10 minutes** on an RTX 3080 Ti — ~7.4 h of
-track-audio, ~11,860 words. Comfortably beats the 12–20 min / 5 h target.
+track-audio, ~11,860 words. Comfortably beats the 12–20 min / 5 h target. In a batch the next file's
+audio is **prefetched** while the GPU works, so it doesn't idle between files; GPU throughput is
+tunable via **`WHISPERMERGER_BATCH_SIZE`** (default 16; `Startup.bat` ships 24 — raise it and watch
+VRAM, dropping back if you hit "out of memory").
 
 ## Using it
 
@@ -132,9 +144,9 @@ backend/app/
   merge.py      # pure-python merge + conflict hierarchy
   cache.py      # SHA-256-keyed WhisperX-JSON cache
   export.py     # MergedOutput -> SRT/TXT/CSV/JSON (+ export_all for batch)
-  pipeline.py   # extract -> transcribe -> merge (one project)
+  pipeline.py   # extract -> transcribe -> merge, prefetched (merge + per-file drivers)
   jobs.py       # single-run job registry + progress
-  batch.py      # sequential queue over projects (the studio)
+  batch.py      # sequential queue over projects (the studio); per-project + per-file status/cancel/restart
   diarize.py    # v2: silero-VAD + per-speaker region transcription + timeline remap
   main.py       # FastAPI app + static frontend mount
   routes/api.py # HTTP API

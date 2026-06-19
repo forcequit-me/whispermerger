@@ -244,6 +244,18 @@ table.editor tr.editing { background: var(--panel-2); }
 .bi-msg.bi-err { color: var(--bleed); display: flex; align-items: center; gap: 3px; }
 .bi-act { font-size: 12px; padding: 4px 8px; }
 
+/* per-file rows inside a per-file project card */
+.batch-files { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px;
+  max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.batch-file { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 9px; }
+.batch-file.state-error { border-color: rgba(224, 98, 94, .45); }
+.bf-head { display: flex; align-items: center; gap: 8px; }
+.bf-name { font-size: 12px; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bf-msg { font-size: 11px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-file .bf-bar { height: 4px; margin-top: 6px; }
+.batch-file .chip-status { font-size: 9px; padding: 1px 6px; }
+
 /* per-project status chip */
 .chip-status { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; font-weight: 600;
   padding: 2px 8px; border-radius: 10px; flex: none;

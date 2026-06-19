@@ -45,16 +45,39 @@ class ProjectInput:
 
 
 @dataclass
+class FileStatus:
+    """One source file inside a per-file project — its own queue row, status and controls."""
+    name: str
+    status: Status = Status.QUEUED
+    progress: float = 0.0
+    message: str = ""
+    weight: float = 0.0                          # audio seconds × selected tracks (progress weight)
+    output_dir: Optional[str] = None
+    error: Optional[str] = None
+    started_at: float = 0.0
+    finished_at: float = 0.0
+    cancel_requested: bool = False
+
+    @property
+    def elapsed(self) -> float:
+        if not self.started_at:
+            return 0.0
+        return (self.finished_at or time.time()) - self.started_at
+
+
+@dataclass
 class ProjectStatus:
     name: str
     status: Status = Status.QUEUED
     progress: float = 0.0
     message: str = ""
+    weight: float = 0.0                          # total audio seconds × tracks (for batch weighting)
     output_dir: Optional[str] = None
     error: Optional[str] = None
     started_at: float = 0.0
     finished_at: float = 0.0
     cancel_requested: bool = False               # cancel just this project (queue continues)
+    files: list[FileStatus] = field(default_factory=list)   # per-file rows (per-file projects only)
 
     @property
     def elapsed(self) -> float:
@@ -78,9 +101,13 @@ class BatchStatus:
 
     @property
     def progress(self) -> float:
-        """Overall fraction: completed projects + the running one's internal progress."""
+        """Overall fraction, weighted by each project's audio length × tracks so a long project
+        moves the bar more than a short one. Falls back to a plain average if weights are absent."""
         if not self.projects:
             return 0.0
+        total = sum(p.weight for p in self.projects)
+        if total > 0:
+            return sum(p.progress * p.weight for p in self.projects) / total
         return sum(p.progress for p in self.projects) / len(self.projects)
 
     @property
@@ -104,6 +131,27 @@ def transcript_basename(base: str, when: Optional[float] = None) -> str:
     h = t.tm_hour % 12 or 12
     ap = "AM" if t.tm_hour < 12 else "PM"
     return f"{_safe_name(base)} Transcript ({t.tm_mon}-{t.tm_mday}-{t.tm_year} {h}-{t.tm_min:02d} {ap})"
+
+
+def _selected_count(prep: PreparedSource) -> int:
+    return sum(1 for t in prep.input.tracks if t.selected)
+
+
+def _source_weight(prep: PreparedSource) -> float:
+    """Rough work estimate for one file: audio length × its selected track count (each track is a
+    separate transcription pass of about the file's duration)."""
+    return prep.input.duration * max(_selected_count(prep), 1)
+
+
+def _project_weight(project: ProjectInput) -> float:
+    return sum(_source_weight(p) for p in project.prepared)
+
+
+def _file_statuses(project: ProjectInput) -> list[FileStatus]:
+    """A per-file project shows one row per source file; merge projects have no per-file rows."""
+    if not project.per_file:
+        return []
+    return [FileStatus(name=p.input.filename, weight=_source_weight(p)) for p in project.prepared]
 
 
 def _project_output_parent(project: ProjectInput, output_mode: str, output_folder: Optional[str]) -> Path:
@@ -149,24 +197,66 @@ def _process_project(
         base = _safe_name(project.name)
         out_dir = parent / base
         if project.per_file:
-            # One transcript per source file. In "source" mode each lands next to its own
-            # source file (so a nested folder tree is preserved); otherwise all go to the
-            # project's output folder. Prefetch overlaps the next file's extraction with the
-            # current file's transcription (run_per_file_pipeline); on_file exports each result.
+            # One transcript per source file, each its own tracked queue row (ps.files). In
+            # "source" mode each lands next to its own source file (nested tree preserved);
+            # otherwise all go to the project's output folder. Prefetch overlaps the next file's
+            # extraction with the current file's transcription. Only files still QUEUED are
+            # processed, so a single-file restart (which re-queues one file) re-runs just it.
+            files = ps.files
             seen: dict[tuple[str, str], int] = {}
 
-            def on_file(i: int, src: PreparedSource, merged, seen=seen) -> None:
+            def on_start(i: int, src: PreparedSource) -> None:
+                fs = files[i]
+                fs.status = Status.RUNNING
+                fs.started_at = fs.started_at or time.time()
+                fs.finished_at = 0.0
+                fs.error = None
+                fs.message = "transcribing"
+                _recalc_project(ps)
+
+            def on_track(i: int, j: int, total_tracks: int, speaker: str) -> None:
+                fs = files[i]
+                fs.progress = j / max(total_tracks, 1)
+                fs.message = f"track {j + 1}/{total_tracks} · {speaker}"
+                _recalc_project(ps)
+
+            def on_done(i: int, src: PreparedSource, merged, seen=seen) -> None:
+                fs = files[i]
                 dest = Path(src.path).parent if output_mode == "source" else out_dir
                 stem = _safe_name(Path(src.input.filename).stem)
                 seen[(str(dest), stem)] = seen.get((str(dest), stem), 0) + 1
                 if seen[(str(dest), stem)] > 1:
                     stem = f"{stem}_{seen[(str(dest), stem)]}"
                 export_all(merged, dest, transcript_basename(stem), formats=project.formats)
+                fs.status = Status.DONE
+                fs.progress = 1.0
+                fs.finished_at = time.time()
+                fs.output_dir = str(dest)
+                fs.message = f"done in {fs.elapsed:.0f}s"
+                _recalc_project(ps)
 
+            def on_error(i: int, src: PreparedSource, exc: Exception) -> None:
+                fs = files[i]
+                fs.status = Status.ERROR
+                fs.error = str(exc)
+                fs.finished_at = time.time()
+                fs.message = "error"
+                _recalc_project(ps)
+
+            def on_skip(i: int, src: PreparedSource) -> None:
+                fs = files[i]
+                fs.status = Status.CANCELED
+                fs.finished_at = time.time()
+                fs.message = "canceled"
+                _recalc_project(ps)
+
+            pending = [k for k, fs in enumerate(files) if fs.status is Status.QUEUED]
             run_per_file_pipeline(
-                project.prepared, transcribe_fn, on_file, options=options,
-                progress_cb=_guard(lambda frac, msg: _set(ps, frac, msg), is_cancelled),
-                is_cancelled=is_cancelled)
+                project.prepared, transcribe_fn, pending, options=options, is_cancelled=is_cancelled,
+                on_start=on_start, on_track=on_track, on_done=on_done, on_error=on_error,
+                on_skip=on_skip, is_file_cancelled=lambda i: files[i].cancel_requested)
+            if is_cancelled():
+                raise Cancelled()
             ps.output_dir = str(parent if output_mode == "source" else out_dir)
         else:
             merged = run_merge_pipeline(
@@ -177,12 +267,17 @@ def _process_project(
             ps.output_dir = str(out_dir)
         ps.finished_at = time.time()
         ps.progress = 1.0
-        ps.message = f"done in {ps.elapsed:.0f}s"
+        ps.message = _file_summary(ps) if ps.files else f"done in {ps.elapsed:.0f}s"
         ps.status = Status.DONE
     except Cancelled:
         ps.finished_at = time.time()
         ps.message = "canceled"
         ps.status = Status.CANCELED
+        for fs in ps.files:                          # mark any unfinished files canceled too
+            if fs.status in (Status.QUEUED, Status.RUNNING):
+                fs.status = Status.CANCELED
+                fs.finished_at = time.time()
+                fs.message = "canceled"
         raise
     except Exception as exc:  # record + let the queue continue to the next project
         ps.finished_at = time.time()
@@ -248,6 +343,31 @@ def _set(ps: ProjectStatus, frac: float, msg: str) -> None:
     ps.message = msg
 
 
+def _file_summary(ps: ProjectStatus) -> str:
+    """One-line tally of a per-file project's files, e.g. '28 done · 2 failed'."""
+    c: dict[Status, int] = {}
+    for f in ps.files:
+        c[f.status] = c.get(f.status, 0) + 1
+    order = [(Status.DONE, "done"), (Status.RUNNING, "running"), (Status.QUEUED, "queued"),
+             (Status.ERROR, "failed"), (Status.CANCELED, "canceled")]
+    parts = [f"{c[s]} {label}" for s, label in order if c.get(s)]
+    return " · ".join(parts) or f"{len(ps.files)} files"
+
+
+def _recalc_project(ps: ProjectStatus) -> None:
+    """Roll a per-file project's file statuses up into its overall progress (length-weighted) and
+    a short summary/current-file message."""
+    if not ps.files:
+        return
+    total = sum(f.weight for f in ps.files)
+    if total > 0:
+        ps.progress = sum(f.progress * f.weight for f in ps.files) / total
+    else:
+        ps.progress = sum(f.progress for f in ps.files) / len(ps.files)
+    running = next((f for f in ps.files if f.status is Status.RUNNING), None)
+    ps.message = f"{running.name} · {running.message}" if running else _file_summary(ps)
+
+
 @dataclass
 class _RunSpec:
     """Everything needed to re-run a batch's projects (for retry)."""
@@ -264,9 +384,11 @@ class BatchRegistry:
         self._specs: dict[str, _RunSpec] = {}
         self._lock = threading.Lock()
 
-    def create(self, project_names: list[str]) -> BatchStatus:
-        batch = BatchStatus(id=uuid.uuid4().hex,
-                            projects=[ProjectStatus(name=n) for n in project_names])
+    def create(self, projects: list[ProjectInput]) -> BatchStatus:
+        batch = BatchStatus(
+            id=uuid.uuid4().hex,
+            projects=[ProjectStatus(name=p.name, weight=_project_weight(p), files=_file_statuses(p))
+                      for p in projects])
         with self._lock:
             self._batches[batch.id] = batch
         return batch
@@ -296,9 +418,50 @@ class BatchRegistry:
         batch.projects[index].cancel_requested = True
         return True
 
+    def cancel_file(self, batch_id: str, pindex: int, findex: int) -> bool:
+        """Cancel ONE file inside a per-file project — the other files keep going. Stops at that
+        file's next track boundary, or immediately if it hasn't started."""
+        batch = self.get(batch_id)
+        if batch is None or not (0 <= pindex < len(batch.projects)):
+            return False
+        ps = batch.projects[pindex]
+        if not (0 <= findex < len(ps.files)):
+            return False
+        ps.files[findex].cancel_requested = True
+        return True
+
+    def restart_file(self, batch_id: str, pindex: int, findex: int) -> bool:
+        """Re-run ONE finished file. The file goes back to QUEUED and its project is queued for a
+        re-run that processes only the still-QUEUED files; if the batch is idle a worker starts.
+        Only a finished file (done/failed/canceled) can be restarted — that avoids racing the
+        in-flight pass and double-exporting."""
+        batch = self.get(batch_id)
+        spec = self._specs.get(batch_id)
+        if batch is None or spec is None or not (0 <= pindex < len(batch.projects)):
+            return False
+        ps = batch.projects[pindex]
+        if not (0 <= findex < len(ps.files)):
+            return False
+        if ps.files[findex].status not in (Status.DONE, Status.ERROR, Status.CANCELED):
+            return False
+        self._reset_fs(ps.files[findex])
+        start = False
+        with batch.lock:
+            if pindex not in batch.rerun_pending:
+                batch.rerun_pending.append(pindex)
+            if batch.status is not Status.RUNNING:
+                batch.status = Status.RUNNING
+                batch.cancelled = False
+                start = True
+        if start:
+            self.run(batch, lambda: None)            # worker drains rerun_pending
+        return True
+
     @staticmethod
     def _reset_ps(ps: ProjectStatus) -> None:
-        """Put a project back to a fresh QUEUED state so it can run (again)."""
+        """Put a project back to a fresh QUEUED state so it can run (again). For per-file projects,
+        also re-queue its failed/canceled files (done files stay done) so a project retry re-runs
+        only what didn't succeed."""
         ps.status = Status.QUEUED
         ps.error = None
         ps.progress = 0.0
@@ -306,6 +469,19 @@ class BatchRegistry:
         ps.started_at = 0.0
         ps.finished_at = 0.0
         ps.cancel_requested = False
+        for fs in ps.files:
+            if fs.status in (Status.ERROR, Status.CANCELED):
+                BatchRegistry._reset_fs(fs)
+
+    @staticmethod
+    def _reset_fs(fs: FileStatus) -> None:
+        fs.status = Status.QUEUED
+        fs.error = None
+        fs.progress = 0.0
+        fs.message = ""
+        fs.started_at = 0.0
+        fs.finished_at = 0.0
+        fs.cancel_requested = False
 
     def _run_indices(self, batch: BatchStatus, spec: _RunSpec, indices: list[int]) -> None:
         pairs = [(spec.projects[i], batch.projects[i]) for i in indices]

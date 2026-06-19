@@ -9,7 +9,7 @@ Both v1 (multi-track stems + batch studio) and v2 (single-track manual diarizati
 **built and running** on native Windows + RTX 3080 Ti (the build plan's env was validated;
 WSL2 not needed). Full pipeline works end-to-end: pick files → transcribe on GPU (WhisperX
 large-v3 + wav2vec2) → merge with conflict flags → edit → export. **Validated on a real 56 GB /
-1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **81 GPU-independent
+1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **98 GPU-independent
 tests pass**; the GPU path passes the §11.3 smoke gate. The Edit tab now imports all of our
 export formats (JSON/SRT/TXT/CSV); remaining work is optional polish (some `FR-UI-*` toggles)
 and proprietary-format import (Descript/Premiere).
@@ -232,6 +232,47 @@ Lets a big library export the way the user wants (e.g. ~200h → one TXT per rec
 - Tests: `test_jobs.py` (cooperative cancel) + `test_batch.py` (cancel-before-run, mid-batch cancel
   stops the queue, retry re-runs a repaired project). **81 GPU-independent tests pass.** Assets `?v=16`.
 
+## GPU uptime, dated transcript names, per-item + per-file batch controls (2026-06-19)
+
+- **Prefetch (depth 1)** — `extract.extract_ahead` (a generic prefetch iterator) overlaps the next
+  file's ffmpeg extraction with the current file's GPU transcription, removing the per-file GPU idle
+  (~¼ of wall time on the 56 GB / 4-track file). Drives both `pipeline.run_merge_pipeline` (single
+  job + multi-file merge) and the rewritten `run_per_file_pipeline` (per-file batches). Each file
+  extracts into its own temp subdir (so prefetched WAVs don't collide); cleanup via `shutil.rmtree`;
+  cancel stops prefetch promptly via a threaded `is_cancelled`.
+- **Tunable batch size** — `transcribe.BATCH_SIZE = int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))`,
+  used as `transcribe_track`'s default. `Startup.bat` ships **24** (headroom on a 12 GB 3080 Ti whose
+  desktop + OBS already hold ~1.5 GB). Not part of the cache key — output is identical.
+- **Self-describing exports** — `batch.transcript_basename` names every exported transcript
+  `<base> Transcript (M-D-YYYY h-mm AMPM)` (e.g. `Project 1 Transcript (6-19-2026 2-02 AM)`; dash not
+  colon, so it's a legal Windows name), for batch auto-exports and as the pre-filled default in the
+  Transcribe/Edit Export boxes (`transcriptName`/`exportBase` in `app.js`). All formats of one
+  file/project share a single timestamp.
+- **Duration-weighted progress** — every bar is weighted by **audio length × track count** instead of
+  counting tracks/files, so a long recording moves it more than a short clip. `BatchStatus.progress`
+  weights projects by `ProjectStatus.weight`; per-file projects weight files by `FileStatus.weight`
+  (`_recalc_project`); `run_merge_pipeline` reports by track-seconds. Track message clarified to
+  "track N/total". Captions under the Transcribe + Label bars explain what the % counts.
+- **Per-project cancel/restart** — `cancel_project` cancels one project while the queue continues
+  (vs whole-batch cancel). The batch worker drains a lock-guarded `rerun_pending` queue, so a Restart
+  requested mid-batch re-runs the project when the GPU frees up (single worker, single GPU). New
+  `POST /api/batch/{id}/project/{idx}/cancel`; per-project Restart reuses `/retry {projects:[idx]}`.
+- **Per-file checklist** — a per-file project tracks each source file as its own row
+  (`ProjectStatus.files: list[FileStatus]`, populated at `create`): status chip, own progress bar,
+  "track 2/4 · Speaker" message, output dir, elapsed. `cancel_file` skips one file (the rest
+  continue); `restart_file` re-queues one **finished** file to run when free (single-pass driver +
+  the batch re-run queue avoid double-runs/races). Per-file error isolation — a bad file fails its
+  own row, the project keeps going. New `POST /api/batch/{id}/project/{pidx}/file/{fidx}/cancel` and
+  `.../restart`; `_batch_out` exposes `files[]`.
+- **UI** — Batch panel redesigned: a plain-language summary + status-count breakdown, a card per
+  project (status chip, own bar, file counter, elapsed), per-item Cancel/Restart, and for per-file
+  projects a scrollable **row per file** each with its own status + Cancel/Restart.
+- Tests: `test_extract.py` (extract_ahead order / prefetch-overlap / error-surfacing / cancel),
+  `test_pipeline.py` (temp-dir cleanup), `test_batch.py` (per-project + per-file cancel/restart,
+  restart-while-running queues, duration-weighted progress, transcript naming), `test_api.py`
+  (per-project cancel endpoint + per-file in the flow). **98 GPU-independent tests pass.** Assets
+  `?v=19` (js) / `?v=16` (css).
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected` and an `rms_fn` hook exists, but
@@ -259,8 +300,11 @@ Lets a big library export the way the user wants (e.g. ~200h → one TXT per rec
   **11,860 words**, full 6639s coverage, coherent text + per-word timestamps, deterministic on
   re-run. Beats NFR-1's 12–20 min / 5 h budget. Stage breakdown: ~2.6 min extraction (four
   full-file demuxes), ~7.5 min transcription+align (incl. one-time model load), merge negligible.
-- **Known optimization (not blocking):** extraction re-reads the source once per track
-  (~2.6 min on the 56 GB file); a single-pass extract (read once → all tracks) would shave ~2 min.
+- **Extraction overlap — resolved:** extraction is single-pass (`extract_tracks` reads the source
+  once for all tracks) and now **prefetched** — `extract.extract_ahead` extracts the next file while
+  the GPU transcribes the current one, so the GPU no longer idles between files. GPU throughput is
+  tunable via `WHISPERMERGER_BATCH_SIZE` (default 16; `Startup.bat` ships 24 on the 3080 Ti). See the
+  2026-06-19 "GPU uptime" entry below.
 - **Bleed (FR-MG-4):** the near-duplicate-text flag works, but real "duplicate lines across
   speakers" on this footage turned out to be **clean-vs-processed captures of the same mic**, not
   bleed — solved by deselecting the redundant track, no algorithm needed. Model-based RMS

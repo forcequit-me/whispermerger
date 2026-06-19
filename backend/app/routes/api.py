@@ -136,6 +136,16 @@ class RetryRequest(BaseModel):
     projects: list[int] | None = None        # project indices to retry; None = all failed/canceled
 
 
+class FileStatusOut(BaseModel):
+    name: str
+    status: str
+    progress: float
+    message: str
+    elapsed: float = 0.0
+    output_dir: str | None = None
+    error: str | None = None
+
+
 class ProjectStatusOut(BaseModel):
     name: str
     status: str
@@ -144,6 +154,7 @@ class ProjectStatusOut(BaseModel):
     elapsed: float = 0.0
     output_dir: str | None = None
     error: str | None = None
+    files: list[FileStatusOut] = []          # per-file rows (per-file projects only)
 
 
 class BatchStatusOut(BaseModel):
@@ -556,7 +567,7 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
             formats=p.formats,
         ))
     options = body.options.to_options()
-    batch = request.app.state.batches.create([p.name for p in body.projects])
+    batch = request.app.state.batches.create(projects)
 
     def transcribe_fn(wav: str) -> dict:
         return transcribe_track(wav, cache=cache, language=body.language)
@@ -575,7 +586,12 @@ def _batch_out(batch) -> BatchStatusOut:
         id=batch.id, status=batch.status.value, progress=batch.progress, elapsed=batch.elapsed,
         projects=[ProjectStatusOut(name=p.name, status=p.status.value, progress=p.progress,
                                    message=p.message, elapsed=p.elapsed,
-                                   output_dir=p.output_dir, error=p.error)
+                                   output_dir=p.output_dir, error=p.error,
+                                   files=[FileStatusOut(name=f.name, status=f.status.value,
+                                                        progress=f.progress, message=f.message,
+                                                        elapsed=f.elapsed, output_dir=f.output_dir,
+                                                        error=f.error)
+                                          for f in p.files])
                   for p in batch.projects],
     )
 
@@ -604,6 +620,23 @@ def cancel_batch_project(request: Request, batch_id: str, idx: int) -> dict:
     if not request.app.state.batches.cancel_project(batch_id, idx):
         raise HTTPException(404, "unknown batch or project")
     return {"canceling": True}
+
+
+@router.post("/batch/{batch_id}/project/{pidx}/file/{fidx}/cancel")
+def cancel_batch_file(request: Request, batch_id: str, pidx: int, fidx: int) -> dict:
+    """Cancel one file inside a per-file project — the other files keep going."""
+    if not request.app.state.batches.cancel_file(batch_id, pidx, fidx):
+        raise HTTPException(404, "unknown batch / project / file")
+    return {"canceling": True}
+
+
+@router.post("/batch/{batch_id}/project/{pidx}/file/{fidx}/restart")
+def restart_batch_file(request: Request, batch_id: str, pidx: int, fidx: int) -> dict:
+    """Re-run one finished file. Queues it to run when the GPU frees up (or starts a worker if
+    the batch is idle); only files that already finished can be restarted."""
+    if not request.app.state.batches.restart_file(batch_id, pidx, fidx):
+        raise HTTPException(409, "cannot restart that file")
+    return {"restarting": True}
 
 
 @router.post("/batch/{batch_id}/retry", response_model=BatchStatusOut)

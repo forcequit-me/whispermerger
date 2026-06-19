@@ -22,9 +22,10 @@ from .models import InputSource, MergedOutput
 TranscribeFn = Callable[[str], dict]
 ProgressCb = Callable[[float, str], None]
 IsCancelled = Callable[[], bool]
-# on_file(index, source, merged) — called once per finished file in run_per_file_pipeline so the
-# caller can export it immediately (the next file is already extracting in the background).
-OnFile = Callable[[int, "PreparedSource", MergedOutput], None]
+
+
+class _FileCancelled(Exception):
+    """Internal: one file in a per-file run was canceled — skip it, keep the rest going."""
 
 
 @dataclass
@@ -52,6 +53,10 @@ def run_merge_pipeline(
 ) -> MergedOutput:
     prepared = sorted(prepared, key=lambda p: p.input.sequence)
     total = sum(1 for p in prepared for t in p.input.tracks if t.selected) or 1
+    # Progress is weighted by audio length × tracks (a track-pass takes ~the file's duration), so
+    # the bar tracks real time remaining instead of just counting tracks.
+    total_weight = sum(p.input.duration * sum(1 for t in p.input.tracks if t.selected)
+                       for p in prepared) or 1.0
 
     outputs: list[dict] = []
     labels: list[str] = []
@@ -67,6 +72,7 @@ def run_merge_pipeline(
     # tracks come out in one ffmpeg pass; each temp wav is deleted right after it transcribes.
     base = 0.0
     done = 0
+    done_weight = 0.0
     tmpdir = Path(tempfile.mkdtemp(prefix="wm_pipe_"))
     try:
         if prepared:
@@ -76,12 +82,13 @@ def run_merge_pipeline(
             sources.append(p.input)
             for track in (t for t in p.input.tracks if t.selected):
                 n = done + 1
-                report(done / total, f"Transcribing · {track.speaker} ({n}/{total})")
+                report(done_weight / total_weight, f"Transcribing track {n}/{total} · {track.speaker}")
                 outputs.append(transcribe_fn(str(wavs[track.track_index])))
                 wavs[track.track_index].unlink(missing_ok=True)   # free it right away
                 labels.append(track.speaker)
                 offsets.append(base)
                 done += 1
+                done_weight += p.input.duration
             base += p.input.duration
 
         report(0.99, "Merging tracks…")
@@ -93,40 +100,59 @@ def run_merge_pipeline(
 def run_per_file_pipeline(
     prepared: list[PreparedSource],
     transcribe_fn: TranscribeFn,
-    on_file: OnFile,
+    indices: list[int],
     *,
     options: Optional[MergeOptions] = None,
-    progress_cb: Optional[ProgressCb] = None,
     is_cancelled: Optional[IsCancelled] = None,
+    on_start: Callable[[int, "PreparedSource"], None],
+    on_track: Callable[[int, int, int, str], None],
+    on_done: Callable[[int, "PreparedSource", MergedOutput], None],
+    on_error: Callable[[int, "PreparedSource", Exception], None],
+    on_skip: Callable[[int, "PreparedSource"], None],
+    is_file_cancelled: Callable[[int], bool],
 ) -> None:
-    """One transcript per source file, with the same cross-file prefetch as run_merge_pipeline:
-    while file N transcribes, file N+1 extracts in the background. Each file is merged on its own
-    (offset 0) and handed to `on_file(index, source, merged)` so the caller exports it. progress_cb
-    reports an overall fraction across all n files."""
-    prepared = sorted(prepared, key=lambda p: p.input.sequence)
-    n = len(prepared) or 1
-
-    def report(frac: float, msg: str) -> None:
-        if progress_cb:
-            progress_cb(frac, msg)
+    """Transcribe the given file positions (one transcript each) with depth-1 prefetch: while one
+    file transcribes, the next extracts in the background. Per-file lifecycle is reported through
+    callbacks (start / per-track / done / error / skip) so the caller tracks and exports each file.
+    A per-file cancel (`is_file_cancelled`) skips just that file; a project/batch cancel
+    (`is_cancelled`) stops the whole pass. This runs ONE pass over `indices`; a single-file restart
+    is just a later call with that file back in `indices`."""
+    def cancelled() -> bool:
+        return bool(is_cancelled and is_cancelled())
 
     tmpdir = Path(tempfile.mkdtemp(prefix="wm_perfile_"))
     try:
-        if prepared:
-            report(0.0, f"file 1/{n}: {prepared[0].input.filename} · Extracting audio")
-        for i, (p, wavs) in enumerate(extract_ahead(prepared, lambda src: _extract_into(tmpdir, src),
-                                                     is_cancelled=is_cancelled)):
-            selected = [t for t in p.input.tracks if t.selected]
-            outputs: list[dict] = []
-            labels: list[str] = []
-            for j, track in enumerate(selected):
-                report((i + j / max(len(selected), 1)) / n,
-                       f"file {i + 1}/{n}: {p.input.filename} · Transcribing {track.speaker}")
-                outputs.append(transcribe_fn(str(wavs[track.track_index])))
-                wavs[track.track_index].unlink(missing_ok=True)
-                labels.append(track.speaker)
-            merged = merge(outputs, labels, [0.0] * len(outputs), options=options, sources=[p.input])
-            report((i + 1) / n, f"file {i + 1}/{n}: {p.input.filename} · done")
-            on_file(i, p, merged)
+        items = [(i, prepared[i]) for i in indices]
+        for (i, p), wavs in extract_ahead(items, lambda it: _extract_into(tmpdir, it[1]),
+                                          is_cancelled=cancelled):
+            if cancelled():
+                break
+            if is_file_cancelled(i):
+                on_skip(i, p)
+                continue
+            on_start(i, p)
+            try:
+                selected = [t for t in p.input.tracks if t.selected]
+                outputs: list[dict] = []
+                labels: list[str] = []
+                completed = True
+                for j, track in enumerate(selected):
+                    if is_file_cancelled(i):
+                        raise _FileCancelled()
+                    if cancelled():
+                        completed = False
+                        break
+                    on_track(i, j, len(selected), track.speaker)
+                    outputs.append(transcribe_fn(str(wavs[track.track_index])))
+                    wavs[track.track_index].unlink(missing_ok=True)
+                    labels.append(track.speaker)
+                if completed:
+                    merged = merge(outputs, labels, [0.0] * len(outputs),
+                                   options=options, sources=[p.input])
+                    on_done(i, p, merged)
+            except _FileCancelled:
+                on_skip(i, p)
+            except Exception as exc:                 # per-file isolation — keep the rest going
+                on_error(i, p, exc)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

@@ -1127,7 +1127,7 @@ const BATCH_STATE = {
 };
 
 function renderBatchStatus(b, id, btn) {
-  // Overall bar: project-weighted (each project counts equally toward 100%, regardless of size).
+  // Overall bar: weighted by each project's audio length × tracks, so a long project moves it more.
   const pct = Math.round((b.progress || 0) * 100);
   $("#batch-bar").style.width = pct + "%";
   $("#batch-pct").textContent = pct + "%";
@@ -1143,7 +1143,7 @@ function renderBatchStatus(b, id, btn) {
   root.append(el("div", { className: "batch-summary" },
     el("span", { textContent: `${counts.done} of ${total} projects complete` }),
     el("span", { className: "muted",
-      textContent: ` · overall ${pct}% (project-weighted) · ${fmtElapsed(b.elapsed)}` })));
+      textContent: ` · overall ${pct}% (by audio length) · ${fmtElapsed(b.elapsed)}` })));
   const parts = [];
   for (const [k, label] of [["running", "running"], ["queued", "queued"], ["done", "done"],
                             ["error", "failed"], ["canceled", "canceled"]]) {
@@ -1219,5 +1219,63 @@ function buildBatchItem(p, i, id, btn, ended) {
     detail = el("div", { className: "bi-msg muted", textContent: p.message || meta.label });
   }
   card.append(detail);
+
+  // Per-file projects: a row per source file, each with its own status + cancel/restart.
+  if (p.files && p.files.length) {
+    const files = el("div", { className: "batch-files" });
+    p.files.forEach((f, fi) => files.append(buildBatchFile(f, i, fi, id, btn, ended)));
+    card.append(files);
+  }
   return card;
+}
+
+// One file row inside a per-file project: name + status chip + cancel/restart + its own bar.
+function buildBatchFile(f, pidx, fidx, id, btn, ended) {
+  const meta = BATCH_STATE[f.status] || { label: f.status, cls: "queued" };
+  const pct = Math.round((f.progress || 0) * 100);
+  const row = el("div", { className: `batch-file state-${meta.cls}` });
+
+  const detail = f.error ? f.error
+    : (f.status === "done" ? (f.message || "done")
+       : (f.status === "running" ? `${pct}% · ${f.message || ""}` : (f.message || meta.label)));
+  const msg = el("span", { className: "muted bf-msg", textContent: detail, title: detail });
+  if (f.error) msg.style.color = "var(--bleed)";
+
+  const head = el("div", { className: "bf-head" },
+    el("span", { className: "bf-name", textContent: f.name, title: f.name }),
+    el("span", { className: `chip-status ${meta.cls}`, textContent: meta.label }),
+    el("div", { className: "spacer" }),
+    msg);
+
+  if (f.status === "running" || f.status === "queued") {
+    const cancel = el("button", { className: "ghost icon-only bi-act", title: "Cancel this file" }, icon("close"));
+    cancel.onclick = async () => {
+      cancel.disabled = true; cancel.title = "Canceling…";
+      try { await fetch(`/api/batch/${id}/project/${pidx}/file/${fidx}/cancel`, { method: "POST" }); } catch {}
+    };
+    head.append(cancel);
+  } else {
+    const restart = el("button", { className: "ghost bi-act", textContent: "Restart",
+      title: ended ? "Run this file again" : "Run this file again (queues until the card frees up)" });
+    restart.onclick = async () => {
+      restart.disabled = true; restart.textContent = "…";
+      try {
+        const r = await fetchTO(`/api/batch/${id}/project/${pidx}/file/${fidx}/restart`, { method: "POST" }, 30000);
+        if (!r.ok) {
+          $("#batch-err").textContent = "Restart failed: " + (await r.text());
+          restart.disabled = false; restart.textContent = "Restart"; return;
+        }
+        if (ended) pollBatch(id, btn);                    // polling had stopped — resume it
+      } catch (e) {
+        $("#batch-err").textContent = "Couldn't reach server to restart.";
+        restart.disabled = false; restart.textContent = "Restart";
+      }
+    };
+    head.append(restart);
+  }
+  row.append(head);
+  if (f.status === "running" || (pct > 0 && pct < 100)) {
+    row.append(el("div", { className: "bar bf-bar" }, el("div", { style: `width:${pct}%` })));
+  }
+  return row;
 }
