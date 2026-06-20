@@ -9,7 +9,7 @@ Both v1 (multi-track stems + batch studio) and v2 (single-track manual diarizati
 **built and running** on native Windows + RTX 3080 Ti (the build plan's env was validated;
 WSL2 not needed). Full pipeline works end-to-end: pick files → transcribe on GPU (WhisperX
 large-v3 + wav2vec2) → merge with conflict flags → edit → export. **Validated on a real 56 GB /
-1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **98 GPU-independent
+1h51m / 4-track recording** — full transcription in ~10 min (beats NFR-1). **103 GPU-independent
 tests pass**; the GPU path passes the §11.3 smoke gate. The Edit tab now imports all of our
 export formats (JSON/SRT/TXT/CSV); remaining work is optional polish (some `FR-UI-*` toggles)
 and proprietary-format import (Descript/Premiere).
@@ -337,6 +337,39 @@ Language in code/docs kept general ("read-bound", "reading the source") rather t
   one read path: deeper prefetch would only split the shared bandwidth and pile up temp WAVs. GPU
   idle on huge source files is the read path being the bottleneck, not a scheduling gap. Assets
   `?v=23` (js) / `?v=18` (css).
+
+## Pause & resume with GPU release + pause-aware timers (2026-06-20)
+
+Lets a long batch (or a multi-file Transcribe & Merge job) be parked mid-run and the GPU handed back,
+without corrupting the timing readouts.
+
+- **Pause is cooperative, like cancel** — it lands at the next file/track boundary (the in-flight file
+  finishes), then the worker parks. Same checkpoints that drive cancel now also gate pause: the
+  `is_cancelled` callback became a `_gate` that, while paused, frees the GPU and blocks on a
+  `threading.Event` until resume or cancel. No pipeline code changed — only what the gate does.
+- **GPU is released on pause** — new `transcribe.unload_models()` clears the `lru_cache`'d ASR +
+  align models, `gc.collect()`s, and `torch.cuda.empty_cache()`s, run **on the worker thread** that
+  owns the GPU (so ctranslate2/torch free cleanly). The models reload lazily on the next transcribe
+  after resume (the chosen trade: VRAM back to ~0 while paused, at the cost of a one-time reload).
+  Wired as an injected `on_pause` hook (`batch.BatchStatus.on_pause`, `jobs.run(..., on_pause=)`), so
+  `batch.py`/`jobs.py` stay GPU-free and the tests need no card.
+- **Pause-aware timers** — every timed row (`BatchStatus`/`ProjectStatus`/`FileStatus`/`Job`) gained
+  `paused_total` + `pause_started`; a shared `_live_elapsed` subtracts paused time so `elapsed`,
+  "done in Xs", and the read-vs-GPU split all exclude time spent parked (the clocks visibly **freeze**
+  while paused and resume on continue). `extract_seconds` subtracts `paused_total` too, so a pause
+  mid-extraction doesn't inflate the read figure. The model-reload on resume counts as real time
+  (it's active work, not idle).
+- **Two-stage status** — `gpu_freed` (worker actually parked) is reported alongside `paused`, so the
+  UI distinguishes "Pausing… (current file finishes)" from "Paused · GPU released" honestly.
+- **Endpoints** — `POST /api/batch/{id}/pause` · `/resume`, and `POST /api/pause/{job_id}` ·
+  `/resume/{job_id}`. `BatchStatusOut`/`ProgressResponse` expose `paused` + `gpu_freed`. Cancelling a
+  paused run wakes the parked worker so it unwinds (every gate call short-circuits on `cancelled`).
+- **UI** — a **Pause/Resume** toggle by **Cancel batch** and by the Transcribe **Cancel** button; it
+  reflects the server's `paused` each poll (survives a refresh), and the batch header shows the
+  paused stage line.
+- Tests: `test_jobs.py` + `test_batch.py` each gain pause→resume (clock frozen, run completes, pause
+  banked out of `elapsed`) and cancel-while-paused (wakes + unwinds). **103 GPU-independent tests
+  pass.** Assets `?v=25` (js) / `?v=18` (css).
 
 ## Partial / outstanding (v1 polish)
 

@@ -132,6 +132,7 @@
         </div>
         <div class="bar"><div id="batch-bar"></div></div>
         <div class="row" style="margin-top:8px">
+          <button id="pause-batch" class="ghost" style="display:none">Pause</button>
           <button id="cancel-batch" class="ghost" style="display:none">Cancel batch</button>
           <button id="retry-batch" class="ghost" style="display:none">Retry failed</button>
         </div>
@@ -213,6 +214,7 @@
         <div class="progress-head">
           <h2>Progress</h2>
           <div class="spacer"></div>
+          <button id="pause-job" class="ghost" style="display:none">Pause</button>
           <button id="cancel-job" class="ghost" style="display:none">Cancel</button>
           <span class="progress-pct" id="progress-pct">0%</span>
         </div>
@@ -341,7 +343,7 @@
     </section>
   </main>
 
-  <script src="app.js?v=24"></script>
+  <script src="app.js?v=25"></script>
   <script type="module" src="labeltrack.js?v=8"></script>
 </body>
 </html>

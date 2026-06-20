@@ -41,6 +41,14 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   **Restart** any finished project or file: while the batch is still running it re-queues to run when
   the GPU frees up; once the batch is done it starts immediately. Caching makes unchanged files
   instant. Single Transcribe/Label jobs are cancelable too.
+- **Pause & resume** — pause the **whole batch** or a **single Transcribe & Merge job** mid-run. The
+  file currently transcribing finishes, then the model is **unloaded from the GPU** (VRAM returns to
+  ~0, so the card is free for other work while you're paused) and the queue halts. **Resume** reloads
+  the model and continues exactly where it left off. **The clocks freeze while paused** — elapsed,
+  per-file "done in Xs", and the read-vs-GPU split all exclude paused time, so the timings stay
+  honest no matter how long you step away. The status line spells out which stage you're in
+  ("Pausing… (current file finishes)" → "Paused · GPU released"). The trade for freeing the card is
+  a one-time model reload (a few seconds up to ~30 s) on resume.
 - **Single-track labeling (v2)** — for one mixed track with multiple speakers (interview,
   podcast, collab): silero-VAD auto-detects speech on a WaveSurfer waveform, you assign regions
   to speakers (click / shift-click a run / ctrl-click; number keys; bulk-assign; duplicate a

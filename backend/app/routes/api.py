@@ -27,7 +27,7 @@ from ..merge import BackchannelRender, MergeOptions
 from ..models import InputSource, MergedOutput, Track
 from ..pipeline import PreparedSource, run_merge_pipeline
 from ..probe import probe
-from ..transcribe import transcribe_track
+from ..transcribe import transcribe_track, unload_models
 
 router = APIRouter()
 
@@ -99,6 +99,8 @@ class ProgressResponse(BaseModel):
     message: str
     elapsed: float = 0.0
     error: str | None = None
+    paused: bool = False                     # pause requested
+    gpu_freed: bool = False                  # the GPU has actually been released (worker parked)
 
 
 class ExportOptionsIn(BaseModel):
@@ -173,6 +175,8 @@ class BatchStatusOut(BaseModel):
     status: str
     progress: float
     elapsed: float = 0.0
+    paused: bool = False                      # pause requested
+    gpu_freed: bool = False                   # the GPU has actually been released (worker parked)
     projects: list[ProjectStatusOut]
 
 
@@ -445,7 +449,7 @@ def diarize(request: Request, body: DiarizeRequest) -> JobCreated:
             options=options,
         )
 
-    request.app.state.jobs.run(job, work)
+    request.app.state.jobs.run(job, work, on_pause=unload_models)
     return JobCreated(job_id=job.id)
 
 
@@ -485,7 +489,7 @@ def transcribe(request: Request, body: TranscribeRequest) -> JobCreated:
             progress_cb=progress,
         )
 
-    request.app.state.jobs.run(job, work)
+    request.app.state.jobs.run(job, work, on_pause=unload_models)
     return JobCreated(job_id=job.id)
 
 
@@ -497,7 +501,8 @@ def progress(request: Request, job_id: str) -> ProgressResponse:
     if job is None:
         raise HTTPException(404, "unknown job")
     return ProgressResponse(status=job.status.value, progress=job.progress,
-                            message=job.message, elapsed=job.elapsed, error=job.error)
+                            message=job.message, elapsed=job.elapsed, error=job.error,
+                            paused=job.paused, gpu_freed=job.gpu_freed)
 
 
 @router.get("/result/{job_id}", response_model=MergedOutput)
@@ -519,6 +524,27 @@ def cancel_job(request: Request, job_id: str) -> dict:
         raise HTTPException(404, "unknown job")
     job.cancel()
     return {"canceling": True}
+
+
+@router.post("/pause/{job_id}")
+def pause_job(request: Request, job_id: str) -> dict:
+    """Pause a job — the in-flight stage finishes, then the GPU is freed and the clock stops
+    until /resume. The model reloads on resume."""
+    job = request.app.state.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    job.pause()
+    return {"pausing": True}
+
+
+@router.post("/resume/{job_id}")
+def resume_job(request: Request, job_id: str) -> dict:
+    """Resume a paused job — reloads the model and continues where it left off."""
+    job = request.app.state.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    job.resume()
+    return {"resuming": True}
 
 
 # --- export (FR-EX-*) ------------------------------------------------------------------
@@ -579,6 +605,7 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
         ))
     options = body.options.to_options()
     batch = request.app.state.batches.create(projects)
+    batch.on_pause = unload_models               # free the GPU when the worker parks on a pause
 
     def transcribe_fn(wav: str) -> dict:
         return transcribe_track(wav, cache=cache, language=body.language)
@@ -595,6 +622,7 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
 def _batch_out(batch) -> BatchStatusOut:
     return BatchStatusOut(
         id=batch.id, status=batch.status.value, progress=batch.progress, elapsed=batch.elapsed,
+        paused=batch.paused, gpu_freed=batch.gpu_freed,
         projects=[ProjectStatusOut(name=p.name, status=p.status.value, progress=p.progress,
                                    message=p.message, weight=p.weight, elapsed=p.elapsed,
                                    output_dir=p.output_dir, error=p.error,
@@ -624,6 +652,23 @@ def cancel_batch(request: Request, batch_id: str) -> dict:
     if not request.app.state.batches.cancel(batch_id):
         raise HTTPException(404, "unknown batch")
     return {"canceling": True}
+
+
+@router.post("/batch/{batch_id}/pause")
+def pause_batch(request: Request, batch_id: str) -> dict:
+    """Pause the whole batch — the file currently transcribing finishes, then the GPU is freed and
+    the queue + clocks halt until /resume. The model reloads on resume."""
+    if not request.app.state.batches.pause(batch_id):
+        raise HTTPException(404, "unknown batch")
+    return {"pausing": True}
+
+
+@router.post("/batch/{batch_id}/resume")
+def resume_batch(request: Request, batch_id: str) -> dict:
+    """Resume a paused batch — reloads the model and continues the queue where it left off."""
+    if not request.app.state.batches.resume(batch_id):
+        raise HTTPException(404, "unknown batch")
+    return {"resuming": True}
 
 
 @router.post("/batch/{batch_id}/project/{idx}/cancel")

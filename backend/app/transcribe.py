@@ -87,6 +87,22 @@ def _load_align(language: str, device: str):
     return whisperx.load_align_model(language_code=language, device=device)
 
 
+def unload_models() -> None:
+    """Drop the cached ASR + alignment models and hand their VRAM back to CUDA. Called when a run
+    is paused so a paused job stops occupying the GPU; the models reload lazily on the next
+    transcribe. Must run on the worker thread that owns the GPU (where the models were created)."""
+    _load_model.cache_clear()
+    _load_align.cache_clear()
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def transcribe_track(
     audio_path: str | Path,
     *,

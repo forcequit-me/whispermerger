@@ -42,14 +42,43 @@ class Job:
     error: Optional[str] = None
     started_at: float = 0.0
     finished_at: float = 0.0
+    paused: bool = False
+    gpu_freed: bool = False                       # the GPU has actually been released (worker parked)
+    paused_total: float = 0.0                     # total wall time spent paused (excluded from elapsed)
+    pause_started: float = 0.0                    # start of the current pause, 0 when running
     _thread: Optional[threading.Thread] = field(default=None, repr=False)
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
+    _wake: threading.Event = field(default_factory=threading.Event, repr=False)
+    _on_pause: Optional[Callable[[], None]] = field(default=None, repr=False)
 
     def cancel(self) -> None:
         """Request cancellation; takes effect at the next progress checkpoint (stage boundary)."""
         self._cancel.set()
+        self._wake.set()                          # wake a paused job so it can unwind
+
+    def pause(self) -> None:
+        """Request a pause; takes effect at the next progress checkpoint (the in-flight stage
+        finishes first), then the GPU is freed and the clock stops until resume()."""
+        self.paused = True
+
+    def resume(self) -> None:
+        self.paused = False
+        self._wake.set()
 
     def _set_progress(self, fraction: float, message: str) -> None:
+        if self.paused and not self._cancel.is_set():
+            if self._on_pause:
+                self._on_pause()                  # free the GPU (runs on the worker thread)
+            self.gpu_freed = True
+            self.pause_started = time.time()
+            self.message = "paused · GPU released"
+            while self.paused and not self._cancel.is_set():
+                self._wake.wait()
+                self._wake.clear()
+            if self.pause_started:                # bank the paused gap so elapsed excludes it
+                self.paused_total += time.time() - self.pause_started
+                self.pause_started = 0.0
+            self.gpu_freed = False
         if self._cancel.is_set():
             raise JobCancelled()
         self.progress = max(0.0, min(1.0, fraction))
@@ -57,10 +86,13 @@ class Job:
 
     @property
     def elapsed(self) -> float:
-        """Total wall time across all stages (extraction + transcription + merge)."""
+        """Total wall time across all stages (extraction + transcription + merge), minus any time
+        spent paused (the GPU is idle then, so it would otherwise inflate the reported duration)."""
         if not self.started_at:
             return 0.0
-        return (self.finished_at or time.time()) - self.started_at
+        end = self.finished_at or time.time()
+        ongoing = (time.time() - self.pause_started) if self.pause_started else 0.0
+        return max(0.0, end - self.started_at - self.paused_total - ongoing)
 
 
 class JobRegistry:
@@ -78,8 +110,12 @@ class JobRegistry:
         with self._lock:
             return self._jobs.get(job_id)
 
-    def run(self, job: Job, work: Callable[[ProgressCb], MergedOutput]) -> None:
-        """Run `work` in a background thread, streaming progress into the job."""
+    def run(self, job: Job, work: Callable[[ProgressCb], MergedOutput],
+            *, on_pause: Optional[Callable[[], None]] = None) -> None:
+        """Run `work` in a background thread, streaming progress into the job. `on_pause` (if given)
+        runs on the worker thread when the job parks on a pause — used to free the GPU."""
+        job._on_pause = on_pause
+
         def _target() -> None:
             job.started_at = time.time()
             job.status = JobStatus.RUNNING

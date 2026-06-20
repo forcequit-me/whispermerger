@@ -303,6 +303,62 @@ def test_per_file_progress_is_duration_weighted(two_stream_file, tmp_path):
     assert batch.projects[0].progress > 0.98                 # ~100/101, not 50%
 
 
+def _wait_status(batch, timeout=6.0):
+    import time as _t
+    deadline = _t.time() + timeout
+    while batch.status not in (Status.DONE, Status.CANCELED) and _t.time() < deadline:
+        _t.sleep(0.02)
+
+
+def test_pause_frees_gpu_freezes_clock_then_resumes(two_stream_file, tmp_path):
+    import time as _t
+    reg = BatchRegistry()
+    proj = ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0)])
+    batch = reg.create([proj])
+    freed = []
+    batch.on_pause = lambda: freed.append(True)
+    reg.set_spec(batch.id, _RunSpec([proj], _stub, "folder", str(tmp_path), None))
+    reg.pause(batch.id)                                   # pause up front -> worker parks at first boundary
+    reg.run(batch, lambda: run_batch(batch, [proj], _stub,
+            output_mode="folder", output_folder=str(tmp_path)))
+
+    deadline = _t.time() + 3
+    while not batch.gpu_freed and _t.time() < deadline:
+        _t.sleep(0.01)
+    assert batch.gpu_freed is True
+    assert freed == [True]                                # GPU-release hook ran on park
+
+    e1 = batch.elapsed
+    _t.sleep(0.2)                                         # paused time must not count
+    assert batch.elapsed - e1 < 0.1                       # clock frozen while paused
+
+    reg.resume(batch.id)
+    _wait_status(batch)
+    assert batch.status is Status.DONE
+    assert batch.paused_total >= 0.15                     # the pause was banked out of elapsed
+    assert _find(tmp_path / "A", "A", "srt")              # batch finished correctly after resume
+
+
+def test_cancel_while_paused_unwinds(two_stream_file, tmp_path):
+    import time as _t
+    reg = BatchRegistry()
+    proj = ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0)])
+    batch = reg.create([proj])
+    reg.set_spec(batch.id, _RunSpec([proj], _stub, "folder", str(tmp_path), None))
+    reg.pause(batch.id)
+    reg.run(batch, lambda: run_batch(batch, [proj], _stub,
+            output_mode="folder", output_folder=str(tmp_path)))
+
+    deadline = _t.time() + 3
+    while not batch.gpu_freed and _t.time() < deadline:
+        _t.sleep(0.01)
+    assert batch.gpu_freed is True
+    reg.cancel(batch.id)                                  # cancel while paused -> wakes + unwinds
+    _wait_status(batch)
+    assert batch.status is Status.CANCELED
+    assert batch.projects[0].status is Status.CANCELED
+
+
 def test_output_mode_source_writes_next_to_file(two_stream_file, tmp_path):
     import shutil
     local = tmp_path / "session.mkv"

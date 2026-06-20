@@ -36,6 +36,17 @@ class Cancelled(Exception):
     """Raised inside the pipeline (via the progress callback) when a cancel is requested."""
 
 
+def _live_elapsed(started_at: float, finished_at: float,
+                  paused_total: float, pause_started: float) -> float:
+    """Wall time between start and finish (or now), minus time spent paused. Every timed row uses
+    this so a paused run reports real working time, not clock time (the GPU sits idle while paused)."""
+    if not started_at:
+        return 0.0
+    end = finished_at or time.time()
+    ongoing = (time.time() - pause_started) if pause_started else 0.0
+    return max(0.0, end - started_at - paused_total - ongoing)
+
+
 @dataclass
 class ProjectInput:
     name: str
@@ -60,12 +71,12 @@ class FileStatus:
     started_at: float = 0.0
     finished_at: float = 0.0
     cancel_requested: bool = False
+    paused_total: float = 0.0                     # total wall time spent paused (excluded from elapsed)
+    pause_started: float = 0.0                    # start of the current pause, 0 when running
 
     @property
     def elapsed(self) -> float:
-        if not self.started_at:
-            return 0.0
-        return (self.finished_at or time.time()) - self.started_at
+        return _live_elapsed(self.started_at, self.finished_at, self.paused_total, self.pause_started)
 
 
 @dataclass
@@ -80,13 +91,13 @@ class ProjectStatus:
     started_at: float = 0.0
     finished_at: float = 0.0
     cancel_requested: bool = False               # cancel just this project (queue continues)
+    paused_total: float = 0.0                     # total wall time spent paused (excluded from elapsed)
+    pause_started: float = 0.0                    # start of the current pause, 0 when running
     files: list[FileStatus] = field(default_factory=list)   # per-file rows (per-file projects only)
 
     @property
     def elapsed(self) -> float:
-        if not self.started_at:
-            return 0.0
-        return (self.finished_at or time.time()) - self.started_at
+        return _live_elapsed(self.started_at, self.finished_at, self.paused_total, self.pause_started)
 
 
 @dataclass
@@ -97,10 +108,16 @@ class BatchStatus:
     started_at: float = 0.0
     finished_at: float = 0.0
     cancelled: bool = False
+    paused: bool = False                          # pause requested (queue halts at next boundary)
+    gpu_freed: bool = False                       # the GPU has actually been released (worker parked)
+    paused_total: float = 0.0                     # total wall time spent paused (excluded from elapsed)
+    pause_started: float = 0.0                    # start of the current pause, 0 when running
+    on_pause: Optional[Callable[[], None]] = field(default=None, repr=False)  # frees the GPU on park
     # Project indices requested for re-run while the worker is busy — the worker drains these
     # when it frees up (one GPU, so re-runs queue instead of starting a competing thread).
     rerun_pending: list[int] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _wake: threading.Event = field(default_factory=threading.Event, repr=False)  # unblocks a paused worker
 
     @property
     def progress(self) -> float:
@@ -115,9 +132,7 @@ class BatchStatus:
 
     @property
     def elapsed(self) -> float:
-        if not self.started_at:
-            return 0.0
-        return (self.finished_at or time.time()) - self.started_at
+        return _live_elapsed(self.started_at, self.finished_at, self.paused_total, self.pause_started)
 
 
 def _safe_name(name: str) -> str:
@@ -172,6 +187,41 @@ def _project_output_parent(project: ProjectInput, output_mode: str, output_folde
 
 
 IsCancelled = Callable[[], bool]
+
+
+def _open_timed(batch: "BatchStatus"):
+    """The batch plus whatever project/file is mid-run — the timers that should freeze while paused.
+    Nothing else is running (one GPU, one worker), so this is the full set of open clocks."""
+    yield batch
+    for p in batch.projects:
+        if p.started_at and not p.finished_at:
+            yield p
+        for f in p.files:
+            if f.started_at and not f.finished_at:
+                yield f
+
+
+def _gate(batch: "BatchStatus") -> bool:
+    """Cooperative checkpoint, called wherever a cancel would be checked. While paused it frees the
+    GPU, freezes the open clocks, and blocks here until resume or cancel. Returns True if the run
+    should stop (a cancel is pending). Zero cost when not paused."""
+    if batch.paused and not batch.cancelled:
+        if batch.on_pause:
+            batch.on_pause()                     # free the GPU (runs on the worker thread)
+        batch.gpu_freed = True
+        now = time.time()
+        for obj in _open_timed(batch):
+            obj.pause_started = now
+        while batch.paused and not batch.cancelled:
+            batch._wake.wait()
+            batch._wake.clear()
+        now = time.time()
+        for obj in _open_timed(batch):           # bank the paused gap so elapsed excludes it
+            if obj.pause_started:
+                obj.paused_total += now - obj.pause_started
+                obj.pause_started = 0.0
+        batch.gpu_freed = False
+    return batch.cancelled
 
 
 def _guard(cb, is_cancelled: IsCancelled):
@@ -235,7 +285,9 @@ def _process_project(
                 fs.message = "transcribing"
                 # Extraction done, GPU work begins — record how long the extraction wait was
                 # (reading the source + ffmpeg, during which the GPU was idle waiting for this file).
-                fs.extract_seconds = max(0.0, time.time() - fs.started_at) if fs.started_at else 0.0
+                # Subtract any pause so a mid-extraction pause doesn't inflate the wait.
+                fs.extract_seconds = (max(0.0, time.time() - fs.started_at - fs.paused_total)
+                                      if fs.started_at else 0.0)
                 _recalc_project(ps)
 
             def on_track(i: int, j: int, total_tracks: int, speaker: str) -> None:
@@ -371,7 +423,7 @@ def run_batch(
     stops at the next file/project boundary if `batch.cancelled` is set."""
     _run_projects(list(zip(projects, batch.projects)), transcribe_fn,
                   output_mode=output_mode, output_folder=output_folder,
-                  options=options, is_cancelled=lambda: batch.cancelled)
+                  options=options, is_cancelled=lambda: _gate(batch))
 
 
 def _set(ps: ProjectStatus, frac: float, msg: str) -> None:
@@ -443,6 +495,25 @@ class BatchRegistry:
         if batch is None:
             return False
         batch.cancelled = True
+        batch._wake.set()                         # wake a paused worker so it can unwind
+        return True
+
+    def pause(self, batch_id: str) -> bool:
+        """Request a pause; the worker stops taking new work at the next file/project boundary,
+        frees the GPU, and the clocks freeze until resume()."""
+        batch = self.get(batch_id)
+        if batch is None:
+            return False
+        batch.paused = True
+        return True
+
+    def resume(self, batch_id: str) -> bool:
+        """Lift a pause; the parked worker wakes, reloads the model, and continues."""
+        batch = self.get(batch_id)
+        if batch is None:
+            return False
+        batch.paused = False
+        batch._wake.set()
         return True
 
     def cancel_project(self, batch_id: str, index: int) -> bool:
@@ -505,6 +576,8 @@ class BatchRegistry:
         ps.started_at = 0.0
         ps.finished_at = 0.0
         ps.cancel_requested = False
+        ps.paused_total = 0.0
+        ps.pause_started = 0.0
         for fs in ps.files:
             if fs.status in (Status.ERROR, Status.CANCELED):
                 BatchRegistry._reset_fs(fs)
@@ -521,12 +594,14 @@ class BatchRegistry:
         fs.started_at = 0.0
         fs.finished_at = 0.0
         fs.cancel_requested = False
+        fs.paused_total = 0.0
+        fs.pause_started = 0.0
 
     def _run_indices(self, batch: BatchStatus, spec: _RunSpec, indices: list[int]) -> None:
         pairs = [(spec.projects[i], batch.projects[i]) for i in indices]
         _run_projects(pairs, spec.transcribe_fn, output_mode=spec.output_mode,
                       output_folder=spec.output_folder, options=spec.options,
-                      is_cancelled=lambda: batch.cancelled)
+                      is_cancelled=lambda: _gate(batch))
 
     def run(self, batch: BatchStatus, work: Callable[[], None]) -> None:
         """Run `work` on a background thread, then keep draining any re-runs requested while it

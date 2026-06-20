@@ -660,7 +660,20 @@ function pollJob(jobId, runBtn) {
     cancelBtn.disabled = true; cancelBtn.textContent = "Canceling…";
     try { await fetch(`/api/cancel/${jobId}`, { method: "POST" }); } catch {}
   };
-  const finish = () => { runBtn.disabled = false; cancelBtn.style.display = "none"; cancelBtn.textContent = "Cancel"; };
+  const pauseBtn = $("#pause-job");
+  let paused = false;                                  // last-known server pause state
+  pauseBtn.style.display = ""; pauseBtn.disabled = false; pauseBtn.textContent = "Pause";
+  pauseBtn.onclick = async () => {
+    pauseBtn.disabled = true;
+    const action = paused ? "resume" : "pause";        // toggle against the known state
+    pauseBtn.textContent = paused ? "Resuming…" : "Pausing…";
+    try { await fetch(`/api/${action}/${jobId}`, { method: "POST" }); } catch {}
+  };
+  const finish = () => {
+    runBtn.disabled = false;
+    cancelBtn.style.display = "none"; cancelBtn.textContent = "Cancel";
+    pauseBtn.style.display = "none"; pauseBtn.textContent = "Pause"; pauseBtn.disabled = false;
+  };
   const tick = async () => {
     let p;
     try {
@@ -676,7 +689,13 @@ function pollJob(jobId, runBtn) {
       setTimeout(tick, 1200);
       return;
     }
-    setProgress(p.progress, `${p.message || p.status}${p.elapsed ? " · " + fmtElapsed(p.elapsed) : ""}`);
+    paused = !!p.paused;                               // sync the toggle to the server
+    pauseBtn.disabled = false;
+    pauseBtn.textContent = p.paused ? "Resume" : "Pause";
+    // Two-stage feedback: pause is requested but the current stage hasn't finished (GPU still busy)
+    // vs fully parked (GPU released). The backend sends "paused · GPU released" once freed.
+    const msg = (p.paused && !p.gpu_freed) ? "pausing… (finishing current stage)" : (p.message || p.status);
+    setProgress(p.progress, `${msg}${p.elapsed ? " · " + fmtElapsed(p.elapsed) : ""}`);
     if (p.status === "done") {
       try {
         const merged = await (await fetchTO(`/api/result/${jobId}`)).json();
@@ -1103,12 +1122,20 @@ async function startBatch(body) {
 }
 
 function pollBatch(id, btn) {
-  const cancelBtn = $("#cancel-batch"), retryBtn = $("#retry-batch");
+  const cancelBtn = $("#cancel-batch"), retryBtn = $("#retry-batch"), pauseBtn = $("#pause-batch");
   cancelBtn.style.display = ""; cancelBtn.disabled = false; cancelBtn.textContent = "Cancel batch";
   retryBtn.style.display = "none";
   cancelBtn.onclick = async () => {
     cancelBtn.disabled = true; cancelBtn.textContent = "Canceling… (current file finishes)";
     try { await fetch(`/api/batch/${id}/cancel`, { method: "POST" }); } catch {}
+  };
+  let paused = false;                                  // last-known server pause state
+  pauseBtn.style.display = ""; pauseBtn.disabled = false; pauseBtn.textContent = "Pause";
+  pauseBtn.onclick = async () => {
+    pauseBtn.disabled = true;
+    const action = paused ? "resume" : "pause";        // toggle against the known state
+    pauseBtn.textContent = paused ? "Resuming…" : "Pausing… (current file finishes)";
+    try { await fetch(`/api/batch/${id}/${action}`, { method: "POST" }); } catch {}
   };
   const tick = async () => {
     let b;
@@ -1118,9 +1145,13 @@ function pollBatch(id, btn) {
       b = await r.json();
     } catch (e) { setTimeout(tick, 1500); return; }   // transient — keep waiting, don't die
     renderBatchStatus(b, id, btn);
+    paused = !!b.paused;                                // sync the toggle to the server
+    pauseBtn.disabled = false;
+    pauseBtn.textContent = b.paused ? "Resume" : "Pause";
     if (b.status === "done" || b.status === "canceled") {
       btn.disabled = false;
       cancelBtn.style.display = "none";
+      pauseBtn.style.display = "none"; pauseBtn.textContent = "Pause"; pauseBtn.disabled = false;
       const failed = b.projects.filter((p) => p.status === "error" || p.status === "canceled").length;
       if (failed) {
         retryBtn.style.display = "";
@@ -1171,7 +1202,10 @@ function renderBatchStatus(b, id, btn) {
   const audioText = totalWeight > 0
     ? ` · ${fmtAudio(doneWeight)} / ${fmtAudio(totalWeight)} audio` : "";
 
-  const summaryText = `${counts.done} of ${total} projects complete`;
+  const pauseText = (b.paused && !ended)
+    ? (b.gpu_freed ? "  ·  ⏸ Paused · GPU released" : "  ·  ⏸ Pausing… (current file finishes)")
+    : "";
+  const summaryText = `${counts.done} of ${total} projects complete${pauseText}`;
   const overallText = ` · overall ${pct}%${audioText} · ${fmtElapsed(b.elapsed)} elapsed`;
   const parts = [];
   for (const [k, label] of [["running", "running"], ["queued", "queued"], ["done", "done"],
