@@ -88,6 +88,15 @@ function fmtElapsed(s) {
 }
 window.fmtElapsed = fmtElapsed;
 
+// Hours-aware duration, for audio totals that can run to many hours (track-seconds across a batch).
+function fmtAudio(s) {
+  s = Math.round(s || 0);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${s}s`;
+}
+
 // fetch with an abort-timeout, so a wedged/slow request can never freeze a polling loop
 // forever (the server goes briefly unresponsive while it loads models on the first run).
 async function fetchTO(url, opts = {}, ms = 15000) {
@@ -1155,8 +1164,15 @@ function renderBatchStatus(b, id, btn) {
   const total = b.projects.length;
   const ended = b.status === "done" || b.status === "canceled";
 
+  // Audio totals make the % concrete: it's measured by audio length × tracks, so show how much of
+  // that total has been transcribed vs the whole (e.g. "2h 44m / 7h 24m audio").
+  const totalWeight = b.projects.reduce((a, p) => a + (p.weight || 0), 0);
+  const doneWeight = b.projects.reduce((a, p) => a + (p.weight || 0) * (p.progress || 0), 0);
+  const audioText = totalWeight > 0
+    ? ` · ${fmtAudio(doneWeight)} / ${fmtAudio(totalWeight)} audio` : "";
+
   const summaryText = `${counts.done} of ${total} projects complete`;
-  const overallText = ` · overall ${pct}% (by audio length) · ${fmtElapsed(b.elapsed)}`;
+  const overallText = ` · overall ${pct}%${audioText} · ${fmtElapsed(b.elapsed)} elapsed`;
   const parts = [];
   for (const [k, label] of [["running", "running"], ["queued", "queued"], ["done", "done"],
                             ["error", "failed"], ["canceled", "canceled"]]) {

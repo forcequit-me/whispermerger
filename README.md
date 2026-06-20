@@ -79,9 +79,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   stage (Transcribe & Merge has an Extract → Transcribe → Merge stepper; Batch shows an overall bar
   plus a card per project; Label shows job progress) and total elapsed wall time. Progress is
   **weighted by audio length × track count**, not a naive file/track count — so a long recording
-  moves the bar more than a short clip and it no longer lurches. Polling is hang-proofed: if the
-  server goes briefly unresponsive (e.g. loading ~3 GB of models on the first run) the UI keeps
-  waiting and recovers instead of freezing.
+  moves the bar more than a short clip and it no longer lurches. The batch's overall line spells out
+  what the % means — **done / total audio** (e.g. `2h 44m / 7h 24m audio`) — so the bar has a
+  concrete denominator. Polling is hang-proofed: if the server goes briefly unresponsive (e.g.
+  loading ~3 GB of models on the first run) the UI keeps waiting and recovers instead of freezing.
 - **Storage-clean** — extracted audio is deleted right after use, and the working dir is wiped on
   startup; only the small transcription cache persists. Nothing piles up.
 - **One-click start/stop** — `Startup.bat` launches the server and opens the UI; `Shutdown.bat`
@@ -119,8 +120,16 @@ this one-time load rather than looking frozen.
 end-to-end (extract → transcribe+align → merge) in **~10 minutes** on an RTX 3080 Ti — ~7.4 h of
 track-audio, ~11,860 words. Comfortably beats the 12–20 min / 5 h target. In a batch the next file's
 audio is **prefetched** while the GPU works, so it doesn't idle between files; GPU throughput is
-tunable via **`WHISPERMERGER_BATCH_SIZE`** (default 16; `Startup.bat` ships 24 — raise it and watch
-VRAM, dropping back if you hit "out of memory").
+tunable via **`WHISPERMERGER_BATCH_SIZE`** (default 16, which `Startup.bat` also ships — on a 12 GB
+card, 24 spilled ~1–2 GB into shared system memory, which runs at PCIe speed and *slowed* the run;
+keep 16 unless Task Manager shows 0 "Shared GPU memory" in use).
+
+**Where the time actually goes:** prefetch only hides extraction when reading the source is *faster*
+than transcribing it. Pulling audio out of an 80–100 GB video means ffmpeg streams ~the whole file,
+so when the footage lives on a NAS over a 2.5 GbE link (~280 MB/s), the **network read can dominate**
+and the GPU idles waiting for the next file — a batch can be network-bound, not GPU-bound. Each
+finished file prints a timing split to the server console so you can tell which it is:
+`[timing] <file>: waited 5m48s for audio (NAS+ffmpeg, GPU idle) · transcribed 2m10s on GPU · NETWORK-bound`.
 
 ## Using it
 

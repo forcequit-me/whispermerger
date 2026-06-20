@@ -156,6 +156,11 @@ def _file_statuses(project: ProjectInput) -> list[FileStatus]:
     return [FileStatus(name=p.input.filename, weight=_source_weight(p)) for p in project.prepared]
 
 
+def _fmt_dur(seconds: float) -> str:
+    s = int(round(seconds))
+    return f"{s}s" if s < 60 else f"{s // 60}m{s % 60:02d}s"
+
+
 def _project_output_parent(project: ProjectInput, output_mode: str, output_folder: Optional[str]) -> Path:
     if output_mode == "folder":
         if not output_folder:
@@ -206,6 +211,7 @@ def _process_project(
             # processed, so a single-file restart (which re-queues one file) re-runs just it.
             files = ps.files
             seen: dict[tuple[str, str], int] = {}
+            t_start: dict[int, float] = {}           # file index -> transcription start (timing log)
 
             def on_wait(i: int, src: PreparedSource) -> None:
                 # Extraction for this file is about to be waited on — start its clock here so
@@ -227,6 +233,7 @@ def _process_project(
                 fs.error = None
                 fs.tracks = _selected_count(src)
                 fs.message = "transcribing"
+                t_start[i] = time.time()             # extraction done, GPU work begins now
                 _recalc_project(ps)
 
             def on_track(i: int, j: int, total_tracks: int, speaker: str) -> None:
@@ -250,6 +257,16 @@ def _process_project(
                 fs.finished_at = time.time()
                 fs.output_dir = str(dest)
                 fs.message = f"done in {fs.elapsed:.0f}s"
+                # Per-file timing split so a run reveals network-bound vs GPU-bound files: the wait
+                # before transcription (extraction = NAS read + ffmpeg, during which the GPU is idle)
+                # vs the transcription itself. Prints to the server console.
+                t0 = t_start.get(i)
+                extract_s = (t0 - fs.started_at) if (t0 and fs.started_at) else 0.0
+                transcribe_s = (fs.finished_at - t0) if t0 else fs.elapsed
+                bound = "NETWORK-bound" if extract_s > transcribe_s else "GPU-bound"
+                print(f"[timing] {fs.name}: waited {_fmt_dur(extract_s)} for audio "
+                      f"(NAS+ffmpeg, GPU idle) · transcribed {_fmt_dur(transcribe_s)} on GPU · {bound}",
+                      flush=True)
                 _recalc_project(ps)
 
             def on_error(i: int, src: PreparedSource, exc: Exception) -> None:

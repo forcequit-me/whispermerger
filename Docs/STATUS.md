@@ -1,7 +1,7 @@
 # WhisperMerger — Build Status
 
 Snapshot of what's built vs. outstanding, mapped against `whispermerger-prd.md` (FR-\* IDs)
-and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-19.
+and `whispermerger-build-plan.md` (steps 1–10). Last updated 2026-06-20.
 
 ## Summary
 
@@ -306,6 +306,34 @@ Lets a big library export the way the user wants (e.g. ~200h → one TXT per rec
 - Tests: the touched modules (`test_extract`, `test_pipeline`, `test_batch`) stay green; new
   `on_wait` is optional so existing callers/tests are unaffected; `test_cache` covers `clear()`.
   Assets `?v=21` (js) / `?v=17` (css).
+
+## Performance instrumentation + network-bound diagnosis (2026-06-20)
+
+Context: a full batch ran *slower* after the prefetch/batch-size changes (~900 vs ~700 min). The
+footage lives on a NAS over a 2.5 GbE link and the files are 80–100 GB each, so the working theory is
+the batch is **network-bound** (ffmpeg streams ~the whole video to pull the audio; the GPU then idles
+waiting). Rather than keep guessing, added measurement.
+
+- **Batch size default reverted to 16** — `Startup.bat` shipped `WHISPERMERGER_BATCH_SIZE=24`, which
+  spilled ~1–2 GB into Windows "shared GPU memory" (system RAM over PCIe, ~36× slower than VRAM) on
+  the 12 GB 3080 Ti. Back to 16; comment warns to keep it there unless Task Manager shows 0 shared-
+  memory use. (Likely a contributor, not the whole regression — see network-bound note.)
+- **Per-file extract-vs-transcribe timing log** — `batch.py` `on_done` prints, per file, the wait
+  before transcription (extraction = NAS read + ffmpeg, during which the GPU is idle) vs the
+  transcription itself, labeled NETWORK-bound / GPU-bound. Derived from the existing `on_wait`
+  (extraction start) → `on_start` (transcription start, now also recorded in `t_start`) → `on_done`
+  timestamps; `_fmt_dur` helper. Example:
+  `[timing] Discord Rage.mov: waited 12s for audio (NAS+ffmpeg, GPU idle) · transcribed 6m40s on GPU · GPU-bound`.
+  A run dominated by `waited` confirms the NAS is the wall; one dominated by `transcribed` means the
+  GPU (and batch size) actually matter.
+- **Stats show what the % means** — `ProjectStatusOut` now exposes each project's `weight`
+  (audio-seconds × tracks); the frontend sums it to render **done / total audio** next to the overall
+  percentage (`fmtAudio`, hours-aware), so the bar has a concrete denominator instead of a bare %.
+- **Prefetch confirmed correct (no code change)** — `extract_ahead` submits the next file's
+  extraction *before* it yields the current file to the GPU, i.e. the instant the current extraction
+  finishes — so the single NAS link runs back-to-back and is already saturated. Depth-1 is right for
+  one network pipe: deeper prefetch would only split the shared bandwidth and pile up temp WAVs. GPU
+  idle on huge NAS files is the link being the bottleneck, not a scheduling gap. Assets `?v=22` (js).
 
 ## Partial / outstanding (v1 polish)
 
