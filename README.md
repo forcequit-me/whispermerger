@@ -126,10 +126,12 @@ keep 16 unless Task Manager shows 0 "Shared GPU memory" in use).
 
 **Where the time actually goes:** prefetch only hides extraction when reading the source is *faster*
 than transcribing it. Pulling audio out of an 80–100 GB video means ffmpeg streams ~the whole file,
-so when the footage lives on a NAS over a 2.5 GbE link (~280 MB/s), the **network read can dominate**
-and the GPU idles waiting for the next file — a batch can be network-bound, not GPU-bound. Each
-finished file prints a timing split to the server console so you can tell which it is:
-`[timing] <file>: waited 5m48s for audio (NAS+ffmpeg, GPU idle) · transcribed 2m10s on GPU · NETWORK-bound`.
+so if your source files live on a slow medium — an external HDD, a network share / NAS — reading them
+can **dominate** and the GPU idles waiting for the next file (a batch can be **read-bound**, not
+GPU-bound; on a fast local SSD it's usually the GPU). The Batch UI shows the split so you don't have
+to guess: each file row reads `read 5m 48s · gpu 2m 34s · read-bound`, and the overall stats tally it
+live (`1h 12m reading/extracting · 38m on GPU · read-bound so far`). The same split also prints to the
+server console as a scrollback record (`[timing] <file>: waited … for audio · transcribed … on GPU`).
 
 ## Using it
 

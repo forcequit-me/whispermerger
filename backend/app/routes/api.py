@@ -150,6 +150,7 @@ class FileStatusOut(BaseModel):
     message: str
     track: int = 0                           # 1-based index of the track currently transcribing
     tracks: int = 0                          # total selected tracks in this file
+    extract_seconds: float = 0.0             # wall time waited on extraction (reading source + ffmpeg)
     elapsed: float = 0.0
     output_dir: str | None = None
     error: str | None = None
@@ -600,6 +601,7 @@ def _batch_out(batch) -> BatchStatusOut:
                                    files=[FileStatusOut(name=f.name, status=f.status.value,
                                                         progress=f.progress, message=f.message,
                                                         track=f.track, tracks=f.tracks,
+                                                        extract_seconds=f.extract_seconds,
                                                         elapsed=f.elapsed, output_dir=f.output_dir,
                                                         error=f.error)
                                           for f in p.files])

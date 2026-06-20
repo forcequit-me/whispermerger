@@ -1180,6 +1180,19 @@ function renderBatchStatus(b, id, btn) {
   }
   const countsText = parts.join("  ·  ");
 
+  // Per-file extract-vs-transcribe tally: how much wall time has gone to reading + extracting the
+  // source (GPU idle) vs actual GPU transcription — the read-bound vs GPU-bound answer, live.
+  let tRead = 0, tGpu = 0;
+  b.projects.forEach((p) => (p.files || []).forEach((f) => {
+    if (f.extract_seconds > 0 || f.status === "done" || f.status === "running") {
+      tRead += f.extract_seconds || 0;
+      tGpu += Math.max(0, (f.elapsed || 0) - (f.extract_seconds || 0));
+    }
+  }));
+  const timingText = (tRead + tGpu) > 0
+    ? `${fmtAudio(tRead)} reading/extracting · ${fmtAudio(tGpu)} on GPU · ${tRead > tGpu ? "read-bound" : "GPU-bound"} so far`
+    : "";
+
   // Structure signature — only a change here (a different batch, a changed project/file count, or
   // the batch ending) triggers a full rebuild. Status / % / message changes are applied in place,
   // so the scrollable file list is never torn out from under an active scroll (rebuilding it every
@@ -1192,6 +1205,7 @@ function renderBatchStatus(b, id, btn) {
     root.querySelector(".batch-summary > :first-child").textContent = summaryText;
     root.querySelector(".batch-summary > .muted").textContent = overallText;
     root.querySelector(".batch-counts").textContent = countsText;
+    root.querySelector(".batch-timing").textContent = timingText;
     b.projects.forEach((p, i) =>
       updateBatchItem(root.querySelector(`.batch-item[data-pidx="${i}"]`), p, i, id, btn, ended));
     return;
@@ -1208,6 +1222,7 @@ function renderBatchStatus(b, id, btn) {
     el("span", { textContent: summaryText }),
     el("span", { className: "muted", textContent: overallText })));
   root.append(el("div", { className: "batch-counts muted", textContent: countsText }));
+  root.append(el("div", { className: "batch-timing muted", textContent: timingText }));
   b.projects.forEach((p, i) => root.append(buildBatchItem(p, i, id, btn, ended)));
   root.querySelectorAll(".batch-files").forEach((f) => {
     if (f.dataset.pidx != null && scrolls[f.dataset.pidx] != null)
@@ -1354,6 +1369,15 @@ function fileDetailText(f, meta, pct) {
        : (f.status === "running" ? `${pct}% · ${f.message || ""}` : (f.message || meta.label)));
 }
 
+// Per-file read-vs-GPU split, shown once extraction has been measured (running or done): how long
+// the file spent being read + extracted (ffmpeg, GPU idle) vs the actual GPU transcription.
+function fileTiming(f) {
+  if (!(f.extract_seconds > 0) || (f.status !== "done" && f.status !== "running")) return null;
+  const gpu = Math.max(0, (f.elapsed || 0) - f.extract_seconds);
+  const readBound = f.extract_seconds > gpu;
+  return `read ${fmtAudio(f.extract_seconds)} · gpu ${fmtAudio(gpu)} · ${readBound ? "read-bound" : "GPU-bound"}`;
+}
+
 // One file row inside a per-file project: name + status chip + cancel/restart + its own bar.
 function buildBatchFile(f, pidx, fidx, id, btn, ended) {
   const meta = BATCH_STATE[f.status] || { label: f.status, cls: "queued" };
@@ -1376,6 +1400,8 @@ function buildBatchFile(f, pidx, fidx, id, btn, ended) {
   }
   head.append(el("div", { className: "spacer" }), msg, fileActionBtn(f, pidx, fidx, id, btn, ended));
   row.append(head);
+  const tl = fileTiming(f);
+  if (tl) row.append(el("div", { className: "bf-timing muted", textContent: tl }));
   if (f.status === "running" || (pct > 0 && pct < 100)) {
     row.append(el("div", { className: "bar bf-bar" }, el("div", { style: `width:${pct}%` })));
   }
@@ -1413,6 +1439,15 @@ function updateBatchFile(row, f, pidx, fidx, id, btn, ended) {
   if (!act || act.dataset.kind !== wantKind) {             // only swap when active↔finished flips
     const fresh = fileActionBtn(f, pidx, fidx, id, btn, ended);
     if (act) act.replaceWith(fresh); else head.append(fresh);
+  }
+
+  let tl = row.querySelector(".bf-timing");
+  const tlText = fileTiming(f);
+  if (tlText) {
+    if (!tl) { tl = el("div", { className: "bf-timing muted" }); head.after(tl); }
+    tl.textContent = tlText;
+  } else if (tl) {
+    tl.remove();
   }
 
   let bar = row.querySelector(".bf-bar");

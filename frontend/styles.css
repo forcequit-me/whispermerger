@@ -255,6 +255,8 @@ table.editor tr.editing { background: var(--panel-2); }
 .bf-msg { font-size: 11px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bf-trk { font-size: 10px; padding: 1px 6px; border-radius: 8px; flex: none; white-space: nowrap;
   background: rgba(91,157,255,.12); border: 1px solid rgba(91,157,255,.5); color: var(--accent); }
+.bf-timing { font-size: 10px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.batch-timing { margin-top: 3px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .batch-file .bf-bar { height: 4px; margin-top: 6px; }
 .batch-file .chip-status { font-size: 9px; padding: 1px 6px; }
 

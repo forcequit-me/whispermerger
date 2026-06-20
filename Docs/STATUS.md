@@ -307,33 +307,35 @@ Lets a big library export the way the user wants (e.g. ~200h → one TXT per rec
   `on_wait` is optional so existing callers/tests are unaffected; `test_cache` covers `clear()`.
   Assets `?v=21` (js) / `?v=17` (css).
 
-## Performance instrumentation + network-bound diagnosis (2026-06-20)
+## Performance instrumentation + read-bound vs GPU-bound diagnosis (2026-06-20)
 
-Context: a full batch ran *slower* after the prefetch/batch-size changes (~900 vs ~700 min). The
-footage lives on a NAS over a 2.5 GbE link and the files are 80–100 GB each, so the working theory is
-the batch is **network-bound** (ffmpeg streams ~the whole video to pull the audio; the GPU then idles
-waiting). Rather than keep guessing, added measurement.
+Context: a full batch ran *slower* after the prefetch/batch-size changes (~900 vs ~700 min). In this
+case the source files were large (80–100 GB) on a slow medium, so the working theory is the batch is
+**read-bound** (ffmpeg streams ~the whole file to pull the audio; the GPU then idles waiting). The
+instrumentation is medium-agnostic — it measures the read/extract wait vs GPU time regardless of where
+files live (local SSD, external HDD, network share). Rather than keep guessing, added measurement.
+Language in code/docs kept general ("read-bound", "reading the source") rather than NAS-specific.
 
 - **Batch size default reverted to 16** — `Startup.bat` shipped `WHISPERMERGER_BATCH_SIZE=24`, which
   spilled ~1–2 GB into Windows "shared GPU memory" (system RAM over PCIe, ~36× slower than VRAM) on
   the 12 GB 3080 Ti. Back to 16; comment warns to keep it there unless Task Manager shows 0 shared-
-  memory use. (Likely a contributor, not the whole regression — see network-bound note.)
-- **Per-file extract-vs-transcribe timing log** — `batch.py` `on_done` prints, per file, the wait
-  before transcription (extraction = NAS read + ffmpeg, during which the GPU is idle) vs the
-  transcription itself, labeled NETWORK-bound / GPU-bound. Derived from the existing `on_wait`
-  (extraction start) → `on_start` (transcription start, now also recorded in `t_start`) → `on_done`
-  timestamps; `_fmt_dur` helper. Example:
-  `[timing] Discord Rage.mov: waited 12s for audio (NAS+ffmpeg, GPU idle) · transcribed 6m40s on GPU · GPU-bound`.
-  A run dominated by `waited` confirms the NAS is the wall; one dominated by `transcribed` means the
-  GPU (and batch size) actually matter.
+  memory use. (Likely a contributor, not the whole regression — see read-bound note.)
+- **Per-file extract-vs-transcribe timing — in the UI and the console** — `FileStatus.extract_seconds`
+  (set in `on_start` = `on_start − on_wait`, the extraction wait while the GPU is idle) is exposed via
+  `FileStatusOut`. The Batch UI renders, per file row, `read 5m 48s · gpu 2m 34s · read-bound`
+  (`fileTiming`), and the overall stats tally it live: `1h 12m reading/extracting · 38m on GPU ·
+  read-bound so far`. `batch.py on_done` still prints the same split to the console as a scrollback
+  record (`_fmt_dur`). A run dominated by the read side means the source/read path is the wall; one
+  dominated by GPU means the GPU (and batch size) actually matter.
 - **Stats show what the % means** — `ProjectStatusOut` now exposes each project's `weight`
   (audio-seconds × tracks); the frontend sums it to render **done / total audio** next to the overall
   percentage (`fmtAudio`, hours-aware), so the bar has a concrete denominator instead of a bare %.
 - **Prefetch confirmed correct (no code change)** — `extract_ahead` submits the next file's
   extraction *before* it yields the current file to the GPU, i.e. the instant the current extraction
-  finishes — so the single NAS link runs back-to-back and is already saturated. Depth-1 is right for
-  one network pipe: deeper prefetch would only split the shared bandwidth and pile up temp WAVs. GPU
-  idle on huge NAS files is the link being the bottleneck, not a scheduling gap. Assets `?v=22` (js).
+  finishes — so a single read path runs back-to-back and is already saturated. Depth-1 is right for
+  one read path: deeper prefetch would only split the shared bandwidth and pile up temp WAVs. GPU
+  idle on huge source files is the read path being the bottleneck, not a scheduling gap. Assets
+  `?v=23` (js) / `?v=18` (css).
 
 ## Partial / outstanding (v1 polish)
 
