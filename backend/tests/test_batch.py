@@ -288,6 +288,26 @@ def test_restart_running_file_is_rejected(two_stream_file, tmp_path):
     assert reg.restart_file(batch.id, 0, 0) is False         # only finished files can restart
 
 
+def test_per_file_extract_seconds_is_real_ffmpeg_even_when_prefetched(two_stream_file, tmp_path):
+    # The second file's audio is extracted in the background while the first file is on the GPU.
+    # Its extract_seconds must still be the REAL read+ffmpeg time (the user's "everything pre-GPU"),
+    # not the ~0 idle wait the consumer sees once the audio is already prepped. A slow stub holds
+    # the GPU long enough to guarantee file b is fully prefetched/hidden.
+    import time as _t
+    proj = _perfile_project(two_stream_file)                  # two rows, same source file
+    def slow_stub(_wav):
+        _t.sleep(0.3)
+        return _stub(_wav)
+    batch = BatchRegistry().create([proj])
+    run_batch(batch, [proj], slow_stub, output_mode="folder", output_folder=str(tmp_path))
+    files = batch.projects[0].files
+    assert all(f.status is Status.DONE for f in files)
+    assert files[0].extract_seconds > 0
+    # b was hidden behind a's GPU run yet still records real extraction, comparable to a's —
+    # the old idle-wait metric reported ~0 here.
+    assert files[1].extract_seconds >= files[0].extract_seconds * 0.3
+
+
 def test_per_file_progress_is_duration_weighted(two_stream_file, tmp_path):
     # A long file should dominate the project's progress over a short one.
     proj = ProjectInput("W", [

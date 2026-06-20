@@ -371,6 +371,29 @@ without corrupting the timing readouts.
   banked out of `elapsed`) and cancel-while-paused (wakes + unwinds). **103 GPU-independent tests
   pass.** Assets `?v=25` (js) / `?v=18` (css).
 
+## Extraction timing → real pre-GPU time, not idle wait (2026-06-20)
+
+Follow-up to the read-vs-GPU split above. The per-file "extraction time" was the GPU **idle wait**
+(`on_start − on_wait`): when prefetch hid a file's audio behind the previous file's GPU run, that
+wait was ~0, so a fully pipelined file showed **0s extraction** even on a cold (cache-cleared) run.
+Correct by the old definition but misleading — it read like extraction was free or the cache clear
+had failed (it hadn't; the cache only covers transcription, ffmpeg always runs, and a *cold* run is
+exactly what hides the next extraction).
+
+- **`extract_seconds` now measures the real read + ffmpeg pass**, timed with `time.perf_counter()`
+  around the extraction itself in `run_per_file_pipeline.extract_one`, so it holds even when the work
+  ran prefetched in the background. Passed through to `on_start(i, src, extract_s)`; `extract_ahead`
+  stays a generic, untimed prefetch iterator (no signature change).
+- **Per-file `elapsed` is now the GPU clock** — `on_start` (not `on_wait`) stamps `started_at`, so a
+  row's `elapsed` / "done in Xs" is pure transcription and the real read figure sits beside it. UI +
+  console use the two directly (`gpu = elapsed`), dropping the old `elapsed − extract_seconds`
+  derivation. Console: `read + extracted in X (pre-GPU) · transcribed Y on GPU · READ/GPU-bound`.
+- **Pause-immune** — timed around the ffmpeg call (which runs uninterrupted), so the read figure no
+  longer subtracts `paused_total`; a pause can only land between work units, never inside a measured
+  extraction.
+- Tests: `test_batch.py` gains a prefetch case — a hidden file must still record real extraction, not
+  ~0. **104 GPU-independent tests pass.** Assets `?v=26` (js).
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected` and an `rms_fn` hook exists, but

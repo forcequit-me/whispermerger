@@ -28,9 +28,9 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   included). **Extraction is prefetched** — the next file's audio is pulled while the GPU transcribes
   the current one, so the card never idles between files. A per-project card shows live status +
   progress + elapsed; one-transcript-per-file projects expand to **a row per file** with its own
-  status, **live track N/M progress** (for multi-track files), per-file elapsed (which counts the
-  ffmpeg **extraction**, not just transcription, so a cache-hit re-run still reflects real work),
-  and Cancel/Restart. The file list **keeps its scroll position** as it refreshes, so a long queue
+  status, **live track N/M progress** (for multi-track files), per-file elapsed plus a **read-vs-GPU
+  split** — the real ffmpeg read time beside the GPU transcription time, so a cache-hit re-run
+  (instant on the GPU) still shows the real read work — and Cancel/Restart. The file list **keeps its scroll position** as it refreshes, so a long queue
   doesn't snap back to the top every second. No babysitting.
 - **Language** — transcription **auto-detects per file** by default; a **Language** dropdown (in
   Batch and Transcribe & Merge) can force a specific language, which skips detection and avoids the
@@ -139,7 +139,7 @@ can **dominate** and the GPU idles waiting for the next file (a batch can be **r
 GPU-bound; on a fast local SSD it's usually the GPU). The Batch UI shows the split so you don't have
 to guess: each file row reads `read 5m 48s · gpu 2m 34s`, and the overall stats tally it live
 (`1h 12m reading/extracting · 38m on GPU so far`) — the bigger number is the bottleneck. The same
-split also prints to the server console as a scrollback record (`[timing] <file>: waited … · transcribed …`).
+split also prints to the server console as a scrollback record (`[timing] <file>: read + extracted in … (pre-GPU) · transcribed … on GPU`).
 
 ## Using it
 

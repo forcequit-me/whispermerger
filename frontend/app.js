@@ -1214,13 +1214,13 @@ function renderBatchStatus(b, id, btn) {
   }
   const countsText = parts.join("  ·  ");
 
-  // Per-file extract-vs-transcribe tally: how much wall time has gone to reading + extracting the
-  // source (GPU idle) vs actual GPU transcription — the read-bound vs GPU-bound answer, live.
+  // Per-file extract-vs-transcribe tally: real read + ffmpeg time (which overlaps the prior file's
+  // GPU run) vs actual GPU transcription — the read-bound vs GPU-bound answer, live.
   let tRead = 0, tGpu = 0;
   b.projects.forEach((p) => (p.files || []).forEach((f) => {
     if (f.extract_seconds > 0 || f.status === "done" || f.status === "running") {
       tRead += f.extract_seconds || 0;
-      tGpu += Math.max(0, (f.elapsed || 0) - (f.extract_seconds || 0));
+      tGpu += f.elapsed || 0;            // elapsed is the GPU clock; extraction is tracked separately
     }
   }));
   const timingText = (tRead + tGpu) > 0
@@ -1403,11 +1403,11 @@ function fileDetailText(f, meta, pct) {
        : (f.status === "running" ? `${pct}% · ${f.message || ""}` : (f.message || meta.label)));
 }
 
-// Per-file read-vs-GPU split, shown once extraction has been measured (running or done): how long
-// the file spent being read + extracted (ffmpeg, GPU idle) vs the actual GPU transcription.
+// Per-file read-vs-GPU split, shown once extraction has been measured (running or done): the real
+// time spent reading + extracting the source (ffmpeg) vs the actual GPU transcription.
 function fileTiming(f) {
   if (!(f.extract_seconds > 0) || (f.status !== "done" && f.status !== "running")) return null;
-  const gpu = Math.max(0, (f.elapsed || 0) - f.extract_seconds);
+  const gpu = f.elapsed || 0;            // elapsed is the GPU clock; extraction is tracked separately
   return `read ${fmtAudio(f.extract_seconds)} · gpu ${fmtAudio(gpu)}`;
 }
 

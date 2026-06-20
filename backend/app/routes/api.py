@@ -152,7 +152,7 @@ class FileStatusOut(BaseModel):
     message: str
     track: int = 0                           # 1-based index of the track currently transcribing
     tracks: int = 0                          # total selected tracks in this file
-    extract_seconds: float = 0.0             # wall time waited on extraction (reading source + ffmpeg)
+    extract_seconds: float = 0.0             # real read + ffmpeg time (incl. when prefetched behind GPU)
     elapsed: float = 0.0
     output_dir: str | None = None
     error: str | None = None

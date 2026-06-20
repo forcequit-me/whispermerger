@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -104,7 +105,7 @@ def run_per_file_pipeline(
     *,
     options: Optional[MergeOptions] = None,
     is_cancelled: Optional[IsCancelled] = None,
-    on_start: Callable[[int, "PreparedSource"], None],
+    on_start: Callable[[int, "PreparedSource", float], None],
     on_track: Callable[[int, int, int, str], None],
     on_done: Callable[[int, "PreparedSource", MergedOutput], None],
     on_error: Callable[[int, "PreparedSource", Exception], None],
@@ -122,9 +123,20 @@ def run_per_file_pipeline(
         return bool(is_cancelled and is_cancelled())
 
     tmpdir = Path(tempfile.mkdtemp(prefix="wm_perfile_"))
+    extract_secs: dict[int, float] = {}
+
+    def extract_one(it):
+        # Time the real read + ffmpeg pass for this file — even when it runs prefetched in the
+        # background behind the previous file's GPU work. This is the file's true pre-GPU cost,
+        # not the (near-zero) idle wait the consumer sees once the audio is already prepped.
+        t0 = time.perf_counter()
+        wavs = _extract_into(tmpdir, it[1])
+        extract_secs[it[0]] = time.perf_counter() - t0
+        return wavs
+
     try:
         items = [(i, prepared[i]) for i in indices]
-        for (i, p), wavs in extract_ahead(items, lambda it: _extract_into(tmpdir, it[1]),
+        for (i, p), wavs in extract_ahead(items, extract_one,
                                           is_cancelled=cancelled,
                                           on_wait=(lambda it: on_wait(it[0], it[1])) if on_wait else None):
             if cancelled():
@@ -132,7 +144,7 @@ def run_per_file_pipeline(
             if is_file_cancelled(i):
                 on_skip(i, p)
                 continue
-            on_start(i, p)
+            on_start(i, p, extract_secs.get(i, 0.0))
             try:
                 selected = [t for t in p.input.tracks if t.selected]
                 outputs: list[dict] = []

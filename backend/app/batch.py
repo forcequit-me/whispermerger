@@ -65,7 +65,7 @@ class FileStatus:
     weight: float = 0.0                          # audio seconds × selected tracks (progress weight)
     track: int = 0                               # 1-based index of the track currently transcribing
     tracks: int = 0                              # total selected tracks in this file
-    extract_seconds: float = 0.0                 # wall time waited on extraction (reading source + ffmpeg)
+    extract_seconds: float = 0.0                 # real read + ffmpeg time (incl. when prefetched behind GPU)
     output_dir: Optional[str] = None
     error: Optional[str] = None
     started_at: float = 0.0
@@ -264,30 +264,28 @@ def _process_project(
             seen: dict[tuple[str, str], int] = {}
 
             def on_wait(i: int, src: PreparedSource) -> None:
-                # Extraction for this file is about to be waited on — start its clock here so
-                # "done in Xs" counts the ffmpeg extraction, not just transcription.
+                # This file is now the active work; its audio is being read/extracted. The GPU clock
+                # starts later (on_start) — the extraction time is measured separately and may have
+                # overlapped the previous file's GPU run.
                 fs = files[i]
                 fs.status = Status.RUNNING
-                fs.started_at = fs.started_at or time.time()
                 fs.finished_at = 0.0
                 fs.error = None
                 fs.tracks = _selected_count(src)
                 fs.message = "extracting audio"
                 _recalc_project(ps)
 
-            def on_start(i: int, src: PreparedSource) -> None:
+            def on_start(i: int, src: PreparedSource, extract_s: float) -> None:
                 fs = files[i]
                 fs.status = Status.RUNNING
-                fs.started_at = fs.started_at or time.time()
+                fs.started_at = fs.started_at or time.time()   # GPU clock starts now
                 fs.finished_at = 0.0
                 fs.error = None
                 fs.tracks = _selected_count(src)
                 fs.message = "transcribing"
-                # Extraction done, GPU work begins — record how long the extraction wait was
-                # (reading the source + ffmpeg, during which the GPU was idle waiting for this file).
-                # Subtract any pause so a mid-extraction pause doesn't inflate the wait.
-                fs.extract_seconds = (max(0.0, time.time() - fs.started_at - fs.paused_total)
-                                      if fs.started_at else 0.0)
+                # Real read + ffmpeg time for this file, measured around the extraction itself, so it
+                # holds even when the work was prefetched behind the previous file's GPU run.
+                fs.extract_seconds = extract_s
                 _recalc_project(ps)
 
             def on_track(i: int, j: int, total_tracks: int, speaker: str) -> None:
@@ -311,14 +309,14 @@ def _process_project(
                 fs.finished_at = time.time()
                 fs.output_dir = str(dest)
                 fs.message = f"done in {fs.elapsed:.0f}s"
-                # Per-file timing split (also shown per-row in the UI): the extraction wait (reading
-                # the source + ffmpeg, GPU idle) vs the transcription itself, so a run reveals read-
+                # Per-file timing split (also shown per-row in the UI): real read + ffmpeg time
+                # (everything before the GPU) vs the GPU transcription itself, so a run reveals read-
                 # vs GPU-bound files. Still printed to the console as a scrollback record.
                 extract_s = fs.extract_seconds
-                transcribe_s = max(0.0, fs.elapsed - extract_s)
+                transcribe_s = fs.elapsed                       # elapsed is the GPU clock now
                 bound = "READ-bound" if extract_s > transcribe_s else "GPU-bound"
-                print(f"[timing] {fs.name}: waited {_fmt_dur(extract_s)} for audio "
-                      f"(read + extract, GPU idle) · transcribed {_fmt_dur(transcribe_s)} on GPU · {bound}",
+                print(f"[timing] {fs.name}: read + extracted in {_fmt_dur(extract_s)} (pre-GPU) "
+                      f"· transcribed {_fmt_dur(transcribe_s)} on GPU · {bound}",
                       flush=True)
                 _recalc_project(ps)
 
