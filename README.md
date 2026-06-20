@@ -129,9 +129,9 @@ than transcribing it. Pulling audio out of an 80–100 GB video means ffmpeg str
 so if your source files live on a slow medium — an external HDD, a network share / NAS — reading them
 can **dominate** and the GPU idles waiting for the next file (a batch can be **read-bound**, not
 GPU-bound; on a fast local SSD it's usually the GPU). The Batch UI shows the split so you don't have
-to guess: each file row reads `read 5m 48s · gpu 2m 34s · read-bound`, and the overall stats tally it
-live (`1h 12m reading/extracting · 38m on GPU · read-bound so far`). The same split also prints to the
-server console as a scrollback record (`[timing] <file>: waited … for audio · transcribed … on GPU`).
+to guess: each file row reads `read 5m 48s · gpu 2m 34s`, and the overall stats tally it live
+(`1h 12m reading/extracting · 38m on GPU so far`) — the bigger number is the bottleneck. The same
+split also prints to the server console as a scrollback record (`[timing] <file>: waited … · transcribed …`).
 
 ## Using it
 

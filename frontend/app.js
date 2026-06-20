@@ -1190,7 +1190,7 @@ function renderBatchStatus(b, id, btn) {
     }
   }));
   const timingText = (tRead + tGpu) > 0
-    ? `${fmtAudio(tRead)} reading/extracting · ${fmtAudio(tGpu)} on GPU · ${tRead > tGpu ? "read-bound" : "GPU-bound"} so far`
+    ? `${fmtAudio(tRead)} reading/extracting · ${fmtAudio(tGpu)} on GPU so far`
     : "";
 
   // Structure signature — only a change here (a different batch, a changed project/file count, or
@@ -1374,8 +1374,7 @@ function fileDetailText(f, meta, pct) {
 function fileTiming(f) {
   if (!(f.extract_seconds > 0) || (f.status !== "done" && f.status !== "running")) return null;
   const gpu = Math.max(0, (f.elapsed || 0) - f.extract_seconds);
-  const readBound = f.extract_seconds > gpu;
-  return `read ${fmtAudio(f.extract_seconds)} · gpu ${fmtAudio(gpu)} · ${readBound ? "read-bound" : "GPU-bound"}`;
+  return `read ${fmtAudio(f.extract_seconds)} · gpu ${fmtAudio(gpu)}`;
 }
 
 // One file row inside a per-file project: name + status chip + cancel/restart + its own bar.

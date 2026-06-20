@@ -322,9 +322,10 @@ Language in code/docs kept general ("read-bound", "reading the source") rather t
   memory use. (Likely a contributor, not the whole regression — see read-bound note.)
 - **Per-file extract-vs-transcribe timing — in the UI and the console** — `FileStatus.extract_seconds`
   (set in `on_start` = `on_start − on_wait`, the extraction wait while the GPU is idle) is exposed via
-  `FileStatusOut`. The Batch UI renders, per file row, `read 5m 48s · gpu 2m 34s · read-bound`
-  (`fileTiming`), and the overall stats tally it live: `1h 12m reading/extracting · 38m on GPU ·
-  read-bound so far`. `batch.py on_done` still prints the same split to the console as a scrollback
+  `FileStatusOut`. The Batch UI renders, per file row, `read 5m 48s · gpu 2m 34s` (`fileTiming`), and
+  the overall stats tally it live: `1h 12m reading/extracting · 38m on GPU so far` — the bigger number
+  is the bottleneck, no verbal tag needed. `batch.py on_done` still prints the same split (with a
+  grep-able READ-/GPU-bound tag) to the console as a scrollback
   record (`_fmt_dur`). A run dominated by the read side means the source/read path is the wall; one
   dominated by GPU means the GPU (and batch size) actually matter.
 - **Stats show what the % means** — `ProjectStatusOut` now exposes each project's `weight`
