@@ -445,7 +445,11 @@ function poll(jobId, btn) {
       try {
         const merged = await (await window.fetchTO(`/api/result/${jobId}`)).json();
         $("#label-result-panel").style.display = "";
-        window.renderEditor($("#editor-label"), merged, { file_id: activeFileId, duration: activeDuration });
+        // Every speaker here was labeled on the one active track, so per-line playback plays that
+        // stream (not a downmix). Proxy answers any name, so a global rename can't break the lookup.
+        const t = activeTrack;
+        window.renderEditor($("#editor-label"), merged,
+          { file_id: activeFileId, duration: activeDuration, trackOf: new Proxy({}, { get: () => t }) });
         setLabelBar(1, "done");
         $("#label-status").textContent = "done";
       } catch (e) { $("#label-status").textContent = "done — but couldn't load the result"; }
