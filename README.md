@@ -42,7 +42,11 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   chosen speech model; results are labeled `pt-PT` / `pt-BR`. Whisper can't tell the two apart
   by ear, so the Models tab sets what Auto-detect treats detected Portuguese as. Known limit:
   CAMÕES writes European spelling but lowercase with almost no punctuation (the model itself
-  does this, not our copy of it).
+  does this, not our copy of it). Optional fix, off by default: **Portugal: add punctuation from
+  large-v3** in the Models tab also transcribes with large-v3 and copies its capitals and
+  punctuation onto CAMÕES's matching words; where the two disagree, CAMÕES's word stays, bare.
+  Costs about 2× GPU time on Portugal runs (the two models load one after another).
+  `backend/compare_pt.py recording.wav [reference.txt]` prints all three outputs side by side.
 - **Cancel & restart, per item** — cancel the **whole batch**, a **single project** (the queue
   continues to the next), or a **single file** inside a one-transcript-per-file project (the other
   files keep going) — all cooperative, stopping at the next boundary so the in-flight file finishes.

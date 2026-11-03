@@ -19,6 +19,7 @@ from typing import Optional
 from .cache import Cache, cache_key
 from . import modelstore
 from .modelstore import EXTRA_ALIGN_MODELS   # extra word-timing models (e.g. Swedish)
+from .punctmerge import merge_punctuation
 
 
 def _ensure_cuda_dlls() -> None:
@@ -148,6 +149,9 @@ def transcribe_track(
     # stays cached under the normal tag; Clear cache re-runs it if a model is added later.
     base_lang = modelstore.LANGUAGE_VARIANTS.get(language, language)
     tag = ALIGN_TAG if (base_lang is None or has_align_model(base_lang)) else "none"
+    punct = modelstore.pt_punctuation() and "pt-PT" in (language, pt_default)
+    if punct:                                    # a merged result isn't a CAMOES-only one
+        tag += "+punct"
     key_lang = language or (f"auto:{pt_default}" if pt_default else None)
     if language == "pt-PT":                      # European Portuguese runs on CAMOES, whatever is chosen
         model_name = modelstore.portugal_model()
@@ -170,6 +174,14 @@ def transcribe_track(
     modelstore.ensure(modelstore.whisper_entry(model_name))   # downloads visibly if missing
     model = _load_model(model_name, compute_type, device)
     result = model.transcribe(audio, batch_size=batch_size, language=whisper_lang)  # VAD on by default
+    if punct and language == "pt-PT":            # #23: large-v3's capitals and punctuation on CAMOES's words
+        unload_models()                          # one model in VRAM at a time (12 GB cards)
+        modelstore.ensure(modelstore.whisper_entry("large-v3"))
+        v3 = _load_model("large-v3", compute_type, device).transcribe(audio, batch_size=batch_size, language="pt")
+        texts = merge_punctuation([s["text"] for s in result["segments"]],
+                                  " ".join(s["text"] for s in v3["segments"]))
+        for s, t in zip(result["segments"], texts):
+            s["text"] = t
 
     detected = result.get("language", "en")
     if has_align_model(detected):

@@ -789,8 +789,11 @@ def list_models() -> dict:
                     "download": d.to_dict() if d else None})
     return {"active": f"whisper:{modelstore.active_whisper()}", "models": out,
             "auto_portuguese": modelstore.pt_default(),
+            "pt_punctuation": modelstore.pt_punctuation(),
             # what each dropdown variant needs on disk, so the dropdowns can show the download size
-            "variants": {"pt-PT": ["align:pt", f"whisper:{modelstore.portugal_model()}"], "pt-BR": ["align:pt"]}}
+            "variants": {"pt-PT": ["align:pt", f"whisper:{modelstore.portugal_model()}"]
+                         + (["whisper:large-v3"] if modelstore.pt_punctuation() else []),
+                         "pt-BR": ["align:pt"]}}
 
 
 class AutoPortugueseIn(BaseModel):
@@ -802,6 +805,17 @@ def set_auto_portuguese(body: AutoPortugueseIn) -> dict:
     """What Auto-detect treats detected Portuguese as (saved across restarts)."""
     modelstore.set_pt_default(body.value)
     return {"auto_portuguese": body.value}
+
+
+class PtPunctuationIn(BaseModel):
+    value: bool
+
+
+@router.post("/settings/pt-punctuation")
+def set_pt_punctuation(body: PtPunctuationIn) -> dict:
+    """Portugal runs: also run large-v3 for capitalization and punctuation (saved across restarts)."""
+    modelstore.set_pt_punctuation(body.value)
+    return {"pt_punctuation": body.value}
 
 
 @router.post("/models/{model_id}/download")

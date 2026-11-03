@@ -1639,6 +1639,7 @@ async function refreshModels() {
   renderModels(data);
   annotateLanguages(data.models, data.variants);
   $("#auto-portuguese").value = data.auto_portuguese || "";
+  $("#pt-punctuation").checked = !!data.pt_punctuation;
   clearTimeout(modelsPoll);
   if (data.models.some(isDownloading)) modelsPoll = setTimeout(refreshModels, 1000);   // live progress
 }
@@ -1714,6 +1715,12 @@ function annotateLanguages(models, variants = {}) {
 $("#auto-portuguese").onchange = async (e) => {
   await fetch("/api/settings/auto-portuguese", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value: e.target.value || null }) });
+};
+
+$("#pt-punctuation").onchange = async (e) => {
+  await fetch("/api/settings/pt-punctuation", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: e.target.checked }) });
+  refreshModels();   // pt-PT download size now includes large-v3
 };
 
 document.querySelectorAll(".tab-btn").forEach((b) => b.addEventListener("click", refreshModels));

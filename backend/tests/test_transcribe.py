@@ -109,3 +109,36 @@ def test_portuguese_variants_route_model_language_and_label(monkeypatch, tmp_pat
     detect = "es"                                                    # not Portuguese: default doesn't apply
     assert transcribe.transcribe_track(tmp_path / "x.wav")["language"] == "es"
     assert loaded[-1] == "large-v3" and sent[-1] is None
+
+
+class _PunctModel:
+    def __init__(self, name):
+        self.name = name
+
+    def transcribe(self, audio, batch_size, language):
+        text = " bom dia o crescimento económico" if self.name.startswith("camoes") else " Bom dia. O crescimento econômico."
+        return {"language": language, "segments": [{"start": 0.0, "end": 2.0, "text": text}]}
+
+
+def test_portugal_punctuation_is_optional(monkeypatch, tmp_path):
+    ms = transcribe.modelstore
+    monkeypatch.setattr(ms, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(ms, "ensure", lambda e: None)
+    monkeypatch.setattr(whisperx, "load_audio", lambda p: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(transcribe, "has_align_model", lambda lang: False)
+    loaded = []
+    monkeypatch.setattr(transcribe, "_load_model", lambda name, *a: loaded.append(name) or _PunctModel(name))
+    monkeypatch.setattr(transcribe, "unload_models", lambda: loaded.append("unload"))
+
+    off = transcribe.transcribe_track(tmp_path / "x.wav", language="pt-PT")       # default: CAMOES alone
+    assert loaded == ["camoes"] and off["segments"][0]["text"] == " bom dia o crescimento económico"
+
+    ms.set_pt_punctuation(True)
+    loaded.clear()
+    on = transcribe.transcribe_track(tmp_path / "x.wav", language="pt-PT")
+    assert loaded == ["camoes", "unload", "large-v3"]      # frees CAMOES before loading large-v3
+    assert on["segments"][0]["text"] == "Bom dia. O crescimento económico."     # European spelling kept
+
+    loaded.clear()
+    transcribe.transcribe_track(tmp_path / "x.wav", language="pt-BR")            # other languages untouched
+    assert loaded == ["large-v3"]

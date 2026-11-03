@@ -119,6 +119,17 @@ def set_pt_default(value: Optional[str]) -> None:
     SETTINGS_FILE.write_text(json.dumps({**_settings(), "auto_portuguese": value}, indent=2), "utf-8")
 
 
+def pt_punctuation() -> bool:
+    """Portugal runs also transcribe with large-v3 and copy its capitalization and punctuation onto
+    CAMOES's words (about 2x GPU time). Off = CAMOES alone."""
+    return bool(_settings().get("pt_punctuation", False))
+
+
+def set_pt_punctuation(on: bool) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps({**_settings(), "pt_punctuation": bool(on)}, indent=2), "utf-8")
+
+
 def english_only(name: str) -> bool:
     return WHISPER_MODELS.get(name, {}).get("languages") == "English only"
 
