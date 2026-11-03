@@ -44,6 +44,35 @@ WHISPER_MODELS = {
     "medium":            dict(size_mb=1531, accuracy="good", speed="medium", languages="99 languages"),
     "small":             dict(size_mb=486, accuracy="fair", speed="fast", languages="99 languages"),
 }
+DEFAULT_WHISPER = "large-v3"
+# App-wide settings that survive restarts (tmp/uploads is wiped at startup; this file isn't).
+SETTINGS_FILE = BACKEND_DIR / "tmp" / "settings.json"
+
+
+def _settings() -> dict:
+    try:
+        return json.loads(SETTINGS_FILE.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def active_whisper() -> str:
+    """The speech model every run uses (chosen in the Models tab)."""
+    name = _settings().get("whisper_model")
+    return name if name in WHISPER_MODELS else DEFAULT_WHISPER
+
+
+def set_active_whisper(name: str) -> None:
+    if name not in WHISPER_MODELS:
+        raise ValueError(f"unknown speech model {name}")
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps({**_settings(), "whisper_model": name}, indent=2), "utf-8")
+
+
+def english_only(name: str) -> bool:
+    return WHISPER_MODELS.get(name, {}).get("languages") == "English only"
+
+
 # faster-whisper's own download filter, so we fetch exactly what it would.
 _WHISPER_FILES = ["config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.*"]
 _ALIGN_FILES = ["config.json", "preprocessor_config.json", "vocab.json", "tokenizer_config.json",

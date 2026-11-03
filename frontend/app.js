@@ -1619,7 +1619,9 @@ function modelAction(m, active) {
     const rm = el("button", { className: "ghost", textContent: "Remove", disabled: inUse,
       title: inUse ? "in use — choose another speech model first" : "delete from disk" });
     rm.onclick = () => call("", "DELETE");
-    return el("span", { className: "dl" }, el("span", { className: "ok", textContent: inUse ? "In use" : "Downloaded" }), rm);
+    const use = m.kind === "whisper" && !inUse ? el("button", { className: "ghost", textContent: "Use", title: "make this the speech model every run uses" }) : "";
+    if (use) use.onclick = () => call("/use");
+    return el("span", { className: "dl" }, el("span", { className: "ok", textContent: inUse ? "In use" : "Downloaded" }), use, rm);
   }
   const partial = d && d.done > 0;
   const get = el("button", { className: "ghost", textContent: partial ? "Resume download" : "Download" });

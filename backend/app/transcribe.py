@@ -1,4 +1,4 @@
-"""WhisperX wrapper — large-v3 + wav2vec2 forced alignment (FR-TR-1/2/3).
+"""WhisperX wrapper — the chosen Whisper model (large-v3 by default) + wav2vec2 forced alignment (FR-TR-1/2/3).
 
 float16, VAD on (WhisperX strips silence at transcription), cache-aware (§8.8). This is the
 only GPU-touching module. whisperx is imported lazily so the rest of the package imports
@@ -40,7 +40,6 @@ def _ensure_cuda_dlls() -> None:
 
 _ensure_cuda_dlls()
 
-MODEL_NAME = "large-v3"
 COMPUTE_TYPE = "float16"
 DEVICE = "cuda"
 # Transcription batch size (WhisperX batched inference). Higher = more GPU throughput per pass,
@@ -116,7 +115,7 @@ def unload_models() -> None:
 def transcribe_track(
     audio_path: str | Path,
     *,
-    model_name: str = MODEL_NAME,
+    model_name: Optional[str] = None,
     compute_type: str = COMPUTE_TYPE,
     device: str = DEVICE,
     batch_size: int = BATCH_SIZE,
@@ -125,8 +124,14 @@ def transcribe_track(
 ) -> dict:
     """Transcribe + align one mono/16k WAV. Returns the WhisperX output dict (cache-aware).
     `language` (e.g. "en") forces both transcription and alignment to that code; None
-    auto-detects (and may fetch that language's align model on first use)."""
+    auto-detects (and may fetch that language's align model on first use). `model_name` None =
+    the speech model chosen in the Models tab."""
     import whisperx
+
+    model_name = model_name or modelstore.active_whisper()
+    if language not in (None, "en") and modelstore.english_only(model_name):
+        raise ValueError(f"Whisper {model_name} only transcribes English. Choose another speech model "
+                         f"in the Models tab, or set Language to English or Auto-detect.")
 
     # A forced language with no alignment model caches under its own tag, so adding a model for
     # it later re-aligns instead of reusing the unaligned result.

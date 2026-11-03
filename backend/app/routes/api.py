@@ -28,7 +28,7 @@ from ..merge import BackchannelRender, MergeOptions
 from ..models import InputSource, MergedOutput, Track
 from ..pipeline import PreparedSource, run_merge_pipeline
 from ..probe import probe
-from ..transcribe import MODEL_NAME, transcribe_track, unload_models
+from ..transcribe import transcribe_track, unload_models
 
 router = APIRouter()
 
@@ -785,7 +785,7 @@ def list_models() -> dict:
         out.append({"id": e.id, "kind": e.kind, "name": e.name, "size_mb": e.size_mb, "info": e.info,
                     "installed": modelstore.is_installed(e),
                     "download": d.to_dict() if d else None})
-    return {"active": f"whisper:{MODEL_NAME}", "models": out}
+    return {"active": f"whisper:{modelstore.active_whisper()}", "models": out}
 
 
 @router.post("/models/{model_id}/download")
@@ -803,10 +803,23 @@ def cancel_model_download(model_id: str) -> dict:
 @router.delete("/models/{model_id}")
 def remove_model(model_id: str) -> dict:
     e = _model_or_404(model_id)
-    if model_id == f"whisper:{MODEL_NAME}":
+    if model_id == f"whisper:{modelstore.active_whisper()}":
         raise HTTPException(409, "that's the speech model in use; choose another one first")
     d = modelstore.downloads.downloads.get(model_id)
     if d and d.active:
         raise HTTPException(409, "cancel the download first")
     modelstore.remove(e)
     return {"removed": True}
+
+
+@router.post("/models/{model_id}/use")
+def use_model(model_id: str) -> dict:
+    """Make a downloaded speech model the one every run uses (saved across restarts)."""
+    e = _model_or_404(model_id)
+    if e.kind != "whisper":
+        raise HTTPException(400, "only speech models can be chosen")
+    if not modelstore.is_installed(e):
+        raise HTTPException(409, "download it first")
+    modelstore.set_active_whisper(model_id.partition(":")[2])
+    unload_models()                          # free the old model's VRAM; the new one loads on next run
+    return {"active": model_id}
