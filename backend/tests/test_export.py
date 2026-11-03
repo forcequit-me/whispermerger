@@ -140,3 +140,15 @@ def test_srt_speaker_prefix_first_line_only():
         text_lines = block.split("\n")[2:]  # skip index + timecode lines
         assert text_lines[0].startswith("Max:")              # speaker on first line
         assert all("Max:" not in line for line in text_lines[1:])  # not on later lines
+
+
+def test_srt_speaker_label_counts_toward_chars_per_line():
+    # label "Speaker 2: " is 11 chars; every cue's first line must still fit within 20
+    text = "Alice speaking on the first microphone and then some more words here"
+    opts = ExportOptions(chars_per_line=20, max_lines=2, min_duration=0.0)
+    for words in (_words(text, 0.0), []):                  # word-timed and plain-text paths
+        seg = Segment(speaker="Speaker 2", start=0.0, end=10.0, text=text, words=words)
+        srt = to_srt(_merged(seg), opts)
+        lines = [ln for b in srt.split("\n\n") if b.strip() for ln in b.split("\n")[2:]]
+        assert all(len(ln) <= 20 for ln in lines), [ln for ln in lines if len(ln) > 20]
+        assert sum(ln.startswith("Speaker 2: ") for ln in lines) >= 2   # label on each cue

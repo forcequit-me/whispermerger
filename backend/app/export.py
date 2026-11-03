@@ -116,7 +116,7 @@ def _segment_cues(seg: Segment, opts: ExportOptions):
         return
 
     if seg.words:
-        line_groups = _pack_words(seg.words, opts.chars_per_line)
+        line_groups = _pack_words(seg.words, opts.chars_per_line, len(speaker), opts.max_lines)
         cues = _group_lines(line_groups, opts.max_lines)
         for k, words_per_cue in enumerate(cues):
             flat = [w for line in words_per_cue for w in line]
@@ -132,7 +132,7 @@ def _segment_cues(seg: Segment, opts: ExportOptions):
         return
 
     # Fallback: no word timings — wrap text, interpolate time evenly.
-    text_lines = _wrap_text(seg.text, opts.chars_per_line)
+    text_lines = _wrap_text(seg.text, opts.chars_per_line, len(speaker), opts.max_lines)
     cues = _chunk(text_lines, opts.max_lines)
     span = (seg.end - seg.start) / max(len(cues), 1)
     for i, cue_lines in enumerate(cues):
@@ -149,15 +149,21 @@ def _prefix(speaker: str, text: str) -> str:
     return f"{speaker}{first}" + (f"\n{rest}" if rest else "")
 
 
-def _pack_words(words: list[Word], cpl: int) -> list[list[Word]]:
-    """Greedily pack words into lines no wider than `cpl` characters."""
+def _width(cpl: int, lead: int, max_lines: int, line_index: int) -> int:
+    """Room on a line: each cue's first line (every `max_lines`-th) also carries the `lead`-char
+    speaker label, so it gets that much less."""
+    return cpl - lead if line_index % max(max_lines, 1) == 0 else cpl
+
+
+def _pack_words(words: list[Word], cpl: int, lead: int = 0, max_lines: int = 1) -> list[list[Word]]:
+    """Greedily pack words into lines no wider than `cpl` characters, label included."""
     lines: list[list[Word]] = []
     cur: list[Word] = []
     cur_len = 0
     for w in words:
         token = w.word.strip()
         add = len(token) + (1 if cur else 0)
-        if cur and cur_len + add > cpl:
+        if cur and cur_len + add > _width(cpl, lead, max_lines, len(lines)):
             lines.append(cur)
             cur, cur_len = [w], len(token)
         else:
@@ -178,13 +184,13 @@ def _chunk(items: list, size: int) -> list[list]:
     return [items[i:i + size] for i in range(0, len(items), max(size, 1))]
 
 
-def _wrap_text(text: str, cpl: int) -> list[str]:
+def _wrap_text(text: str, cpl: int, lead: int = 0, max_lines: int = 1) -> list[str]:
     words = text.split()
     lines: list[str] = []
     cur = ""
     for word in words:
         candidate = f"{cur} {word}".strip()
-        if cur and len(candidate) > cpl:
+        if cur and len(candidate) > _width(cpl, lead, max_lines, len(lines)):
             lines.append(cur)
             cur = word
         else:
