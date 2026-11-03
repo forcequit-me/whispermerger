@@ -400,3 +400,21 @@ def test_per_file_extraction_failure_isolated(two_stream_file, tmp_path):
     assert files[0].status is Status.ERROR and files[0].error
     assert files[1].status is Status.DONE
     assert _find(tmp_path / "Lib", "good", "txt")
+
+
+def test_restart_finished_per_file_project_reruns_all(two_stream_file, tmp_path):
+    import time as _t
+    reg = BatchRegistry()
+    proj = _perfile_project(two_stream_file)
+    batch = reg.create([proj])
+    reg.set_spec(batch.id, _RunSpec([proj], _stub, "folder", str(tmp_path), None))
+    run_batch(batch, [proj], _stub, output_mode="folder", output_folder=str(tmp_path))
+    files = batch.projects[0].files
+    first = [f.finished_at for f in files]
+    _t.sleep(0.01)
+    assert reg.retry(batch.id, [0])
+    deadline = _t.time() + 5
+    while batch.status not in (Status.DONE, Status.CANCELED) and _t.time() < deadline:
+        _t.sleep(0.02)
+    assert all(f.status is Status.DONE for f in files)
+    assert all(f.finished_at > t for f, t in zip(files, first))   # every file actually re-ran

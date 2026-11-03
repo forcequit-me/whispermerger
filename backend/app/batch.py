@@ -566,7 +566,7 @@ class BatchRegistry:
     def _reset_ps(ps: ProjectStatus) -> None:
         """Put a project back to a fresh QUEUED state so it can run (again). For per-file projects,
         also re-queue its failed/canceled files (done files stay done) so a project retry re-runs
-        only what didn't succeed."""
+        only what didn't succeed; if every file already succeeded, re-queue them all (a Restart)."""
         ps.status = Status.QUEUED
         ps.error = None
         ps.progress = 0.0
@@ -576,9 +576,9 @@ class BatchRegistry:
         ps.cancel_requested = False
         ps.paused_total = 0.0
         ps.pause_started = 0.0
-        for fs in ps.files:
-            if fs.status in (Status.ERROR, Status.CANCELED):
-                BatchRegistry._reset_fs(fs)
+        failed = [fs for fs in ps.files if fs.status in (Status.ERROR, Status.CANCELED)]
+        for fs in failed or ps.files:
+            BatchRegistry._reset_fs(fs)
 
     @staticmethod
     def _reset_fs(fs: FileStatus) -> None:
