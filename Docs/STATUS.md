@@ -400,6 +400,11 @@ exactly what hides the next extraction).
   `preferred` from per-track loudness measured before each temp wav is deleted, only when it is at
   least *Bleed loudness ratio* (default 2×) louder. Verified on a synthetic 15% cross-bleed
   recording; the default is still untuned on real bleed footage (OQ-3).
+- **Portuguese (Portugal) + large-v3 punctuation merge (#23), experimental:** built and off by
+  default. Verified only on one 14 s synthetic European Portuguese clip (Windows Helia voice):
+  CAMÕES 0% word errors / 1 punctuation mark, large-v3 2.9% (Brazilian *econômico*) / 5, merge
+  0% / 5. Needs thorough testing on real recordings before it's trusted or turned on by default;
+  the checklist is on issue #23. Tool: `backend/compare_pt.py`.
 - **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
   CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line
