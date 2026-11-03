@@ -117,6 +117,19 @@ def test_pad_seconds_in_export_timecodes():
     assert ",0.5,2.5," in csv.replace(" ", "") or "0.5,2.5" in csv
 
 
+def test_srt_pad_moves_only_outer_edges_of_word_timed_cues():
+    text = "alpha beta gamma delta epsilon zeta"            # words 1.0 .. 3.4 s
+    seg = Segment(speaker="Max", start=1.0, end=3.4, text=text, words=_words(text, 1.0))
+    opts = dict(chars_per_line=12, max_lines=1, min_duration=0.0, show_speakers=False)
+    times = lambda srt: [b.split("\n")[1] for b in srt.split("\n\n") if b.strip()]
+    plain = times(to_srt(_merged(seg), ExportOptions(**opts)))
+    padded = times(to_srt(pad_segments(_merged(seg), 0.5), ExportOptions(pad_seconds=0.5, **opts)))
+    assert len(plain) == len(padded) >= 3
+    assert padded[0].startswith("00:00:00,500") and padded[-1].endswith("00:00:03,900")
+    assert padded[0].split(" --> ")[1] == plain[0].split(" --> ")[1]       # inner split unchanged
+    assert padded[1:-1] == plain[1:-1]
+
+
 def test_srt_speaker_prefix_first_line_only():
     text = "alpha beta gamma delta epsilon zeta"
     seg = Segment(speaker="Max", start=0.0, end=3.0, text=text, words=_words(text, 0.0))

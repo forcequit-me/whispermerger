@@ -118,9 +118,15 @@ def _segment_cues(seg: Segment, opts: ExportOptions):
     if seg.words:
         line_groups = _pack_words(seg.words, opts.chars_per_line)
         cues = _group_lines(line_groups, opts.max_lines)
-        for words_per_cue in cues:
+        for k, words_per_cue in enumerate(cues):
             flat = [w for line in words_per_cue for w in line]
             start, end = flat[0].start, flat[-1].end
+            # Words keep their real timing (pad_segments leaves them alone), so apply the padding
+            # here: only the segment's outer edges move; split points inside stay on word timing.
+            if k == 0:
+                start = max(0.0, start - opts.pad_seconds)
+            if k == len(cues) - 1:
+                end += opts.pad_seconds
             text = "\n".join(" ".join(w.word.strip() for w in line) for line in words_per_cue)
             yield start, _enforce_min(start, end, opts.min_duration), _prefix(speaker, text)
         return
