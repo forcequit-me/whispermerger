@@ -57,11 +57,12 @@ WHISPER_MODELS = {
     "tiny.en":           dict(size_mb=78, accuracy="roughest", speed="fastest", languages="English only"),
     # one language: used automatically for that language (not chosen app-wide). CAMOES is INESC-ID's
     # large-v3 fine-tune on 425 h of European Portuguese (arXiv 2508.19721: 12.5% vs 19.2% WER);
-    # these are community CTranslate2 conversions of it. License unstated by the authors.
-    "camoes":            dict(size_mb=3092, accuracy="best for European Portuguese", speed="slowest",
+    # these are community CTranslate2 conversions of it. License unstated by the authors. It writes
+    # lowercase with almost no punctuation (so do the official weights; tested 2026-11).
+    "camoes":            dict(size_mb=3092, accuracy="best for European Portuguese, no punctuation", speed="slowest",
                               languages="Portuguese (Portugal)", for_language="pt-PT",
                               label="CAMÕES (European Portuguese)", repo="tigopt/CAMOES-whisper-asr-CT2"),
-    "camoes-int8":       dict(size_mb=1564, accuracy="near CAMÕES", speed="slow",
+    "camoes-int8":       dict(size_mb=1564, accuracy="near CAMÕES, no punctuation", speed="slow",
                               languages="Portuguese (Portugal)", for_language="pt-PT",
                               label="CAMÕES compressed (European Portuguese)", compute_type="int8_float16",
                               repo="marquesafonso/camoes-faster-whisper-asr-int8"),

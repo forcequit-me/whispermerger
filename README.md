@@ -40,7 +40,9 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   **Portuguese** comes in two: *Portugal* runs on CAMÕES (INESC-ID's large-v3 fine-tune on 425 h
   of European Portuguese, ~35% fewer errors than large-v3 on their benchmark) and *Brazil* on the
   chosen speech model; results are labeled `pt-PT` / `pt-BR`. Whisper can't tell the two apart
-  by ear, so the Models tab sets what Auto-detect treats detected Portuguese as.
+  by ear, so the Models tab sets what Auto-detect treats detected Portuguese as. Known limit:
+  CAMÕES writes European spelling but lowercase with almost no punctuation (the model itself
+  does this, not our copy of it).
 - **Cancel & restart, per item** — cancel the **whole batch**, a **single project** (the queue
   continues to the next), or a **single file** inside a one-transcript-per-file project (the other
   files keep going) — all cooperative, stopping at the next boundary so the in-flight file finishes.
