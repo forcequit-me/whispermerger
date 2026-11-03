@@ -182,9 +182,16 @@ function fmtClock(s) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
+// Line -> audio-stream index, stamped once when a result loads. Playback follows the line, not
+// the speaker name, so Rename globally or a per-line speaker edit keeps playing the right mic.
+const segTrack = new WeakMap();
+
 function renderEditor(container, merged, preview) {
   if (preview !== undefined) container._preview = preview;  // persist across re-renders
   preview = container._preview || null;
+  if (preview?.trackOf) merged.segments.forEach((s) => {
+    if (!segTrack.has(s)) segTrack.set(s, preview.trackOf[s.speaker]);
+  });
   // Per-speaker export toggles, keyed to the loaded transcript: a new `merged` resets them,
   // in-place re-renders (same object) keep them.
   if (container._merged !== merged) { container._merged = merged; container._disabled = new Set(); }
@@ -387,8 +394,8 @@ function buildRow(container, merged, seg, i, preview) {
   const rowActions = el("div", { className: "row-actions" });
   if (preview) {
     const jump = el("button", { className: "ghost icon-only", title: "Play from here" }, icon("play"));
-    // play only this speaker's stream when we know the mapping (multi-track source); else downmix
-    const track = preview.trackOf ? preview.trackOf[seg.speaker] : undefined;
+    // play only this line's stream when we know the mapping (multi-track source); else downmix
+    const track = segTrack.get(seg);
     jump.onclick = () => toggleClip(jump, preview.file_id, seg.start, seg.end - seg.start, track);
     rowActions.append(jump);
   }
@@ -576,9 +583,19 @@ function renderSources() {
   root.innerHTML = "";
   uploaded.forEach((it, idx) => {
     const box = el("div", { className: "source" });
+    const rm = el("button", { className: "ghost icon-only", title: "Remove file", style: "margin-left:auto" }, icon("close"));
+    rm.onclick = () => {
+      uploaded.splice(idx, 1);
+      if (!uploaded.length) {                          // back to the empty start screen
+        $("#transcribe-entry").style.display = "";
+        $("#input-panel").style.display = "none";
+        $("#options-panel").style.display = "none";
+      }
+      renderSources();
+    };
     box.append(el("div", { className: "name" },
       el("span", { textContent: it.source.filename }),
-      el("span", { className: "dur", textContent: `${it.source.duration.toFixed(1)}s` })));
+      el("span", { className: "dur", textContent: `${it.source.duration.toFixed(1)}s` }), rm));
 
     // FR-TK-4: track selector only when more than one stream.
     if (!it.source.tracks.length) {
