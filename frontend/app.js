@@ -19,6 +19,7 @@ window.addEventListener("error", (e) => {
 });
 window.addEventListener("unhandledrejection", (e) => {
   const r = e.reason || {};
+  if (r.name === "AbortError") return;   // play() cut short by pause()/new clip: harmless
   showFatal("unhandled promise rejection: " + (r.message || r) + "\n" + (r.stack || ""));
 });
 
