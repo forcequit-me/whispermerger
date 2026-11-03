@@ -604,9 +604,9 @@ function renderSources() {
 
     // sequence order (UC2) — only shown with multiple files
     if (uploaded.length > 1) {
-      const seq = el("input", { type: "number", value: idx, style: "width:60px" });
-      seq.onchange = () => { it.source.sequence = +seq.value; };
-      it.source.sequence = idx;
+      if (!it.orderSet) it.source.sequence = idx;   // auto-number until the user types an order
+      const seq = el("input", { type: "number", value: it.source.sequence, style: "width:60px" });
+      seq.onchange = () => { it.source.sequence = +seq.value; it.orderSet = true; };
       box.append(el("div", { className: "track-row" },
         el("span", { className: "ti", textContent: "order" }), seq));
     }
