@@ -395,16 +395,25 @@ def peaks(request: Request, file_id: str, buckets: int = 2000) -> dict:
 
 # --- v2 single-track diarization (PRD §11.4) -------------------------------------------
 
-def _track_wav(app_state, file_id: str, track_index: int) -> Path:
-    """Extract one track to a cached mono/16k wav (the whole track — VAD/diarize need it)."""
+_AUDIO_KEEP = 4   # full-track wavs are ~115 MB per hour; older ones are rebuilt on demand
+
+
+def _track_wav(app_state, file_id: str, track_index: int, prune: bool = True) -> Path:
+    """Extract one track to a cached mono/16k wav (the whole track — VAD/diarize need it).
+    Only the most recently used few are kept; a pruned one is re-extracted when asked for again.
+    `prune=False` lets a caller that needs several at once (combine) prune after it's done."""
     entry = app_state.uploads.get(file_id)
     if entry is None:
         raise HTTPException(404, f"unknown file_id {file_id}")
     out_dir = app_state.upload_dir / "diar"
     out_dir.mkdir(exist_ok=True)
     dest = out_dir / f"{file_id}_t{track_index}.wav"
-    if not dest.exists():
+    if dest.exists():
+        os.utime(dest)                       # mark as recently used so pruning spares it
+    else:
         extract_track(entry["path"], track_index, dest)
+        if prune:
+            _prune_oldest(out_dir, _AUDIO_KEEP)
     return dest
 
 
@@ -432,16 +441,20 @@ def combine(request: Request, body: CombineRequest) -> CombineResult:
     state = request.app.state
     combo_key = "|".join(f"{f.file_id}:{f.track_index}" for f in body.files)
     cached_id = state.combined.get(combo_key)
-    if cached_id and cached_id in state.uploads:
+    if cached_id and cached_id in state.uploads and Path(state.uploads[cached_id]["path"]).exists():
         e = state.uploads[cached_id]
+        os.utime(e["path"])                  # recently used: spare it from pruning
         return CombineResult(file_id=cached_id, duration=e["source"].duration,
                              boundaries=e["boundaries"])
 
-    wavs = [_track_wav(state, f.file_id, f.track_index) for f in body.files]
+    # Cache miss, or the combined wav was pruned: (re)build it under a fresh file_id.
+    wavs = [_track_wav(state, f.file_id, f.track_index, prune=False) for f in body.files]
     out_dir = state.upload_dir / "combined"
     out_dir.mkdir(exist_ok=True)
     dest = out_dir / f"{hashlib.sha256(combo_key.encode()).hexdigest()[:16]}.wav"
     total, boundaries = concat_wavs(wavs, dest)
+    _prune_oldest(out_dir, _AUDIO_KEEP)
+    _prune_oldest(state.upload_dir / "diar", _AUDIO_KEEP)
 
     file_id = uuid.uuid4().hex
     source = InputSource(filename=f"Combined ({len(body.files)} files)", duration=total,

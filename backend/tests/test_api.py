@@ -210,6 +210,31 @@ def test_combine_registers_sequenced_source(client, two_stream_file):
     assert client.get(f"/api/track-audio/{d['file_id']}/0").status_code == 200  # usable source
 
 
+def test_track_audio_copies_are_capped_and_rebuilt(client, two_stream_file, monkeypatch):
+    monkeypatch.setattr(routes.api, "_AUDIO_KEEP", 2)
+    ids = [_add(client, two_stream_file)[0]["file_id"] for _ in range(3)]
+    for fid in ids:
+        assert client.get(f"/api/track-audio/{fid}/0").status_code == 200
+    diar = client.app.state.upload_dir / "diar"
+    names = {p.name for p in diar.iterdir()}
+    assert len(names) == 2 and f"{ids[0]}_t0.wav" not in names       # oldest dropped
+    assert client.get(f"/api/track-audio/{ids[0]}/0").status_code == 200  # rebuilt on demand
+    assert (diar / f"{ids[0]}_t0.wav").exists()
+
+
+def test_combine_survives_cap_and_rebuilds_pruned_wav(client, two_stream_file, monkeypatch):
+    monkeypatch.setattr(routes.api, "_AUDIO_KEEP", 2)
+    ids = [_add(client, two_stream_file)[0]["file_id"] for _ in range(3)]
+    body = {"files": [{"file_id": f, "track_index": 0} for f in ids]}
+    first = client.post("/api/combine", json=body)
+    assert first.status_code == 200                    # 3 inputs even though only 2 are kept
+    Path(client.app.state.uploads[first.json()["file_id"]]["path"]).unlink()   # pretend it was pruned
+    again = client.post("/api/combine", json=body)
+    assert again.status_code == 200
+    assert Path(client.app.state.uploads[again.json()["file_id"]]["path"]).exists()
+    assert client.get(f"/api/track-audio/{again.json()['file_id']}/0").status_code == 200
+
+
 def test_unknown_job_404(client):
     assert client.get("/api/progress/nope").status_code == 404
     assert client.get("/api/result/nope").status_code == 404
