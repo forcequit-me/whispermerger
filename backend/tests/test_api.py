@@ -137,6 +137,20 @@ def test_clip_returns_audio(client, two_stream_file):
     assert client.get("/api/clip/nope?start=0&dur=1").status_code == 404
 
 
+def test_clip_folder_is_capped(client, two_stream_file, monkeypatch):
+    monkeypatch.setattr(routes.api, "_CLIP_KEEP", 2)
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    for start in (0, 0.2, 0.4, 0.6):
+        assert client.get(f"/api/clip/{file_id}?start={start}&dur=1").status_code == 200
+    assert len(list((client.app.state.upload_dir / "clips").iterdir())) == 2
+
+
+def test_peaks_drops_its_temp_wav(client, two_stream_file):
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    assert client.get(f"/api/peaks/{file_id}?buckets=50").status_code == 200
+    assert not list((client.app.state.upload_dir / "peaks").glob("*.wav"))
+
+
 def test_track_audio_serves_wav(client, two_stream_file):
     file_id = _add(client, two_stream_file)[0]["file_id"]
     r = client.get(f"/api/track-audio/{file_id}/0")

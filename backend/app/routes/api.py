@@ -353,7 +353,21 @@ def clip(request: Request, file_id: str, start: float = 0.0, dur: float = 5.0,
     dest = clips / f"{file_id}_{start:.2f}_{dur:.2f}_{track}.wav"
     if not dest.exists():
         extract_clip(entry["path"], dest, start, dur, len(entry["source"].tracks), track=track)
+        _prune_oldest(clips, _CLIP_KEEP)
     return FileResponse(dest, media_type="audio/wav")
+
+
+_CLIP_KEEP = 200   # preview clips are a replay cache; ~1 MB each, so this caps the folder near 200 MB
+
+
+def _prune_oldest(folder: Path, keep: int) -> None:
+    """Delete all but the `keep` newest files in `folder`."""
+    files = sorted(folder.iterdir(), key=lambda p: p.stat().st_mtime)
+    for p in files[:-keep]:
+        try:
+            p.unlink()
+        except OSError:          # still being served (Windows locks open files) — next prune gets it
+            pass
 
 
 @router.get("/peaks/{file_id}")
@@ -373,6 +387,7 @@ def peaks(request: Request, file_id: str, buckets: int = 2000) -> dict:
         extract_clip(entry["path"], dest, 0.0, entry["source"].duration,
                      len(entry["source"].tracks))
     vals = compute_peaks(dest, buckets)
+    dest.unlink(missing_ok=True)   # full-length downmix is only needed to compute peaks; values are cached
     entry["peaks"] = {"buckets": buckets, "peaks": vals}
     return {"duration": entry["source"].duration, "peaks": vals}
 
