@@ -128,6 +128,8 @@ class BatchProjectIn(BaseModel):
     sources: list[SourceSelection]
     per_file: bool = False                  # one transcript per file (vs merge/sequence)
     formats: list[str] | None = None        # which exports to write; None = all four
+    options: MergeOptionsIn | None = None   # per-project override; None = the batch's settings
+    export: ExportOptionsIn | None = None   # per-project override; None = the batch's settings
 
 
 class BatchRequest(BaseModel):
@@ -135,6 +137,7 @@ class BatchRequest(BaseModel):
     output_mode: Literal["folder", "source"] = "folder"
     output_folder: str | None = None
     options: MergeOptionsIn = MergeOptionsIn()
+    export: ExportOptionsIn = ExportOptionsIn()   # subtitle/export settings for every written file
     language: str | None = None              # force a language code; None = auto-detect
 
 
@@ -646,6 +649,8 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
             prepared=_prepare_sources(request.app.state, p.sources),
             per_file=p.per_file,
             formats=p.formats,
+            options=(p.options or body.options).to_options(),
+            export=(p.export or body.export).to_options(),
         ))
     options = body.options.to_options()
     batch = request.app.state.batches.create(projects)

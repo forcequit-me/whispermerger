@@ -17,7 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
-from .export import export_all
+from .export import ExportOptions, export_all, pad_segments
 from .merge import MergeOptions
 from .pipeline import PreparedSource, run_merge_pipeline, run_per_file_pipeline
 
@@ -53,6 +53,8 @@ class ProjectInput:
     prepared: list[PreparedSource]
     per_file: bool = False                       # one transcript per source file (vs merge/sequence)
     formats: Optional[list[str]] = None          # which exports to write; None = all four
+    options: Optional[MergeOptions] = None       # this project's merge settings; None = the batch's
+    export: Optional[ExportOptions] = None       # this project's subtitle/export settings; None = defaults
 
 
 @dataclass
@@ -250,6 +252,13 @@ def _process_project(
     ps.error = None
     ps.progress = 0.0
     ps.status = Status.RUNNING
+    options = project.options or options
+    ex = project.export or ExportOptions()
+
+    def write(merged, dest, name) -> None:
+        # Same as the editor's Export: padding applies to every format's timecodes.
+        export_all(pad_segments(merged, ex.pad_seconds), dest, name, ex, formats=project.formats)
+
     try:
         parent = _project_output_parent(project, output_mode, output_folder)
         base = _safe_name(project.name)
@@ -303,7 +312,7 @@ def _process_project(
                 seen[(str(dest), stem)] = seen.get((str(dest), stem), 0) + 1
                 if seen[(str(dest), stem)] > 1:
                     stem = f"{stem}_{seen[(str(dest), stem)]}"
-                export_all(merged, dest, transcript_basename(stem), formats=project.formats)
+                write(merged, dest, transcript_basename(stem))
                 fs.status = Status.DONE
                 fs.progress = 1.0
                 fs.finished_at = time.time()
@@ -355,7 +364,7 @@ def _process_project(
                       for ext in ("srt", "txt", "csv", "json")):
                 n += 1
                 stem = f"{base}_{n}"
-            export_all(merged, out_dir, transcript_basename(stem, when), formats=project.formats)
+            write(merged, out_dir, transcript_basename(stem, when))
             ps.output_dir = str(out_dir)
         ps.finished_at = time.time()
         ps.progress = 1.0

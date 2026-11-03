@@ -272,6 +272,37 @@ def test_batch_flow_writes_outputs(client, two_stream_file, tmp_path, monkeypatc
     assert list((tmp_path / "Perf Poser").glob("Perf Poser Transcript (*).srt"))
 
 
+def test_batch_settings_global_and_per_project_override(client, two_stream_file, tmp_path, monkeypatch):
+    import json as _json
+    monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)   # same words on both tracks
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    src = [{"file_id": file_id, "sequence": 0, "tracks": [
+        {"track_index": 0, "speaker": "Speaker 1", "selected": True},
+        {"track_index": 1, "speaker": "Speaker 2", "selected": True}]}]
+    r = client.post("/api/batch", json={
+        "output_mode": "folder", "output_folder": str(tmp_path),
+        "export": {"show_speakers": False, "pad_seconds": 0.5},          # batch-wide
+        "projects": [
+            {"name": "Global", "sources": src, "formats": ["srt", "txt", "json"]},
+            {"name": "Custom", "sources": src, "formats": ["srt", "txt", "json"],
+             "options": {"detect_conflicts": False},
+             "export": {"show_speakers": True}}]})
+    batch_id = r.json()["batch_id"]
+    deadline = time.time() + 5
+    while client.get(f"/api/batch/{batch_id}").json()["status"] != "done" and time.time() < deadline:
+        time.sleep(0.02)
+    out = lambda name, ext: next((tmp_path / name).glob(f"{name} Transcript (*).{ext}")).read_text("utf-8")
+
+    assert "Speaker 1:" not in out("Global", "srt")                    # batch: no names
+    assert "Speaker 1: hello" in out("Custom", "srt")                  # override: names
+    assert "00:00:01,500]" in out("Global", "txt")                     # batch: padded 0.5 s
+    assert "00:00:01,000]" in out("Custom", "txt")                     # override: no padding
+    g_flags = [seg["flags"] for seg in _json.loads(out("Global", "json"))["segments"]]
+    c_flags = [seg["flags"] for seg in _json.loads(out("Custom", "json"))["segments"]]
+    assert all("bleed_suspected" in f for f in g_flags)              # batch merge settings
+    assert all(f == [] for f in c_flags)                             # override: detection off
+
+
 def test_batch_project_cancel_endpoint(client, two_stream_file, tmp_path, monkeypatch):
     monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)
     file_id = _add(client, two_stream_file)[0]["file_id"]

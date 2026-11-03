@@ -934,9 +934,60 @@ function parseCsv(text) {
 // =======================================================================================
 // Batch / Studio tab
 // =======================================================================================
-const projects = [];           // [{ name, files: [{file_id, source}] }]
+const projects = [];           // [{ name, files: [{file_id, source}], settings?: custom merge/subtitle settings }]
 let outputFolder = null;
 let projectCounter = 0;
+
+// Merge + subtitle settings, same fields and defaults as Transcribe & Merge and its Export panel.
+// Batch-wide in batchSettings; a project can carry its own copy (proj.settings) that overrides it.
+const DEFAULT_BATCH_SETTINGS = {
+  options: { detect_conflicts: true, backchannel_render: "parenthetical", backchannel_max_words: 4,
+             overlap_min_seconds: 2, bleed_window_seconds: 1, bleed_similarity: 0.7, bleed_prefer_ratio: 2 },
+  export: { apply_limits: true, chars_per_line: 42, max_lines: 2, min_duration: 1, pad_seconds: 0,
+            show_speakers: true },
+};
+const batchSettings = structuredClone(DEFAULT_BATCH_SETTINGS);
+
+// Editable fields bound to a settings object `s` (writes go straight into it, so re-renders keep them).
+function buildSettingsBlock(s) {
+  const field = (label, node, title) => el("label", { className: "field", title: title || "" }, el("span", { textContent: label }), node);
+  const num = (obj, key, attrs = {}) => {
+    const i = el("input", { type: "number", value: obj[key], style: "width:80px", ...attrs });
+    i.onchange = () => { obj[key] = +i.value; };
+    return i;
+  };
+  const check = (obj, key, label) => {
+    const c = el("input", { type: "checkbox", checked: obj[key] });
+    c.onchange = () => { obj[key] = c.checked; sync(); };
+    return el("label", { className: "opt" }, c, label);
+  };
+  const o = s.options, x = s.export;
+  const bc = el("select", {});
+  ["parenthetical", "separate", "skip"].forEach((v) => bc.append(el("option", { value: v, textContent: v === "separate" ? "separate line" : v })));
+  bc.value = o.backchannel_render;
+  bc.onchange = () => { o.backchannel_render = bc.value; };
+  const thresholds = [bc, num(o, "backchannel_max_words"), num(o, "overlap_min_seconds", { step: 0.5 }),
+    num(o, "bleed_window_seconds", { step: 0.5 }), num(o, "bleed_similarity", { step: 0.05, min: 0, max: 1 }),
+    num(o, "bleed_prefer_ratio", { step: 0.5, min: 1 })];
+  const limits = [num(x, "chars_per_line"), num(x, "max_lines"), num(x, "min_duration", { step: 0.5 })];
+  function sync() {                       // thresholds only matter with detection on; limits only with limits on
+    thresholds.forEach((n) => { n.disabled = !o.detect_conflicts; });
+    limits.forEach((n) => { n.disabled = !x.apply_limits; });
+  }
+  sync();
+  return el("div", {},
+    el("div", { className: "row" }, check(o, "detect_conflicts", "Detect conflicts (backchannel / overlap / bleed)")),
+    el("div", { className: "row", style: "margin-top:4px" },
+      field("Backchannel", thresholds[0]), field("Backchannel max words", thresholds[1]),
+      field("Overlap min (s)", thresholds[2]), field("Bleed window (s)", thresholds[3]),
+      field("Bleed similarity", thresholds[4]),
+      field("Bleed loudness ratio", thresholds[5], "On a suspected bleed, mark the louder mic's line 'preferred' only if it is at least this many times louder.")),
+    el("div", { className: "row", style: "margin-top:8px" },
+      check(x, "apply_limits", "Subtitle limits"), field("Chars/line", limits[0]), field("Max lines", limits[1]),
+      field("Min dur (s)", limits[2]),
+      field("Pad (s)", num(x, "pad_seconds", { step: 0.1, min: 0 }), "extend each segment start/end by N seconds (video-edit breathing room)"),
+      check(x, "show_speakers", "Show speakers")));
+}
 
 function addProject() {
   projectCounter += 1;
@@ -945,6 +996,9 @@ function addProject() {
 }
 
 (function initBatchTab() {
+  $("#batch-settings").append(el("details", {},
+    el("summary", { className: "muted", textContent: "Merge & subtitle settings — apply to every project unless a project uses its own" }),
+    buildSettingsBlock(batchSettings)));
   $("#add-project").onclick = addProject;
   $("#add-project-entry").onclick = addProject;
   $("#choose-folder").onclick = chooseFolder;
@@ -991,6 +1045,19 @@ function buildProjectOutput(proj) {
   return row;
 }
 
+// Per-project merge/subtitle settings: the batch's, or this project's own copy (starts as the batch's).
+function buildProjectSettings(proj) {
+  const own = el("input", { type: "checkbox", checked: !!proj.settings });
+  own.onchange = () => { proj.settings = own.checked ? structuredClone(batchSettings) : null; renderProjects(); };
+  const row = el("div", { className: "row", style: "margin-top:6px" },
+    el("label", { className: "opt" }, own, "Own merge & subtitle settings"));
+  if (!proj.settings) {
+    row.append(el("span", { className: "muted", textContent: "using global defaults" }));
+    return row;
+  }
+  return el("div", {}, row, el("div", { style: "margin:6px 0 0 22px" }, buildSettingsBlock(proj.settings)));
+}
+
 function buildProjectCard(proj, pi) {
   const box = el("div", { className: "source" });
   const name = el("input", { value: proj.name, style: "font-weight:600; width:240px" });
@@ -1002,7 +1069,7 @@ function buildProjectCard(proj, pi) {
   removeProj.onclick = () => { projects.splice(pi, 1); renderProjects(); };
   box.append(el("div", { className: "name" },
     name, el("div", { className: "spacer" }), addFiles, removeProj));
-  box.append(buildProjectOutput(proj));
+  box.append(buildProjectOutput(proj), buildProjectSettings(proj));
 
   proj.files.forEach((_, fi) => box.append(buildFileRow(proj, fi)));
   if (!proj.files.length) box.append(el("div", { className: "muted", textContent: "no files yet — click Add files" }));
@@ -1105,12 +1172,14 @@ function runBatch() {
   const body = {
     output_mode: mode,
     output_folder: outputFolder,
-    options: { detect_conflicts: $("#batch-detect").checked },
+    options: batchSettings.options,
+    export: batchSettings.export,
     language: $("#batch-language").value || null,
     projects: resolved.map(({ p, perFile, formats }) => ({
       name: p.name,
       per_file: perFile,
       formats,
+      ...(p.settings ? { options: p.settings.options, export: p.settings.export } : {}),
       sources: p.files.map((f, i) => ({
         file_id: f.file_id,
         sequence: i,
