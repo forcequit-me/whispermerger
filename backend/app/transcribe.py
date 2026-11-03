@@ -47,6 +47,11 @@ DEVICE = "cuda"
 # the cache.
 BATCH_SIZE = int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))
 ALIGN_TAG = "wav2vec2"  # alignment method, part of the cache key (FR-CA-2)
+# Word-timing (alignment) models for languages WhisperX has no default for. Each must be a
+# Hugging Face wav2vec2 CTC model with a character vocab, like WhisperX's own defaults.
+EXTRA_ALIGN_MODELS = {
+    "sv": "KBLab/wav2vec2-large-voxrex-swedish",   # National Library of Sweden, CC0, ~1.2 GB
+}
 # Optional language override: set WHISPERMERGER_LANGUAGE=en to skip auto-detect (and the
 # per-language align-model download it can trigger). Unset = auto-detect (original behavior).
 LANGUAGE = os.environ.get("WHISPERMERGER_LANGUAGE") or None
@@ -84,7 +89,15 @@ def _load_model(model_name: str, compute_type: str, device: str):
 def _load_align(language: str, device: str):
     import whisperx
     _allow_full_torch_load()
-    return whisperx.load_align_model(language_code=language, device=device)
+    return whisperx.load_align_model(language_code=language, device=device,
+                                     model_name=EXTRA_ALIGN_MODELS.get(language))
+
+
+def has_align_model(language: str) -> bool:
+    """Whether word-level timing is available for this language code."""
+    from whisperx.alignment import DEFAULT_ALIGN_MODELS_HF, DEFAULT_ALIGN_MODELS_TORCH
+    return (language in EXTRA_ALIGN_MODELS or language in DEFAULT_ALIGN_MODELS_HF
+            or language in DEFAULT_ALIGN_MODELS_TORCH)
 
 
 def unload_models() -> None:
@@ -118,7 +131,12 @@ def transcribe_track(
     auto-detects (and may fetch that language's align model on first use)."""
     import whisperx
 
-    key = cache_key(audio_path, model_name, ALIGN_TAG, language) if cache else None
+    # A forced language with no alignment model caches under its own tag, so adding a model for
+    # it later re-aligns instead of reusing the unaligned result.
+    # ponytail: auto-detect can't know the language up front, so an unaligned auto-detect result
+    # stays cached under the normal tag; Clear cache re-runs it if a model is added later.
+    tag = ALIGN_TAG if (language is None or has_align_model(language)) else "none"
+    key = cache_key(audio_path, model_name, tag, language) if cache else None
     if cache and (hit := cache.get(key)) is not None:
         return hit
 
@@ -127,13 +145,21 @@ def transcribe_track(
     result = model.transcribe(audio, batch_size=batch_size, language=language)  # VAD on by default
 
     detected = result.get("language", "en")
-    align_model, metadata = _load_align(detected, device)
-    aligned = whisperx.align(
-        result["segments"], align_model, metadata, audio, device,
-        return_char_alignments=False,
-    )
+    if has_align_model(detected):
+        align_model, metadata = _load_align(detected, device)
+        segments = whisperx.align(
+            result["segments"], align_model, metadata, audio, device,
+            return_char_alignments=False,
+        )["segments"]
+    else:
+        # No word-timing model for this language: keep Whisper's line timings rather than fail
+        # the run. Lines have no words, so SRT splits inside a long line are estimated.
+        print(f"[align] no word-timing model for language '{detected}'; keeping line timings only",
+              flush=True)
+        segments = [{"start": s["start"], "end": s["end"], "text": s["text"], "words": []}
+                    for s in result["segments"]]
 
-    output = {"language": detected, "segments": aligned["segments"]}
+    output = {"language": detected, "segments": segments}
     if cache:
         cache.put(key, output)
     return output

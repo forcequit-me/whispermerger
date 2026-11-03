@@ -33,8 +33,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   (instant on the GPU) still shows the real read work — and Cancel/Restart. The file list **keeps its scroll position** as it refreshes, so a long queue
   doesn't snap back to the top every second. No babysitting.
 - **Language** — transcription **auto-detects per file** by default; a **Language** dropdown (in
-  Batch and Transcribe & Merge) can force a specific language, which skips detection and avoids the
-  first-use download of that language's wav2vec2 alignment model.
+  Batch, Transcribe & Merge and Label Track) can force a specific language, which skips detection and avoids the
+  first-use download of that language's wav2vec2 alignment model. Swedish uses KBLab's wav2vec2
+  model. A language with no alignment model still transcribes, keeping Whisper's line timings
+  without word-level timing (SRT splits inside a long line are then estimated).
 - **Cancel & restart, per item** — cancel the **whole batch**, a **single project** (the queue
   continues to the next), or a **single file** inside a one-transcript-per-file project (the other
   files keep going) — all cooperative, stopping at the next boundary so the in-flight file finishes.
