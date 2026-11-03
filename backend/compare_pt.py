@@ -3,7 +3,9 @@
     python compare_pt.py recording.wav [reference.txt] [--cpu]
 
 Runs each model once (the merge reuses both outputs), then prints word errors against the
-reference (when given), punctuation counts and time. --cpu runs int8 on the CPU (slow; for
+reference (when given), twice: counting accents (so Brazilian "econômico" for European
+"económico" is an error) and ignoring them (hearing only). Hyphenated words count as their
+parts, so "quinta feira" vs "quinta-feira" isn't an error. Also punctuation counts and time. --cpu runs int8 on the CPU (slow; for
 machines without CUDA).
 """
 
@@ -15,9 +17,15 @@ from app import modelstore, transcribe
 from app.punctmerge import _key, merge_punctuation
 
 
-def word_errors(hyp: str, ref: str) -> float:
-    """Word error rate, ignoring case, punctuation and accents (Levenshtein over words)."""
-    h, r = [k for k in map(_key, hyp.split()) if k], [k for k in map(_key, ref.split()) if k]
+def _words(text: str, accents: bool) -> list[str]:
+    # \w+ splits hyphenated words into their parts; _key drops case, punctuation and accents
+    toks = re.findall(r"[\w']+", text.lower())
+    return toks if accents else [k for k in map(_key, toks) if k]
+
+
+def word_errors(hyp: str, ref: str, accents: bool = False) -> float:
+    """Word error rate over words (Levenshtein), ignoring case and punctuation; accents optional."""
+    h, r = _words(hyp, accents), _words(ref, accents)
     d = list(range(len(h) + 1))
     for i, rw in enumerate(r, 1):
         prev, d[0] = d[0], i
@@ -29,7 +37,7 @@ def word_errors(hyp: str, ref: str) -> float:
 def main(argv: list[str]) -> None:
     cpu = "--cpu" in argv
     args = [a for a in argv if a != "--cpu"]
-    audio_path, ref = args[0], (open(args[1], encoding="utf-8").read() if len(args) > 1 else None)
+    audio_path, ref = args[0], (open(args[1], encoding="utf-8-sig").read() if len(args) > 1 else None)
     device, compute = ("cpu", "int8") if cpu else (transcribe.DEVICE, transcribe.COMPUTE_TYPE)
     if cpu:   # catalog precisions like int8_float16 need a GPU
         for m in modelstore.WHISPER_MODELS.values():
@@ -52,7 +60,8 @@ def main(argv: list[str]) -> None:
             ("CAMOES + large-v3 punctuation (setting on)", merged, t_c + t_v)]
     for label, segs, secs in rows:
         text = " ".join(segs)
-        wer = f"{word_errors(text, ref):.1%}" if ref else "n/a (no reference)"
+        wer = (f"{word_errors(text, ref, accents=True):.1%} counting accents, "
+               f"{word_errors(text, ref):.1%} ignoring accents") if ref else "n/a (no reference)"
         punct = len(re.findall(r"[.,;:!?]", text))
         print(f"## {label}\n- time: {secs:.1f} s\n- word errors: {wer}\n- punctuation marks: {punct}\n\n{text}\n")
 
