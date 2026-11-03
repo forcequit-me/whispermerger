@@ -948,7 +948,7 @@ const DEFAULT_BATCH_SETTINGS = {
   options: { detect_conflicts: true, backchannel_render: "parenthetical", backchannel_max_words: 4,
              overlap_min_seconds: 2, bleed_window_seconds: 1, bleed_similarity: 0.7, bleed_prefer_ratio: 2 },
   export: { apply_limits: true, chars_per_line: 42, max_lines: 2, min_duration: 1, pad_seconds: 0,
-            show_speakers: true },
+            show_speakers: true, edited_timing: "align" },
 };
 const batchSettings = structuredClone(DEFAULT_BATCH_SETTINGS);
 
@@ -974,6 +974,12 @@ function buildSettingsBlock(s) {
     num(o, "bleed_window_seconds", { step: 0.5 }), num(o, "bleed_similarity", { step: 0.05, min: 0, max: 1 }),
     num(o, "bleed_prefer_ratio", { step: 0.5, min: 1 })];
   const limits = [num(x, "chars_per_line"), num(x, "max_lines"), num(x, "min_duration", { step: 0.5 })];
+  // Same choice as the editor's Export panel; in batch output it applies to "(yeah)"-style backchannels.
+  const edited = el("select", { style: "min-width:180px", title: "SRT timing for lines whose text no longer matches its word timings" });
+  [["align", "keep word timing"], ["even", "spread evenly"], ["whole", "one subtitle per line"]]
+    .forEach(([v, t]) => edited.append(el("option", { value: v, textContent: t })));
+  edited.value = x.edited_timing;
+  edited.onchange = () => { x.edited_timing = edited.value; };
   function sync() {                       // thresholds only matter with detection on; limits only with limits on
     thresholds.forEach((n) => { n.disabled = !o.detect_conflicts; });
     limits.forEach((n) => { n.disabled = !x.apply_limits; });
@@ -990,7 +996,7 @@ function buildSettingsBlock(s) {
       check(x, "apply_limits", "Subtitle limits"), field("Chars/line", limits[0]), field("Max lines", limits[1]),
       field("Min dur (s)", limits[2]),
       field("Pad (s)", num(x, "pad_seconds", { step: 0.1, min: 0 }), "extend each segment start/end by N seconds (video-edit breathing room)"),
-      check(x, "show_speakers", "Show speakers")));
+      field("Edited lines", edited), check(x, "show_speakers", "Show speakers")));
 }
 
 function addProject() {

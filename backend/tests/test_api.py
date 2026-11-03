@@ -316,6 +316,22 @@ def test_batch_settings_global_and_per_project_override(client, two_stream_file,
     assert all(f == [] for f in c_flags)                             # override: detection off
 
 
+def test_batch_edited_lines_setting_reaches_each_project(client, two_stream_file, tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(routes.api, "run_batch", lambda batch, projects, *a, **kw: seen.extend(projects))
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    src = [{"file_id": file_id, "sequence": 0,
+            "tracks": [{"track_index": 0, "speaker": "Speaker 1", "selected": True}]}]
+    client.post("/api/batch", json={
+        "output_mode": "folder", "output_folder": str(tmp_path), "export": {"edited_timing": "whole"},
+        "projects": [{"name": "A", "sources": src},
+                     {"name": "B", "sources": src, "export": {"edited_timing": "even"}}]})
+    deadline = time.time() + 5
+    while len(seen) < 2 and time.time() < deadline:
+        time.sleep(0.02)
+    assert [p.export.edited_timing for p in seen] == ["whole", "even"]     # batch-wide, then override
+
+
 def test_batch_project_cancel_endpoint(client, two_stream_file, tmp_path, monkeypatch):
     monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)
     file_id = _add(client, two_stream_file)[0]["file_id"]
