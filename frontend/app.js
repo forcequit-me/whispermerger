@@ -1579,3 +1579,83 @@ function updateBatchFile(row, f, pidx, fidx, id, btn, ended) {
     bar.remove();
   }
 }
+
+// =======================================================================================
+// Models tab — what's on disk, downloads (progress + Cancel, resumable), removal
+// =======================================================================================
+const LANG_SELECTS = ["#opt-language", "#batch-language", "#label-language"];
+let modelsPoll = null;
+
+const fmtSize = (mb) => (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`);
+const isDownloading = (m) => m.download && ["starting", "downloading"].includes(m.download.status);
+
+async function refreshModels() {
+  let data;
+  // first call loads the speech library on the server (~10 s), hence the long timeout
+  try { data = await (await fetchTO("/api/models", {}, 60000)).json(); } catch { return; }
+  renderModels(data);
+  annotateLanguages(data.models);
+  clearTimeout(modelsPoll);
+  if (data.models.some(isDownloading)) modelsPoll = setTimeout(refreshModels, 1000);   // live progress
+}
+
+function modelAction(m, active) {
+  const call = async (path, method = "POST") => {
+    $("#models-err").textContent = "";
+    const r = await fetch(`/api/models/${encodeURIComponent(m.id)}${path}`, { method });
+    if (!r.ok) $("#models-err").textContent = (await r.json().catch(() => ({}))).detail || "request failed";
+    refreshModels();
+  };
+  const d = m.download;
+  if (isDownloading(m)) {
+    const pct = d.total ? (100 * d.done) / d.total : 0;
+    const cancel = el("button", { className: "ghost", textContent: "Cancel" });
+    cancel.onclick = () => call("/cancel");
+    return el("span", { className: "dl" }, el("div", { className: "bar" }, el("div", { style: `width:${pct}%` })),
+      el("span", { className: "meta", textContent: d.text }), cancel);
+  }
+  if (m.installed) {
+    const inUse = m.id === active;
+    const rm = el("button", { className: "ghost", textContent: "Remove", disabled: inUse,
+      title: inUse ? "in use — choose another speech model first" : "delete from disk" });
+    rm.onclick = () => call("", "DELETE");
+    return el("span", { className: "dl" }, el("span", { className: "ok", textContent: inUse ? "In use" : "Downloaded" }), rm);
+  }
+  const partial = d && d.done > 0;
+  const get = el("button", { className: "ghost", textContent: partial ? "Resume download" : "Download" });
+  get.onclick = () => call("/download");
+  const note = d && d.status === "error" ? el("span", { className: "err", textContent: d.error })
+    : d && d.status === "canceled" ? el("span", { className: "meta", textContent: "canceled — partial download kept" }) : "";
+  return el("span", { className: "dl" }, note, get);
+}
+
+function renderModels(data) {
+  const w = $("#models-whisper"), a = $("#models-align");
+  w.innerHTML = a.innerHTML = "";
+  for (const m of data.models) {
+    const size = el("td", { className: "size", textContent: fmtSize(m.size_mb) });
+    const act = el("td", { className: "act" }, modelAction(m, data.active));
+    if (m.kind === "whisper") {
+      const meta = `${m.info.accuracy} accuracy · ${m.info.speed} · ${m.info.languages}`;
+      w.append(el("tr", {}, el("td", {}, el("div", { textContent: m.name }), el("div", { className: "meta", textContent: meta })), size, act));
+    } else {
+      a.append(el("tr", {}, el("td", { textContent: m.name.replace(/ word timing$/, "") }), size, act));
+    }
+  }
+}
+
+// Language dropdowns say up front when picking a language means a download (and how big).
+function annotateLanguages(models) {
+  const align = Object.fromEntries(models.filter((m) => m.kind === "align").map((m) => [m.info.language, m]));
+  for (const sel of LANG_SELECTS) {
+    for (const o of $(sel)?.options || []) {
+      if (!o.value) continue;
+      o.dataset.base ||= o.textContent;
+      const m = align[o.value];
+      o.textContent = m && !m.installed && !isDownloading(m) ? `${o.dataset.base} · ${fmtSize(m.size_mb)} download` : o.dataset.base;
+    }
+  }
+}
+
+document.querySelectorAll(".tab-btn").forEach((b) => b.addEventListener("click", refreshModels));
+refreshModels();

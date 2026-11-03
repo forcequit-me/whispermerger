@@ -126,6 +126,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.primary:disabled { opacity: .5; cursor: not-allowed; }
 button.ghost { cursor: pointer; }
 button.ghost:hover:not(:disabled) { border-color: #3a4150; }
+button.ghost:disabled { opacity: .45; cursor: not-allowed; }
 
 /* Accent focus ring on every control (WCAG AA — visible keyboard focus). */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -283,3 +284,13 @@ textarea.json-in { width: 100%; height: 120px; font-family: ui-monospace, monosp
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Models tab */
+table.models { width: 100%; border-collapse: collapse; }
+table.models td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+table.models td.size { color: var(--muted); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+table.models td.act { text-align: right; white-space: nowrap; }
+table.models .meta { color: var(--muted); font-size: 12px; }
+table.models .dl { display: inline-flex; align-items: center; gap: 8px; }
+table.models .dl .bar { width: 140px; height: 8px; }
+table.models .ok { color: var(--ok); }

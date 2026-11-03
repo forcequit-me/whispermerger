@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from .. import modelstore
 from ..batch import ProjectInput, Status, _RunSpec, run_batch
 from ..diarize import detect_speech, transcribe_regions
 from ..export import ExportOptions, pad_segments, to_csv, to_json, to_srt, to_txt
@@ -27,7 +28,7 @@ from ..merge import BackchannelRender, MergeOptions
 from ..models import InputSource, MergedOutput, Track
 from ..pipeline import PreparedSource, run_merge_pipeline
 from ..probe import probe
-from ..transcribe import transcribe_track, unload_models
+from ..transcribe import MODEL_NAME, transcribe_track, unload_models
 
 router = APIRouter()
 
@@ -764,3 +765,48 @@ def retry_batch(request: Request, batch_id: str,
     if not request.app.state.batches.retry(batch_id, indices):
         raise HTTPException(409, "batch cannot be retried")
     return _batch_out(batch)
+
+
+# --- models: catalog, downloads, removal (Models tab) ----------------------------------
+
+def _model_or_404(model_id: str) -> modelstore.ModelEntry:
+    e = modelstore.get(model_id)
+    if e is None:
+        raise HTTPException(404, f"unknown model {model_id}")
+    return e
+
+
+@router.get("/models")
+def list_models() -> dict:
+    """Every model the app can use, whether it's on disk, and any download in progress."""
+    out = []
+    for e in modelstore.entries():
+        d = modelstore.downloads.downloads.get(e.id)
+        out.append({"id": e.id, "kind": e.kind, "name": e.name, "size_mb": e.size_mb, "info": e.info,
+                    "installed": modelstore.is_installed(e),
+                    "download": d.to_dict() if d else None})
+    return {"active": f"whisper:{MODEL_NAME}", "models": out}
+
+
+@router.post("/models/{model_id}/download")
+def download_model(model_id: str) -> dict:
+    return modelstore.downloads.start(_model_or_404(model_id)).to_dict()
+
+
+@router.post("/models/{model_id}/cancel")
+def cancel_model_download(model_id: str) -> dict:
+    """Stop a download; the partial file stays, so downloading again resumes it."""
+    _model_or_404(model_id)
+    return {"canceling": modelstore.downloads.cancel(model_id)}
+
+
+@router.delete("/models/{model_id}")
+def remove_model(model_id: str) -> dict:
+    e = _model_or_404(model_id)
+    if model_id == f"whisper:{MODEL_NAME}":
+        raise HTTPException(409, "that's the speech model in use; choose another one first")
+    d = modelstore.downloads.downloads.get(model_id)
+    if d and d.active:
+        raise HTTPException(409, "cancel the download first")
+    modelstore.remove(e)
+    return {"removed": True}

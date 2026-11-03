@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Optional
 
 from .cache import Cache, cache_key
+from . import modelstore
+from .modelstore import EXTRA_ALIGN_MODELS   # extra word-timing models (e.g. Swedish)
 
 
 def _ensure_cuda_dlls() -> None:
@@ -47,11 +49,6 @@ DEVICE = "cuda"
 # the cache.
 BATCH_SIZE = int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))
 ALIGN_TAG = "wav2vec2"  # alignment method, part of the cache key (FR-CA-2)
-# Word-timing (alignment) models for languages WhisperX has no default for. Each must be a
-# Hugging Face wav2vec2 CTC model with a character vocab, like WhisperX's own defaults.
-EXTRA_ALIGN_MODELS = {
-    "sv": "KBLab/wav2vec2-large-voxrex-swedish",   # National Library of Sweden, CC0, ~1.2 GB
-}
 # Optional language override: set WHISPERMERGER_LANGUAGE=en to skip auto-detect (and the
 # per-language align-model download it can trigger). Unset = auto-detect (original behavior).
 LANGUAGE = os.environ.get("WHISPERMERGER_LANGUAGE") or None
@@ -141,11 +138,13 @@ def transcribe_track(
         return hit
 
     audio = whisperx.load_audio(str(audio_path))
+    modelstore.ensure(modelstore.whisper_entry(model_name))   # downloads visibly if missing
     model = _load_model(model_name, compute_type, device)
     result = model.transcribe(audio, batch_size=batch_size, language=language)  # VAD on by default
 
     detected = result.get("language", "en")
     if has_align_model(detected):
+        modelstore.ensure(modelstore.align_entry(detected))
         align_model, metadata = _load_align(detected, device)
         segments = whisperx.align(
             result["segments"], align_model, metadata, audio, device,

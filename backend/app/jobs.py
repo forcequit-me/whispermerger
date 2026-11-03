@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional
 
+from . import modelstore
 from .models import MergedOutput
 
 
@@ -120,7 +121,10 @@ class JobRegistry:
             job.started_at = time.time()
             job.status = JobStatus.RUNNING
             try:
-                job.result = work(job._set_progress)
+                # A model download inside the work reports on the job's progress line; that same
+                # call is the pause/cancel checkpoint, so Cancel also stops the download.
+                with modelstore.reporting(lambda msg: job._set_progress(job.progress, msg)):
+                    job.result = work(job._set_progress)
                 job.finished_at = time.time()
                 job.progress = 1.0
                 job.message = f"done in {job.elapsed:.0f}s"

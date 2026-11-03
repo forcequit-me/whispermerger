@@ -160,6 +160,10 @@ split also prints to the server console as a scrollback record (`[timing] <file>
   appears on a waveform, label regions per speaker, then transcribe into one transcript.
 - **Edit Transcript** — load a WhisperMerger transcript in any export format (`.json` / `.srt` /
   `.txt` / `.csv`, or paste it) to tweak and re-export (e.g. a batch result).
+- **Models** — every speech and word-timing model, whether it's on disk, its size, Download /
+  Remove. Downloads show progress, can be canceled, and resume where they stopped (also after a
+  dropped connection). A run that needs a missing model downloads it as a visible step; Pause and
+  Cancel work during it. Language dropdowns note which languages still need a download.
 
 ## Architecture
 

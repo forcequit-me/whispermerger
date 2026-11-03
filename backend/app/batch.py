@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
+from . import modelstore
 from .export import ExportOptions, export_all, pad_segments
 from .merge import MergeOptions
 from .pipeline import PreparedSource, run_merge_pipeline, run_per_file_pipeline
@@ -235,6 +236,19 @@ def _guard(cb, is_cancelled: IsCancelled):
     return wrapped
 
 
+def _download_reporter(ps: ProjectStatus, is_cancelled: IsCancelled) -> Callable[[str], None]:
+    """Progress line for a model download mid-run: shown on the project and its running file rows.
+    The cancel check (which also parks on pause) is what lets Cancel stop the download."""
+    def report(msg: str) -> None:
+        if is_cancelled():
+            raise Cancelled()
+        ps.message = msg
+        for fs in ps.files:
+            if fs.status is Status.RUNNING:
+                fs.message = msg
+    return report
+
+
 def _process_project(
     project: ProjectInput,
     ps: ProjectStatus,
@@ -409,9 +423,10 @@ def _run_projects(
             return is_cancelled() or ps.cancel_requested
 
         try:
-            _process_project(project, ps, transcribe_fn, output_mode=output_mode,
-                             output_folder=output_folder, options=options,
-                             is_cancelled=proj_cancelled)
+            with modelstore.reporting(_download_reporter(ps, proj_cancelled)):
+                _process_project(project, ps, transcribe_fn, output_mode=output_mode,
+                                 output_folder=output_folder, options=options,
+                                 is_cancelled=proj_cancelled)
         except Cancelled:
             if is_cancelled():                        # whole-batch cancel stops the queue
                 break

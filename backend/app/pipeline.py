@@ -187,6 +187,8 @@ def run_per_file_pipeline(
             except _FileCancelled:
                 on_skip(i, p)
             except Exception as exc:                 # per-file isolation — keep the rest going
+                if cancelled():                      # e.g. a model download stopped by Cancel
+                    raise
                 on_error(i, p, exc)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
