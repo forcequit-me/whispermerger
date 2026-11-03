@@ -418,3 +418,11 @@ def test_restart_finished_per_file_project_reruns_all(two_stream_file, tmp_path)
         _t.sleep(0.02)
     assert all(f.status is Status.DONE for f in files)
     assert all(f.finished_at > t for f, t in zip(files, first))   # every file actually re-ran
+
+
+def test_same_name_merge_projects_do_not_overwrite(two_stream_file, tmp_path):
+    projects = [ProjectInput("Dup", [_prepared(two_stream_file, "a.mkv", 2.0)], formats=["txt"]),
+                ProjectInput("Dup", [_prepared(two_stream_file, "b.mkv", 2.0)], formats=["txt"])]
+    _run(projects, output_mode="folder", output_folder=str(tmp_path))
+    assert _find(tmp_path / "Dup", "Dup", "txt")
+    assert _find(tmp_path / "Dup", "Dup_2", "txt")

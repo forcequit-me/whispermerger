@@ -349,7 +349,13 @@ def _process_project(
                 project.prepared, transcribe_fn, options=options,
                 progress_cb=_guard(lambda frac, msg: _set(ps, frac, msg), is_cancelled),
                 is_cancelled=is_cancelled)
-            export_all(merged, out_dir, transcript_basename(base), formats=project.formats)
+            # Same-name project already exported here this minute? Suffix _2, _3 like per-file does.
+            when, stem, n = time.time(), base, 1
+            while any((out_dir / f"{transcript_basename(stem, when)}.{ext}").exists()
+                      for ext in ("srt", "txt", "csv", "json")):
+                n += 1
+                stem = f"{base}_{n}"
+            export_all(merged, out_dir, transcript_basename(stem, when), formats=project.formats)
             ps.output_dir = str(out_dir)
         ps.finished_at = time.time()
         ps.progress = 1.0
