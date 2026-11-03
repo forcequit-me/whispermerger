@@ -87,7 +87,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.
   With *Show speakers* on, the `Name: ` label counts toward *Chars/line* on each subtitle's first
   line. Known limit: a label (or a single word) longer than *Chars/line* still runs past it,
-  since every subtitle line holds at least one word.
+  since every subtitle line holds at least one word. Export and Batch warn before writing when a
+  name takes more than half a line (Batch asks for a second click, *Run anyway*); shorten it with
+  *Rename globally* or the track's speaker name, as subtitlers do. **Name only on speaker change**
+  puts the name on the first subtitle after a speaker change instead of every subtitle.
   **Edited lines** sets how SRT times a line whose text you changed: *keep word timing* (unchanged
   words keep their exact times, changed ones are estimated from their neighbours; a heavy rewrite
   falls back to even spacing), *spread evenly*, or *one subtitle per line* (exact start/end, may

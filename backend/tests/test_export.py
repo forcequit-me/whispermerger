@@ -200,3 +200,19 @@ def test_srt_edited_line_modes_even_and_whole():
     whole = to_srt(seg, ExportOptions(edited_timing="whole", **_LIMITS))
     assert _times(whole) == ["00:00:00,000 --> 00:00:03,200"]        # one subtitle, exact span
     assert _texts(whole)[0].count("\n") >= 2                         # all lines kept, past max_lines
+
+
+def test_srt_label_only_when_speaker_changes():
+    long = "one two three four five six seven eight nine ten"
+    segs = [Segment(speaker="Ana", start=0.0, end=4.0, text=long, words=_words(long, 0.0)),
+            Segment(speaker="Ana", start=5.0, end=6.0, text="again", words=_words("again", 5.0)),
+            Segment(speaker="Rui", start=7.0, end=8.0, text="hello", words=_words("hello", 7.0)),
+            Segment(speaker="Ana", start=9.0, end=10.0, text="back", words=_words("back", 9.0))]
+    opts = dict(chars_per_line=14, max_lines=1, min_duration=0.0)
+    on = [t.strip() for t in _texts(to_srt(_merged(*segs), ExportOptions(label_on_change=True, **opts)))]
+    named = [t for t in on if ":" in t]
+    assert named == ["Ana: one two", "Rui: hello", "Ana: back"]       # once per turn, back on change
+    assert all(len(t) <= 14 for t in on)
+    assert on[1] == "three four"                                     # unlabeled lines use the full width
+    off = _texts(to_srt(_merged(*segs), ExportOptions(**opts)))
+    assert all(t.startswith(("Ana: ", "Rui: ")) for t in off)        # default: every subtitle named

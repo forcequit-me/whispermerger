@@ -466,6 +466,13 @@ function exportBase(merged) {
   return base || "transcript";
 }
 
+// Speaker names that eat more than half a subtitle line ("Name: " counts toward Chars/line).
+// Subtitlers shorten these by hand (Rename globally / the track's speaker name), so we flag them.
+function longSpeakerNames(names, x) {
+  if (!x.show_speakers || !x.apply_limits) return [];
+  return [...new Set(names)].filter((n) => n && n.length + 2 > x.chars_per_line / 2);
+}
+
 function buildExportPanel(container, merged) {
   const format = el("select");
   ["srt", "txt", "csv", "json"].forEach((f) => format.append(el("option", { value: f, textContent: f.toUpperCase() })));
@@ -476,6 +483,13 @@ function buildExportPanel(container, merged) {
   const minDur = el("input", { type: "number", value: 1, step: 0.5 });
   const pad = el("input", { type: "number", value: 0, step: 0.1, min: 0, title: "extend each segment start/end by N seconds (video-edit breathing room)" });
   const showSpk = el("input", { type: "checkbox", checked: true });
+  const onChange = el("input", { type: "checkbox", title: "SRT: name the speaker on the first subtitle after a speaker change only" });
+  const warn = el("div", { className: "warn", style: "flex-basis:100%" });
+  const checkNames = () => {
+    const names = merged.segments.filter((s) => !container._disabled.has(s.speaker)).map((s) => s.speaker);
+    const long = longSpeakerNames(names, { show_speakers: showSpk.checked, apply_limits: applyLimits.checked, chars_per_line: +cpl.value });
+    warn.textContent = long.length ? `Long speaker name${long.length > 1 ? "s" : ""} for ${cpl.value} characters per line: ${long.map((n) => `"${n}" (${n.length + 2})`).join(", ")}. Consider Rename globally to shorten.` : "";
+  };
   // How SRT times a line whose text you changed (its word timings no longer match the words).
   const editedTiming = el("select", { title: "SRT timing for lines whose text you edited", style: "min-width:180px" });
   [["align", "keep word timing"], ["even", "spread evenly"], ["whole", "one subtitle per line"]]
@@ -483,8 +497,10 @@ function buildExportPanel(container, merged) {
 
   // Subtitle limits only apply to SRT; toggling off disables (and ignores) the limit fields.
   const syncLimits = () => [cpl, maxLines, minDur].forEach((n) => { n.disabled = !applyLimits.checked; });
-  applyLimits.onchange = syncLimits;
+  applyLimits.onchange = () => { syncLimits(); checkNames(); };
   syncLimits();
+  cpl.oninput = showSpk.onchange = checkNames;
+  checkNames();
 
   const btn = el("button", { className: "primary", textContent: "Export" });
   btn.onclick = async () => {
@@ -492,7 +508,7 @@ function buildExportPanel(container, merged) {
       apply_limits: applyLimits.checked,
       chars_per_line: +cpl.value, max_lines: +maxLines.value,
       min_duration: +minDur.value, show_speakers: showSpk.checked,
-      pad_seconds: +pad.value, edited_timing: editedTiming.value,
+      pad_seconds: +pad.value, edited_timing: editedTiming.value, label_on_change: onChange.checked,
     };
     // Drop toggled-off speakers (all formats) — the backend just renders what we send.
     const segs = merged.segments.filter((s) => !container._disabled.has(s.speaker));
@@ -507,7 +523,8 @@ function buildExportPanel(container, merged) {
     field("Chars/line", cpl), field("Max lines", maxLines), field("Min dur (s)", minDur),
     field("Pad (s)", pad), field("Edited lines", editedTiming),
     el("label", { className: "opt" }, showSpk, "Show speakers"),
-    el("div", { className: "spacer" }), btn);
+    el("label", { className: "opt" }, onChange, "Name only on speaker change"),
+    el("div", { className: "spacer" }), btn, warn);
 }
 
 async function downloadExport(merged, format, filename, options) {
@@ -948,7 +965,7 @@ const DEFAULT_BATCH_SETTINGS = {
   options: { detect_conflicts: true, backchannel_render: "parenthetical", backchannel_max_words: 4,
              overlap_min_seconds: 2, bleed_window_seconds: 1, bleed_similarity: 0.7, bleed_prefer_ratio: 2 },
   export: { apply_limits: true, chars_per_line: 42, max_lines: 2, min_duration: 1, pad_seconds: 0,
-            show_speakers: true, edited_timing: "align" },
+            show_speakers: true, edited_timing: "align", label_on_change: false },
 };
 const batchSettings = structuredClone(DEFAULT_BATCH_SETTINGS);
 
@@ -996,7 +1013,8 @@ function buildSettingsBlock(s) {
       check(x, "apply_limits", "Subtitle limits"), field("Chars/line", limits[0]), field("Max lines", limits[1]),
       field("Min dur (s)", limits[2]),
       field("Pad (s)", num(x, "pad_seconds", { step: 0.1, min: 0 }), "extend each segment start/end by N seconds (video-edit breathing room)"),
-      field("Edited lines", edited), check(x, "show_speakers", "Show speakers")));
+      field("Edited lines", edited), check(x, "show_speakers", "Show speakers"),
+      check(x, "label_on_change", "Name only on speaker change")));
 }
 
 function addProject() {
@@ -1178,6 +1196,21 @@ function runBatch() {
     formats: p.override ? (p.formats || []) : gFormats,
   }));
   if (resolved.some((r) => !r.formats.length)) { err.textContent = "Pick at least one output format."; return; }
+
+  // Long speaker names: warn once, and run only on a second click ("Run anyway"), so it isn't missed.
+  const long = resolved.flatMap(({ p }) => longSpeakerNames(
+    p.files.flatMap((f) => f.source.tracks.filter((t) => t.selected !== false).map((t) => t.speaker)),
+    (p.settings || batchSettings).export).map((n) => `"${n}" (${p.name})`));
+  const warning = long.length ? `Long speaker name${long.length > 1 ? "s" : ""} for the subtitle line limit: ${long.join(", ")}. Shorten in the project, or click Run anyway.` : "";
+  if (warning && runBatch.acknowledged !== warning) {
+    $("#batch-warn").textContent = warning;
+    $("#run-batch").textContent = "Run anyway";
+    runBatch.acknowledged = warning;
+    return;
+  }
+  $("#batch-warn").textContent = "";
+  $("#run-batch").textContent = "Run batch";
+  runBatch.acknowledged = null;
 
   const body = {
     output_mode: mode,

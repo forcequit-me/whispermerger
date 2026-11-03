@@ -30,6 +30,9 @@ class ExportOptions:
     #   "even"  spread the text evenly over the line's start/end
     #   "whole" one subtitle for the whole line, exact start/end (may exceed max_lines)
     edited_timing: str = "align"
+    # SRT: name the speaker only on the first subtitle after a speaker change, as subtitlers do,
+    # instead of on every subtitle (TXT/CSV always name every line).
+    label_on_change: bool = False
 
 
 def pad_segments(merged: MergedOutput, pad: float) -> MergedOutput:
@@ -99,8 +102,11 @@ def to_srt(merged: MergedOutput, opts: ExportOptions | None = None) -> str:
     opts = opts or ExportOptions()
     blocks: list[str] = []
     index = 1
+    prev = None
     for seg in merged.segments:
-        for start, end, text in _segment_cues(seg, opts):
+        label = not opts.label_on_change or seg.speaker != prev
+        prev = seg.speaker
+        for start, end, text in _segment_cues(seg, opts, label):
             blocks.append(
                 f"{index}\n{_timecode(start)} --> {_timecode(end)}\n{text}\n"
             )
@@ -108,14 +114,19 @@ def to_srt(merged: MergedOutput, opts: ExportOptions | None = None) -> str:
     return "\n".join(blocks)
 
 
-def _segment_cues(seg: Segment, opts: ExportOptions):
+def _segment_cues(seg: Segment, opts: ExportOptions, label: bool = True):
     """Yield (start, end, text) cues for a segment, splitting on real word timing.
 
     With word data, words are packed into lines (<= CPL) and grouped into cues of <=
     max_lines lines; each cue's timing comes from its first/last word. Without word data,
     the text is wrapped and time is interpolated across the segment span.
     """
-    speaker = f"{seg.speaker}: " if opts.show_speakers else ""
+    speaker = f"{seg.speaker}: " if opts.show_speakers and label else ""
+    # Which cues carry the name: every cue's first line, or (label_on_change) only the segment's
+    # first. `span` is how often a line gets the label's width taken off (huge = only line 0).
+    every = not opts.label_on_change
+    span = opts.max_lines if every else 10**9
+    tag = lambda k: speaker if (k == 0 or every) else ""
 
     # Limits off: one cue per segment, whole text, segment timing — no splitting.
     if not opts.apply_limits:
@@ -126,13 +137,13 @@ def _segment_cues(seg: Segment, opts: ExportOptions):
     if words and " ".join(w.word.strip() for w in words) != seg.text.strip():
         # The text was edited (or decorated) after transcription, so the words no longer match it.
         if opts.edited_timing == "whole":
-            lines = _wrap_text(seg.text, opts.chars_per_line, len(speaker), opts.max_lines)
+            lines = _wrap_text(seg.text, opts.chars_per_line, len(speaker), span)
             yield seg.start, _enforce_min(seg.start, seg.end, opts.min_duration), _prefix(speaker, "\n".join(lines))
             return
         words = _retime(words, seg.text) if opts.edited_timing == "align" else None
 
     if words:
-        line_groups = _pack_words(words, opts.chars_per_line, len(speaker), opts.max_lines)
+        line_groups = _pack_words(words, opts.chars_per_line, len(speaker), span)
         cues = _group_lines(line_groups, opts.max_lines)
         for k, words_per_cue in enumerate(cues):
             flat = [w for line in words_per_cue for w in line]
@@ -144,17 +155,17 @@ def _segment_cues(seg: Segment, opts: ExportOptions):
             if k == len(cues) - 1:
                 end += opts.pad_seconds
             text = "\n".join(" ".join(w.word.strip() for w in line) for line in words_per_cue)
-            yield start, _enforce_min(start, end, opts.min_duration), _prefix(speaker, text)
+            yield start, _enforce_min(start, end, opts.min_duration), _prefix(tag(k), text)
         return
 
     # Fallback: no word timings — wrap text, interpolate time evenly.
-    text_lines = _wrap_text(seg.text, opts.chars_per_line, len(speaker), opts.max_lines)
+    text_lines = _wrap_text(seg.text, opts.chars_per_line, len(speaker), span)
     cues = _chunk(text_lines, opts.max_lines)
     span = (seg.end - seg.start) / max(len(cues), 1)
     for i, cue_lines in enumerate(cues):
         start = seg.start + i * span
         end = _enforce_min(start, start + span, opts.min_duration)
-        yield start, end, _prefix(speaker, "\n".join(cue_lines))
+        yield start, end, _prefix(tag(i), "\n".join(cue_lines))
 
 
 def _norm(token: str) -> str:
