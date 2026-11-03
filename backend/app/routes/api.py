@@ -786,7 +786,21 @@ def list_models() -> dict:
         out.append({"id": e.id, "kind": e.kind, "name": e.name, "size_mb": e.size_mb, "info": e.info,
                     "installed": modelstore.is_installed(e),
                     "download": d.to_dict() if d else None})
-    return {"active": f"whisper:{modelstore.active_whisper()}", "models": out}
+    return {"active": f"whisper:{modelstore.active_whisper()}", "models": out,
+            "auto_portuguese": modelstore.pt_default(),
+            # what each dropdown variant needs on disk, so the dropdowns can show the download size
+            "variants": {"pt-PT": ["align:pt", f"whisper:{modelstore.portugal_model()}"], "pt-BR": ["align:pt"]}}
+
+
+class AutoPortugueseIn(BaseModel):
+    value: Literal["pt-PT", "pt-BR"] | None = None
+
+
+@router.post("/settings/auto-portuguese")
+def set_auto_portuguese(body: AutoPortugueseIn) -> dict:
+    """What Auto-detect treats detected Portuguese as (saved across restarts)."""
+    modelstore.set_pt_default(body.value)
+    return {"auto_portuguese": body.value}
 
 
 @router.post("/models/{model_id}/download")
@@ -821,7 +835,10 @@ def use_model(model_id: str) -> dict:
         raise HTTPException(400, "only speech models can be chosen")
     if not modelstore.is_installed(e):
         raise HTTPException(409, "download it first")
-    modelstore.set_active_whisper(model_id.partition(":")[2])
+    try:
+        modelstore.set_active_whisper(model_id.partition(":")[2])
+    except ValueError as exc:                # a one-language model (used automatically for it)
+        raise HTTPException(400, str(exc))
     unload_models()                          # free the old model's VRAM; the new one loads on next run
     return {"active": model_id}
 
@@ -842,4 +859,5 @@ def benchmark_result(request: Request, job_id: str) -> dict:
     job = request.app.state.jobs.get(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
-    return {"expected": benchmark.SENTENCE, "results": job.result or []}
+    return {"expected": {"English": benchmark.SENTENCE, "European Portuguese": benchmark.PT_SENTENCE},
+            "results": job.result or []}

@@ -38,11 +38,33 @@ EXTRA_ALIGN_MODELS = {
 # The speech models offered in the Models tab. Sizes are the download in MB (measured 2026-11);
 # speed/accuracy are rough tiers, the Benchmark gives real numbers on this machine.
 WHISPER_MODELS = {
+    # multilingual
     "large-v3":          dict(size_mb=3091, accuracy="best", speed="slowest", languages="99 languages"),
+    "large-v2":          dict(size_mb=3090, accuracy="best (previous)", speed="slowest", languages="99 languages"),
     "large-v3-turbo":    dict(size_mb=1622, accuracy="near large-v3", speed="fast", languages="99 languages"),
-    "distil-large-v3.5": dict(size_mb=1516, accuracy="near large-v3", speed="fastest", languages="English only"),
     "medium":            dict(size_mb=1531, accuracy="good", speed="medium", languages="99 languages"),
     "small":             dict(size_mb=486, accuracy="fair", speed="fast", languages="99 languages"),
+    "base":              dict(size_mb=148, accuracy="rough", speed="very fast", languages="99 languages"),
+    "tiny":              dict(size_mb=78, accuracy="roughest", speed="fastest", languages="99 languages"),
+    # English only
+    "distil-large-v3.5": dict(size_mb=1516, accuracy="near large-v3", speed="fastest", languages="English only"),
+    "distil-large-v3":   dict(size_mb=1516, accuracy="near large-v3", speed="fastest", languages="English only"),
+    "medium.en":         dict(size_mb=1530, accuracy="good", speed="medium", languages="English only"),
+    "distil-medium.en":  dict(size_mb=792, accuracy="fair", speed="very fast", languages="English only"),
+    "small.en":          dict(size_mb=486, accuracy="fair", speed="fast", languages="English only"),
+    "distil-small.en":   dict(size_mb=336, accuracy="rough", speed="very fast", languages="English only"),
+    "base.en":           dict(size_mb=148, accuracy="rough", speed="very fast", languages="English only"),
+    "tiny.en":           dict(size_mb=78, accuracy="roughest", speed="fastest", languages="English only"),
+    # one language: used automatically for that language (not chosen app-wide). CAMOES is INESC-ID's
+    # large-v3 fine-tune on 425 h of European Portuguese (arXiv 2508.19721: 12.5% vs 19.2% WER);
+    # these are community CTranslate2 conversions of it. License unstated by the authors.
+    "camoes":            dict(size_mb=3092, accuracy="best for European Portuguese", speed="slowest",
+                              languages="Portuguese (Portugal)", for_language="pt-PT",
+                              label="CAMÕES (European Portuguese)", repo="tigopt/CAMOES-whisper-asr-CT2"),
+    "camoes-int8":       dict(size_mb=1564, accuracy="near CAMÕES", speed="slow",
+                              languages="Portuguese (Portugal)", for_language="pt-PT",
+                              label="CAMÕES compressed (European Portuguese)", compute_type="int8_float16",
+                              repo="marquesafonso/camoes-faster-whisper-asr-int8"),
 }
 DEFAULT_WHISPER = "large-v3"
 # App-wide settings that survive restarts (tmp/uploads is wiped at startup; this file isn't).
@@ -59,14 +81,41 @@ def _settings() -> dict:
 def active_whisper() -> str:
     """The speech model every run uses (chosen in the Models tab)."""
     name = _settings().get("whisper_model")
-    return name if name in WHISPER_MODELS else DEFAULT_WHISPER
+    return name if name in WHISPER_MODELS and "for_language" not in WHISPER_MODELS[name] else DEFAULT_WHISPER
 
 
 def set_active_whisper(name: str) -> None:
-    if name not in WHISPER_MODELS:
-        raise ValueError(f"unknown speech model {name}")
+    if name not in WHISPER_MODELS or "for_language" in WHISPER_MODELS[name]:
+        raise ValueError(f"{name} can't be the app-wide speech model")
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(json.dumps({**_settings(), "whisper_model": name}, indent=2), "utf-8")
+
+
+# Dropdown language codes that Whisper itself doesn't have: variant -> Whisper's code. Results are
+# labeled with the variant; European Portuguese is transcribed with CAMOES.
+LANGUAGE_VARIANTS = {"pt-PT": "pt", "pt-BR": "pt"}
+
+
+def portugal_model() -> str:
+    """CAMOES for European Portuguese: the full model if it's on disk, else the compressed one if
+    that is, else the full one (downloaded on first use)."""
+    for name in ("camoes", "camoes-int8"):
+        if is_installed(whisper_entry(name)):
+            return name
+    return "camoes"
+
+
+def pt_default() -> Optional[str]:
+    """What Auto-detect treats detected Portuguese as: "pt-PT", "pt-BR", or None (plain "pt")."""
+    v = _settings().get("auto_portuguese")
+    return v if v in LANGUAGE_VARIANTS else None
+
+
+def set_pt_default(value: Optional[str]) -> None:
+    if value is not None and value not in LANGUAGE_VARIANTS:
+        raise ValueError(f"unknown Portuguese variant {value}")
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps({**_settings(), "auto_portuguese": value}, indent=2), "utf-8")
 
 
 def english_only(name: str) -> bool:
@@ -125,8 +174,13 @@ def _whisper_repo(name: str) -> str:
 
 def whisper_entry(name: str) -> ModelEntry:
     meta = WHISPER_MODELS.get(name, dict(size_mb=0, accuracy="?", speed="?", languages="?"))
-    return ModelEntry(f"whisper:{name}", "whisper", f"Whisper {name}", meta["size_mb"],
-                      repo=_whisper_repo(name), info=meta)
+    return ModelEntry(f"whisper:{name}", "whisper", meta.get("label", f"Whisper {name}"), meta["size_mb"],
+                      repo=meta.get("repo") or _whisper_repo(name), info=meta)
+
+
+def model_path(name: str) -> str:
+    """What to hand faster-whisper: its own short name, or our repo for a model it doesn't know."""
+    return WHISPER_MODELS.get(name, {}).get("repo") or name
 
 
 def align_entry(lang: str) -> Optional[ModelEntry]:

@@ -66,3 +66,46 @@ def test_runs_use_the_chosen_model_and_english_only_guard(monkeypatch, tmp_path)
         transcribe.transcribe_track(tmp_path / "x.wav", language="nl")
     with pytest.raises(ValueError):
         transcribe.modelstore.set_active_whisper("nope")
+
+
+class _DetectingModel(_FakeModel):
+    def __init__(self, lang, calls):
+        super().__init__(lang)
+        self.calls = calls
+
+    def detect_language(self, audio):
+        return self.lang
+
+    def transcribe(self, audio, batch_size, language):
+        self.calls.append(language)
+        return {"language": language or self.lang, "segments": [{"start": 0.0, "end": 1.0, "text": " olá"}]}
+
+
+def test_portuguese_variants_route_model_language_and_label(monkeypatch, tmp_path):
+    ms = transcribe.modelstore
+    monkeypatch.setattr(ms, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(ms, "ensure", lambda e: None)
+    monkeypatch.setattr(ms, "is_installed", lambda e: e.id == "whisper:camoes-int8")   # only compressed on disk
+    monkeypatch.setattr(whisperx, "load_audio", lambda p: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(transcribe, "has_align_model", lambda lang: False)            # skip word timing
+    loaded, sent = [], []
+
+    def load(name, *a):
+        loaded.append(name)
+        return _DetectingModel(detect, sent)
+
+    monkeypatch.setattr(transcribe, "_load_model", load)
+    detect = "pt"
+
+    assert transcribe.transcribe_track(tmp_path / "x.wav", language="pt-PT")["language"] == "pt-PT"
+    assert loaded[-1] == "camoes-int8" and sent[-1] == "pt"          # CAMOES (what's on disk), Whisper "pt"
+
+    assert transcribe.transcribe_track(tmp_path / "x.wav", language="pt-BR")["language"] == "pt-BR"
+    assert loaded[-1] == "large-v3" and sent[-1] == "pt"             # the app-wide model
+
+    ms.set_pt_default("pt-PT")                                       # Auto-detect + Portugal default
+    assert transcribe.transcribe_track(tmp_path / "x.wav")["language"] == "pt-PT"
+    assert loaded[-2:] == ["large-v3", "camoes-int8"]               # detect with chosen, transcribe with CAMOES
+    detect = "es"                                                    # not Portuguese: default doesn't apply
+    assert transcribe.transcribe_track(tmp_path / "x.wav")["language"] == "es"
+    assert loaded[-1] == "large-v3" and sent[-1] is None

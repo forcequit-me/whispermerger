@@ -94,7 +94,8 @@
               <option value="fr">French</option>
               <option value="de">German</option>
               <option value="it">Italian</option>
-              <option value="pt">Portuguese</option>
+              <option value="pt-PT">Portuguese (Portugal)</option>
+              <option value="pt-BR">Portuguese (Brazil)</option>
               <option value="nl">Dutch</option>
               <option value="no">Norwegian</option>
               <option value="sv">Swedish</option>
@@ -180,7 +181,8 @@
               <option value="fr">French</option>
               <option value="de">German</option>
               <option value="it">Italian</option>
-              <option value="pt">Portuguese</option>
+              <option value="pt-PT">Portuguese (Portugal)</option>
+              <option value="pt-BR">Portuguese (Brazil)</option>
               <option value="nl">Dutch</option>
               <option value="no">Norwegian</option>
               <option value="sv">Swedish</option>
@@ -294,7 +296,8 @@
               <option value="fr">French</option>
               <option value="de">German</option>
               <option value="it">Italian</option>
-              <option value="pt">Portuguese</option>
+              <option value="pt-PT">Portuguese (Portugal)</option>
+              <option value="pt-BR">Portuguese (Brazil)</option>
               <option value="nl">Dutch</option>
               <option value="no">Norwegian</option>
               <option value="sv">Swedish</option>
@@ -373,6 +376,14 @@
           <span id="bench-status" class="muted">Times each downloaded model on this machine, on a sentence read by the Windows voice.</span>
         </div>
         <table class="models" id="bench-results" style="display:none; margin-top:8px"></table>
+        <div class="row" style="margin-top:12px">
+          <label class="field" title="Whisper can't tell European from Brazilian Portuguese by ear. Portugal runs on CAMÕES."><span>When Auto-detect hears Portuguese</span>
+            <select id="auto-portuguese">
+              <option value="">no preference</option>
+              <option value="pt-PT">treat as Portugal (CAMÕES)</option>
+              <option value="pt-BR">treat as Brazil</option>
+            </select></label>
+        </div>
       </div>
       <div class="panel">
         <h2>Word-timing models</h2>
@@ -383,7 +394,7 @@
     </section>
   </main>
 
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=33"></script>
   <script type="module" src="labeltrack.js?v=9"></script>
 </body>
 </html>

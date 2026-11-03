@@ -78,7 +78,17 @@ def _allow_full_torch_load() -> None:
 def _load_model(model_name: str, compute_type: str, device: str):
     import whisperx
     _allow_full_torch_load()
-    return whisperx.load_model(model_name, device, compute_type=compute_type)
+    # A catalog model may name its own repo and precision (e.g. an int8 conversion).
+    compute_type = modelstore.WHISPER_MODELS.get(model_name, {}).get("compute_type", compute_type)
+    pipe = whisperx.load_model(modelstore.model_path(model_name), device, compute_type=compute_type)
+    # A conversion without preprocessor_config.json gets faster-whisper's 80-band default; large-v3
+    # derivatives (e.g. CAMOES int8) need 128. Take the band count from the model itself.
+    wm = pipe.model
+    if wm.feat_kwargs.get("feature_size", 80) != wm.model.n_mels:
+        from faster_whisper.feature_extractor import FeatureExtractor
+        wm.feat_kwargs["feature_size"] = wm.model.n_mels
+        wm.feature_extractor = FeatureExtractor(**wm.feat_kwargs)
+    return pipe
 
 
 @lru_cache(maxsize=4)
@@ -129,23 +139,37 @@ def transcribe_track(
     import whisperx
 
     model_name = model_name or modelstore.active_whisper()
-    if language not in (None, "en") and modelstore.english_only(model_name):
-        raise ValueError(f"Whisper {model_name} only transcribes English. Choose another speech model "
-                         f"in the Models tab, or set Language to English or Auto-detect.")
+    # Auto-detect with a Portuguese default: the default is part of the key, since it decides the model.
+    pt_default = modelstore.pt_default() if language is None else None
 
     # A forced language with no alignment model caches under its own tag, so adding a model for
     # it later re-aligns instead of reusing the unaligned result.
     # ponytail: auto-detect can't know the language up front, so an unaligned auto-detect result
     # stays cached under the normal tag; Clear cache re-runs it if a model is added later.
-    tag = ALIGN_TAG if (language is None or has_align_model(language)) else "none"
-    key = cache_key(audio_path, model_name, tag, language) if cache else None
+    base_lang = modelstore.LANGUAGE_VARIANTS.get(language, language)
+    tag = ALIGN_TAG if (base_lang is None or has_align_model(base_lang)) else "none"
+    key_lang = language or (f"auto:{pt_default}" if pt_default else None)
+    if language == "pt-PT":                      # European Portuguese runs on CAMOES, whatever is chosen
+        model_name = modelstore.portugal_model()
+    key = cache_key(audio_path, model_name, tag, key_lang) if cache else None
     if cache and (hit := cache.get(key)) is not None:
         return hit
 
     audio = whisperx.load_audio(str(audio_path))
+    if pt_default:                                # find out first whether it's Portuguese at all
+        modelstore.ensure(modelstore.whisper_entry(model_name))
+        if _load_model(model_name, compute_type, device).detect_language(audio) == "pt":
+            language = pt_default
+    if language == "pt-PT":
+        model_name = modelstore.portugal_model()
+    whisper_lang = modelstore.LANGUAGE_VARIANTS.get(language, language)
+    if whisper_lang not in (None, "en") and modelstore.english_only(model_name):
+        raise ValueError(f"Whisper {model_name} only transcribes English. Choose another speech model "
+                         f"in the Models tab, or set Language to English or Auto-detect.")
+
     modelstore.ensure(modelstore.whisper_entry(model_name))   # downloads visibly if missing
     model = _load_model(model_name, compute_type, device)
-    result = model.transcribe(audio, batch_size=batch_size, language=language)  # VAD on by default
+    result = model.transcribe(audio, batch_size=batch_size, language=whisper_lang)  # VAD on by default
 
     detected = result.get("language", "en")
     if has_align_model(detected):
@@ -163,7 +187,9 @@ def transcribe_track(
         segments = [{"start": s["start"], "end": s["end"], "text": s["text"], "words": []}
                     for s in result["segments"]]
 
-    output = {"language": detected, "segments": segments}
+    # Label results with the variant ("pt-PT" / "pt-BR") when one was chosen or defaulted to.
+    output = {"language": language if language in modelstore.LANGUAGE_VARIANTS else detected,
+              "segments": segments}
     if cache:
         cache.put(key, output)
     return output

@@ -37,6 +37,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   first-use download of that language's wav2vec2 alignment model. Swedish uses KBLab's wav2vec2
   model. A language with no alignment model still transcribes, keeping Whisper's line timings
   without word-level timing (SRT splits inside a long line are then estimated).
+  **Portuguese** comes in two: *Portugal* runs on CAMÕES (INESC-ID's large-v3 fine-tune on 425 h
+  of European Portuguese, ~35% fewer errors than large-v3 on their benchmark) and *Brazil* on the
+  chosen speech model; results are labeled `pt-PT` / `pt-BR`. Whisper can't tell the two apart
+  by ear, so the Models tab sets what Auto-detect treats detected Portuguese as.
 - **Cancel & restart, per item** — cancel the **whole batch**, a **single project** (the queue
   continues to the next), or a **single file** inside a one-transcript-per-file project (the other
   files keep going) — all cooperative, stopping at the next boundary so the in-flight file finishes.
@@ -168,10 +172,13 @@ split also prints to the server console as a scrollback record (`[timing] <file>
   Remove. Downloads show progress, can be canceled, and resume where they stopped (also after a
   dropped connection). A run that needs a missing model downloads it as a visible step; Pause and
   Cancel work during it. Language dropdowns note which languages still need a download.
-  **Use** picks the speech model every run uses (large-v3 by default; turbo, distil-large-v3.5
-  (English only), medium, small), saved across restarts. **Benchmark** times each downloaded
-  model on this machine — cold load, transcription speed, and how much of a sentence read by the
-  Windows voice it got right.
+  **Use** picks the speech model every run uses (large-v3 by default; also large-v2, turbo,
+  medium, small, base, tiny, and English-only distil-large-v3.5 / distil-large-v3 / medium.en /
+  distil-medium.en / small.en / distil-small.en / base.en / tiny.en), saved across restarts.
+  CAMÕES (full or compressed) isn't chosen app-wide — it's used automatically for Portuguese
+  (Portugal). **Benchmark** times each downloaded model on this machine — cold load,
+  transcription speed, and how much of a sentence read by a Windows voice it got right (English,
+  plus European Portuguese when CAMÕES is downloaded and a pt-PT voice is installed).
 
 ## Architecture
 

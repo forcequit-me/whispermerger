@@ -1604,7 +1604,8 @@ async function refreshModels() {
   // first call loads the speech library on the server (~10 s), hence the long timeout
   try { data = await (await fetchTO("/api/models", {}, 60000)).json(); } catch { return; }
   renderModels(data);
-  annotateLanguages(data.models);
+  annotateLanguages(data.models, data.variants);
+  $("#auto-portuguese").value = data.auto_portuguese || "";
   clearTimeout(modelsPoll);
   if (data.models.some(isDownloading)) modelsPoll = setTimeout(refreshModels, 1000);   // live progress
 }
@@ -1629,8 +1630,10 @@ function modelAction(m, active) {
     const rm = el("button", { className: "ghost", textContent: "Remove", disabled: inUse,
       title: inUse ? "in use — choose another speech model first" : "delete from disk" });
     rm.onclick = () => call("", "DELETE");
-    const use = m.kind === "whisper" && !inUse ? el("button", { className: "ghost", textContent: "Use", title: "make this the speech model every run uses" }) : "";
-    if (use) use.onclick = () => call("/use");
+    // A one-language model (CAMÕES) is used automatically for its language, not chosen app-wide.
+    const use = m.info.for_language ? el("span", { className: "meta", textContent: `used for ${m.info.languages}` })
+      : m.kind === "whisper" && !inUse ? el("button", { className: "ghost", textContent: "Use", title: "make this the speech model every run uses" }) : "";
+    if (use.tagName === "BUTTON") use.onclick = () => call("/use");
     return el("span", { className: "dl" }, el("span", { className: "ok", textContent: inUse ? "In use" : "Downloaded" }), use, rm);
   }
   const partial = d && d.done > 0;
@@ -1641,7 +1644,10 @@ function modelAction(m, active) {
   return el("span", { className: "dl" }, note, get);
 }
 
+const modelNames = {};   // short name -> display name, for the benchmark table
+
 function renderModels(data) {
+  data.models.forEach((m) => { if (m.kind === "whisper") modelNames[m.id.slice(8)] = m.name; });
   const w = $("#models-whisper"), a = $("#models-align");
   w.innerHTML = a.innerHTML = "";
   for (const m of data.models) {
@@ -1657,17 +1663,25 @@ function renderModels(data) {
 }
 
 // Language dropdowns say up front when picking a language means a download (and how big).
-function annotateLanguages(models) {
-  const align = Object.fromEntries(models.filter((m) => m.kind === "align").map((m) => [m.info.language, m]));
+function annotateLanguages(models, variants = {}) {
+  const byId = Object.fromEntries(models.map((m) => [m.id, m]));
   for (const sel of LANG_SELECTS) {
     for (const o of $(sel)?.options || []) {
       if (!o.value) continue;
       o.dataset.base ||= o.textContent;
-      const m = align[o.value];
-      o.textContent = m && !m.installed && !isDownloading(m) ? `${o.dataset.base} · ${fmtSize(m.size_mb)} download` : o.dataset.base;
+      // a plain language needs its word-timing model; a variant (pt-PT) may also need its speech model
+      const need = (variants[o.value] || [`align:${o.value}`]).map((id) => byId[id])
+        .filter((m) => m && !m.installed && !isDownloading(m));
+      const mb = need.reduce((n, m) => n + m.size_mb, 0);
+      o.textContent = mb ? `${o.dataset.base} · ${fmtSize(mb)} download` : o.dataset.base;
     }
   }
 }
+
+$("#auto-portuguese").onchange = async (e) => {
+  await fetch("/api/settings/auto-portuguese", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: e.target.value || null }) });
+};
 
 document.querySelectorAll(".tab-btn").forEach((b) => b.addEventListener("click", refreshModels));
 refreshModels();
@@ -1690,19 +1704,25 @@ $("#bench-run").onclick = async () => {
   if (p.status === "error") { status.textContent = "error: " + p.error; return; }
   if (p.status === "cancelled") { status.textContent = "canceled"; return; }
   const { expected, results } = await (await fetch(`/api/benchmark/${job_id}`)).json();
-  status.textContent = `Test sentence: "${expected}"`;
+  status.textContent = "";
   const t = $("#bench-results");
   t.style.display = "";
   t.innerHTML = "";
-  t.append(el("tr", {}, ...["Model", "Load", "Transcribe", "Speed", "Match", "What it heard"]
-    .map((h) => el("td", { className: "meta", textContent: h }))));
-  for (const x of results) {
-    t.append(el("tr", {},
-      el("td", { textContent: `Whisper ${x.model}` }),
-      el("td", { className: "size", textContent: `${x.load_s}s` }),
-      el("td", { className: "size", textContent: `${x.transcribe_s}s` }),
-      el("td", { className: "size", textContent: `${x.speed_x}× realtime`, title: `${x.audio_s}s of audio` }),
-      el("td", { className: "size", textContent: `${Math.round(x.match * 100)}%` }),
-      el("td", { className: "meta", textContent: x.heard })));
+  // One group per test sentence (English; European Portuguese when a CAMÕES model is downloaded).
+  for (const test of [...new Set(results.map((x) => x.test))]) {
+    t.append(el("tr", {}, el("td", { colSpan: 6 }, el("strong", { textContent: test }),
+      el("div", { className: "meta", textContent: `Said: "${expected[test]}"` }))));
+    t.append(el("tr", {}, ...["Model", "Load", "Transcribe", "Speed", "Match", "What it heard"]
+      .map((h) => el("td", { className: "meta", textContent: h }))));
+    for (const x of results.filter((r) => r.test === test)) {
+      const name = (modelNames[x.model] || `Whisper ${x.model}`);
+      t.append(el("tr", {},
+        el("td", { textContent: name }),
+        el("td", { className: "size", textContent: `${x.load_s}s` }),
+        el("td", { className: "size", textContent: `${x.transcribe_s}s` }),
+        el("td", { className: "size", textContent: `${x.speed_x}× realtime`, title: `${x.audio_s}s of audio` }),
+        el("td", { className: "size", textContent: `${Math.round(x.match * 100)}%` }),
+        el("td", { className: "meta", textContent: x.heard })));
+    }
   }
 };
