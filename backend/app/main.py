@@ -5,6 +5,7 @@ Run: `uvicorn app.main:app --port 8756` from the backend/ directory.
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from .routes.api import router as api_router
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BACKEND_DIR.parent
 FRONTEND_DIR = REPO_DIR / "frontend"
-UPLOAD_DIR = BACKEND_DIR / "tmp" / "uploads"
+UPLOAD_DIR = Path(os.environ.get("WM_UPLOAD_DIR") or BACKEND_DIR / "tmp" / "uploads")   # tests override
 CACHE_DIR = BACKEND_DIR / "tmp" / "cache"
 
 

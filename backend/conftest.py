@@ -1,6 +1,7 @@
 """Shared test fixtures. Lives at backend/ so `app` imports resolve when running pytest
 from the backend directory."""
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -9,6 +10,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))  # ensure `app` is importable
+# app.main wipes its upload dir on import; give tests their own so a running app keeps its files
+os.environ.setdefault("WM_UPLOAD_DIR", tempfile.mkdtemp(prefix="wm_test_uploads_"))
 
 
 @pytest.fixture(scope="session")
