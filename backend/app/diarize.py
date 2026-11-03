@@ -110,9 +110,12 @@ def transcribe_regions(
     transcribe_fn: TranscribeFn,
     *,
     options: Optional[MergeOptions] = None,
+    progress: Optional[Callable[[float, str], None]] = None,
 ) -> MergedOutput:
     """Transcribe each speaker on only their labeled regions, remap onto the original
-    timeline, and merge. `track_wav` is the single track extracted to mono/16k."""
+    timeline, and merge. `track_wav` is the single track extracted to mono/16k.
+    `progress(frac, msg)` fires before each speaker, weighted by labeled seconds; it is also the
+    job's pause/cancel checkpoint, so those take effect between speakers."""
     import soundfile as sf
 
     audio, sr = sf.read(str(track_wav), dtype="float32")
@@ -121,9 +124,14 @@ def transcribe_regions(
 
     outputs: list[dict] = []
     labels: list[str] = []
+    secs = {spk: sum(e - s for s, e in regs) for spk, regs in speaker_regions.items()}
+    total, done = sum(secs.values()) or 1.0, 0.0
     tmpdir = Path(tempfile.mkdtemp(prefix="wm_diar_"))
     try:
-        for speaker, regions in speaker_regions.items():
+        for k, (speaker, regions) in enumerate(speaker_regions.items(), 1):
+            if progress:
+                progress(done / total, f"transcribing {speaker} ({k}/{len(speaker_regions)})")
+            done += secs[speaker]
             concat, mapping = _concat_regions(audio, regions, sr)
             if len(concat) == 0:
                 continue

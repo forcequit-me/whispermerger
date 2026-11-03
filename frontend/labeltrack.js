@@ -414,7 +414,8 @@ async function runTranscribe() {
   try {
     res = await window.fetchTO("/api/diarize", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file_id: activeFileId, track_index: activeTrack, speakers: map, options: { detect_conflicts: true } }),
+      body: JSON.stringify({ file_id: activeFileId, track_index: activeTrack, speakers: map, options: { detect_conflicts: true },
+                             language: $("#label-language").value || null }),
     }, 30000);
   } catch (e) { $("#label-status").textContent = "couldn't reach the server to start."; btn.disabled = false; return; }
   if (!res.ok) { $("#label-status").textContent = "Failed: " + (await res.text()); btn.disabled = false; return; }
@@ -424,6 +425,25 @@ async function runTranscribe() {
 
 function poll(jobId, btn) {
   let fails = 0;
+  // Pause/Cancel mirror the Transcribe tab (app.js pollJob); both act at the next speaker boundary.
+  const cancelBtn = $("#label-cancel"), pauseBtn = $("#label-pause");
+  let paused = false;                                  // last-known server pause state
+  cancelBtn.style.display = pauseBtn.style.display = "";
+  cancelBtn.disabled = pauseBtn.disabled = false;
+  cancelBtn.textContent = "Cancel"; pauseBtn.textContent = "Pause";
+  cancelBtn.onclick = async () => {
+    cancelBtn.disabled = true; cancelBtn.textContent = "Canceling…";
+    try { await fetch(`/api/cancel/${jobId}`, { method: "POST" }); } catch {}
+  };
+  pauseBtn.onclick = async () => {
+    pauseBtn.disabled = true;
+    pauseBtn.textContent = paused ? "Resuming…" : "Pausing…";
+    try { await fetch(`/api/${paused ? "resume" : "pause"}/${jobId}`, { method: "POST" }); } catch {}
+  };
+  const finish = () => {
+    btn.disabled = false;
+    cancelBtn.style.display = pauseBtn.style.display = "none";
+  };
   const tick = async () => {
     let p;
     try {
@@ -438,7 +458,11 @@ function poll(jobId, btn) {
         : "working… waiting for the server";
       setTimeout(tick, 1200); return;
     }
-    const line = (p.message || p.status) + (p.elapsed ? " · " + window.fmtElapsed(p.elapsed) : "");
+    paused = !!p.paused;
+    pauseBtn.disabled = false;
+    pauseBtn.textContent = paused ? "Resume" : "Pause";
+    const msg = (p.paused && !p.gpu_freed) ? "pausing… (finishing current speaker)" : (p.message || p.status);
+    const line = msg + (p.elapsed ? " · " + window.fmtElapsed(p.elapsed) : "");
     setLabelBar(p.progress, line);
     $("#label-status").textContent = line;
     if (p.status === "done") {
@@ -453,10 +477,11 @@ function poll(jobId, btn) {
         setLabelBar(1, "done");
         $("#label-status").textContent = "done";
       } catch (e) { $("#label-status").textContent = "done — but couldn't load the result"; }
-      btn.disabled = false;
+      finish();
       return;
     }
-    if (p.status === "error") { setLabelBar(p.progress, "error"); $("#label-status").textContent = "error: " + p.error; btn.disabled = false; return; }
+    if (p.status === "cancelled") { setLabelBar(p.progress, "canceled"); $("#label-status").textContent = "canceled"; finish(); return; }
+    if (p.status === "error") { setLabelBar(p.progress, "error"); $("#label-status").textContent = "error: " + p.error; finish(); return; }
     setTimeout(tick, 600);
   };
   tick();

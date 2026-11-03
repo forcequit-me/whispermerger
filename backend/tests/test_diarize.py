@@ -61,3 +61,14 @@ def test_duplicated_region_is_overlap_not_bleed(tmp_path):
                                      "words": []}]}
     out = transcribe_regions(str(tmp_path / "t.wav"), {"A": [(1, 3)], "B": [(1, 3)]}, stub)
     assert [s.flags for s in out.segments] == [["overlap"], ["overlap"]]
+
+
+def test_transcribe_regions_reports_progress_by_labeled_seconds(tmp_path):
+    sr = 16000
+    sf.write(str(tmp_path / "t.wav"), np.zeros(sr * 10, dtype=np.float32), sr, subtype="PCM_16")
+    stub = lambda _w: {"segments": []}
+    calls = []
+    transcribe_regions(str(tmp_path / "t.wav"), {"A": [(0, 1)], "B": [(2, 5)]}, stub,
+                       progress=lambda f, m: calls.append((round(f, 2), m)))
+    # A has 1 of 4 labeled seconds, so B starts at 25%
+    assert calls == [(0.0, "transcribing A (1/2)"), (0.25, "transcribing B (2/2)")]

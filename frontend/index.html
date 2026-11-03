@@ -286,16 +286,35 @@
         <div id="label-lanes" style="display:none; margin-top:10px"></div>
         <div class="row" style="margin-top:12px">
           <button id="label-run" class="primary">Transcribe labeled regions</button>
+          <label class="field"><span>Language</span>
+            <select id="label-language">
+              <option value="">Auto-detect</option>
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="it">Italian</option>
+              <option value="pt">Portuguese</option>
+              <option value="nl">Dutch</option>
+              <option value="no">Norwegian</option>
+              <option value="sv">Swedish</option>
+              <option value="da">Danish</option>
+              <option value="ja">Japanese</option>
+              <option value="zh">Chinese</option>
+            </select></label>
           <span id="label-status" class="muted"></span>
         </div>
         <div class="progress-wrap" id="label-progress" style="margin-top:12px">
           <div class="progress-head">
             <h2>Progress</h2>
+            <div class="spacer"></div>
+            <button id="label-pause" class="ghost" style="display:none">Pause</button>
+            <button id="label-cancel" class="ghost" style="display:none">Cancel</button>
             <span class="progress-pct" id="label-pct">0%</span>
           </div>
           <div class="bar"><div id="label-bar"></div></div>
           <div class="progress-msg" id="label-progress-msg"></div>
-          <div class="progress-note">% = share of labeled speaker regions transcribed</div>
+          <div class="progress-note">% = share of labeled speech transcribed · moves one speaker at a time; Pause/Cancel take effect between speakers</div>
         </div>
       </div>
 

@@ -190,6 +190,7 @@ class DiarizeRequest(BaseModel):
     track_index: int = 0
     speakers: dict[str, list[list[float]]]   # speaker name -> [[start, end], ...]
     options: MergeOptionsIn = MergeOptionsIn()
+    language: str | None = None              # force a language code; None = auto-detect
 
 
 class CombineFile(BaseModel):
@@ -461,11 +462,10 @@ def diarize(request: Request, body: DiarizeRequest) -> JobCreated:
     job = request.app.state.jobs.create()
 
     def work(progress) -> MergedOutput:
-        progress(0.1, "transcribing labeled regions")
         return transcribe_regions(
             str(wav), speaker_regions,
-            lambda w: transcribe_track(w, cache=cache),
-            options=options,
+            lambda w: transcribe_track(w, cache=cache, language=body.language),
+            options=options, progress=progress,
         )
 
     request.app.state.jobs.run(job, work, on_pause=unload_models)

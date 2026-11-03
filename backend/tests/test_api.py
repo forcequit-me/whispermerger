@@ -166,6 +166,19 @@ def test_vad_endpoint_returns_regions(client, two_stream_file):
     assert isinstance(r.json(), list)  # tone -> no speech, but endpoint works
 
 
+def test_diarize_passes_language(client, two_stream_file, monkeypatch):
+    seen = []
+    monkeypatch.setattr(routes.api, "transcribe_track",
+                        lambda w, **kw: seen.append(kw.get("language")) or _stub_transcribe(w))
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    job_id = client.post("/api/diarize", json={
+        "file_id": file_id, "speakers": {"A": [[0.0, 1.0]]}, "language": "no"}).json()["job_id"]
+    deadline = time.time() + 5
+    while client.get(f"/api/progress/{job_id}").json()["status"] not in ("done", "error")             and time.time() < deadline:
+        time.sleep(0.02)
+    assert seen == ["no"]
+
+
 def test_diarize_flow(client, two_stream_file, monkeypatch):
     monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)
     file_id = _add(client, two_stream_file)[0]["file_id"]
