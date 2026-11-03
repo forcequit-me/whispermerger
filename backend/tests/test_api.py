@@ -1,7 +1,9 @@
 """API tests via FastAPI TestClient. Files are registered by path (/add-path); the GUI
 picker (/browse) is tested with a monkeypatched picker. transcribe is stubbed (no GPU)."""
 
+import subprocess
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,6 +47,23 @@ def test_browse_uses_native_picker(client, two_stream_file, monkeypatch):
 def test_browse_cancelled_returns_empty(client, monkeypatch):
     monkeypatch.setattr(routes.api, "_native_pick", lambda: [])
     assert client.post("/api/browse").json() == []
+
+
+def test_browse_skips_unreadable_file(client, two_stream_file, monkeypatch, tmp_path):
+    junk = tmp_path / "junk.mkv"
+    junk.write_bytes(b"not media")
+    real_probe = routes.api.probe
+
+    def probe(p):                                # ffprobe exits non-zero on the bad file
+        if Path(p) == junk:
+            raise subprocess.CalledProcessError(1, "ffprobe")
+        return real_probe(p)
+
+    monkeypatch.setattr(routes.api, "probe", probe)
+    monkeypatch.setattr(routes.api, "_native_pick", lambda: [str(junk), str(two_stream_file)])
+    r = client.post("/api/browse")
+    assert r.status_code == 200
+    assert [i["source"]["filename"] for i in r.json()] == ["two_stream.mkv"]
 
 
 def test_add_folder_recursive_registers_media(client, two_stream_file, monkeypatch, tmp_path):

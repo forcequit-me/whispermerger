@@ -266,8 +266,12 @@ def browse(request: Request) -> list[UploadItem]:
     items: list[UploadItem] = []
     for raw in _native_pick():
         p = Path(raw)
-        if p.is_file():
+        if not p.is_file():
+            continue
+        try:
             items.append(_register(request.app.state, p, p.name))
+        except Exception:        # ponytail: skipped silently like /add-folder; surface a list if users ask
+            continue
     return items
 
 
