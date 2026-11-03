@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from .. import modelstore
+from .. import benchmark, modelstore
 from ..batch import ProjectInput, Status, _RunSpec, run_batch
 from ..diarize import detect_speech, transcribe_regions
 from ..export import ExportOptions, pad_segments, to_csv, to_json, to_srt, to_txt
@@ -823,3 +823,22 @@ def use_model(model_id: str) -> dict:
     modelstore.set_active_whisper(model_id.partition(":")[2])
     unload_models()                          # free the old model's VRAM; the new one loads on next run
     return {"active": model_id}
+
+
+@router.post("/benchmark", response_model=JobCreated)
+def start_benchmark(request: Request) -> JobCreated:
+    """Time every downloaded speech model on a sentence spoken by the Windows voice. Job-based:
+    poll /progress/{job_id}, then read /benchmark/{job_id}."""
+    if not any(modelstore.is_installed(modelstore.whisper_entry(n)) for n in modelstore.WHISPER_MODELS):
+        raise HTTPException(409, "download a speech model first")
+    job = request.app.state.jobs.create()
+    request.app.state.jobs.run(job, benchmark.run, on_pause=unload_models)
+    return JobCreated(job_id=job.id)
+
+
+@router.get("/benchmark/{job_id}")
+def benchmark_result(request: Request, job_id: str) -> dict:
+    job = request.app.state.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    return {"expected": benchmark.SENTENCE, "results": job.result or []}

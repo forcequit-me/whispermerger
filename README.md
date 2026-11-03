@@ -2,7 +2,7 @@
 
 Local desktop app that turns raw recordings into accurate, speaker-labeled transcripts with
 **word-level** timestamps, via WhisperX on a local GPU. A FastAPI backend drives WhisperX
-(large-v3 + wav2vec2 forced alignment) and a pure-Python merge engine; a vanilla HTML/JS
+(large-v3 by default, or another Whisper model + wav2vec2 forced alignment) and a pure-Python merge engine; a vanilla HTML/JS
 frontend handles input, labeling, editing, and export. Runs fully offline.
 
 - **Setup:** [`Docs/SETUP.md`](Docs/SETUP.md)
@@ -164,6 +164,10 @@ split also prints to the server console as a scrollback record (`[timing] <file>
   Remove. Downloads show progress, can be canceled, and resume where they stopped (also after a
   dropped connection). A run that needs a missing model downloads it as a visible step; Pause and
   Cancel work during it. Language dropdowns note which languages still need a download.
+  **Use** picks the speech model every run uses (large-v3 by default; turbo, distil-large-v3.5
+  (English only), medium, small), saved across restarts. **Benchmark** times each downloaded
+  model on this machine — cold load, transcription speed, and how much of a sentence read by the
+  Windows voice it got right.
 
 ## Architecture
 
@@ -172,7 +176,9 @@ backend/app/
   models.py     # pydantic contract: Word/Segment/Track/InputSource/MergedOutput
   probe.py      # ffprobe: enumerate audio streams + duration
   extract.py    # ffmpeg: stream -> mono/16k/pcm_s16le (+ audition samples)
-  transcribe.py # WhisperX large-v3 + wav2vec2 align (GPU), cache-aware
+  transcribe.py # WhisperX (chosen model) + wav2vec2 align (GPU), cache-aware
+  modelstore.py # model catalog, downloads (resumable, cancellable), chosen speech model
+  benchmark.py  # times each downloaded speech model on a Windows-voice sentence
   merge.py      # pure-python merge + conflict hierarchy
   cache.py      # SHA-256-keyed WhisperX-JSON cache
   export.py     # MergedOutput -> SRT/TXT/CSV/JSON (+ export_all for batch)

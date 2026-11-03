@@ -1661,3 +1661,38 @@ function annotateLanguages(models) {
 
 document.querySelectorAll(".tab-btn").forEach((b) => b.addEventListener("click", refreshModels));
 refreshModels();
+
+// Benchmark: every downloaded speech model, cold load + transcription of a spoken test sentence.
+$("#bench-run").onclick = async () => {
+  const run = $("#bench-run"), cancel = $("#bench-cancel"), status = $("#bench-status");
+  const r = await fetch("/api/benchmark", { method: "POST" });
+  if (!r.ok) { status.textContent = (await r.json().catch(() => ({}))).detail || "couldn't start"; return; }
+  const { job_id } = await r.json();
+  run.disabled = true; cancel.style.display = ""; cancel.disabled = false;
+  cancel.onclick = () => { cancel.disabled = true; fetch(`/api/cancel/${job_id}`, { method: "POST" }); };
+  let p;
+  do {
+    await new Promise((res) => setTimeout(res, 700));
+    p = await (await fetchTO(`/api/progress/${job_id}`)).json();
+    status.textContent = p.message || p.status;
+  } while (p.status === "queued" || p.status === "running");
+  run.disabled = false; cancel.style.display = "none";
+  if (p.status === "error") { status.textContent = "error: " + p.error; return; }
+  if (p.status === "cancelled") { status.textContent = "canceled"; return; }
+  const { expected, results } = await (await fetch(`/api/benchmark/${job_id}`)).json();
+  status.textContent = `Test sentence: "${expected}"`;
+  const t = $("#bench-results");
+  t.style.display = "";
+  t.innerHTML = "";
+  t.append(el("tr", {}, ...["Model", "Load", "Transcribe", "Speed", "Match", "What it heard"]
+    .map((h) => el("td", { className: "meta", textContent: h }))));
+  for (const x of results) {
+    t.append(el("tr", {},
+      el("td", { textContent: `Whisper ${x.model}` }),
+      el("td", { className: "size", textContent: `${x.load_s}s` }),
+      el("td", { className: "size", textContent: `${x.transcribe_s}s` }),
+      el("td", { className: "size", textContent: `${x.speed_x}× realtime`, title: `${x.audio_s}s of audio` }),
+      el("td", { className: "size", textContent: `${Math.round(x.match * 100)}%` }),
+      el("td", { className: "meta", textContent: x.heard })));
+  }
+};

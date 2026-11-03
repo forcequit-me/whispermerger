@@ -237,6 +237,19 @@ def test_combined_is_used_directly_and_released(client, two_stream_file):
     assert client.get(f"/api/track-audio/{again.json()['file_id']}/0").status_code == 200
 
 
+def test_use_model_endpoint(client, monkeypatch, tmp_path):
+    from app import modelstore
+    monkeypatch.setattr(modelstore, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(routes.api, "unload_models", lambda: None)
+    assert client.post("/api/models/align:en/use").status_code == 400            # not a speech model
+    monkeypatch.setattr(modelstore, "is_installed", lambda e: False)
+    assert client.post("/api/models/whisper:small/use").status_code == 409       # not downloaded
+    monkeypatch.setattr(modelstore, "is_installed", lambda e: True)
+    assert client.post("/api/models/whisper:small/use").json() == {"active": "whisper:small"}
+    assert client.get("/api/models").json()["active"] == "whisper:small"
+    assert client.delete("/api/models/whisper:small").status_code == 409         # in use: can't remove
+
+
 def test_unknown_job_404(client):
     assert client.get("/api/progress/nope").status_code == 404
     assert client.get("/api/result/nope").status_code == 404

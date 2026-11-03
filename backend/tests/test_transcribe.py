@@ -1,6 +1,7 @@
 """transcribe_track alignment routing — model loads stubbed (no GPU)."""
 
 import numpy as np
+import pytest
 import whisperx
 
 from app import transcribe
@@ -25,6 +26,7 @@ def test_has_align_model():
 def test_language_without_align_model_keeps_line_timings(monkeypatch, tmp_path):
     monkeypatch.setattr(whisperx, "load_audio", lambda p: np.zeros(16000, dtype=np.float32))
     monkeypatch.setattr(transcribe, "_load_model", lambda *a: _FakeModel("is"))
+    monkeypatch.setattr(transcribe.modelstore, "ensure", lambda e: None)    # never download in tests
 
     def no_align(*a):
         raise AssertionError("alignment must be skipped for a language without a model")
@@ -44,3 +46,23 @@ def test_swedish_loads_the_extra_align_model(monkeypatch):
     transcribe._load_align("sv", "cpu")
     transcribe._load_align.cache_clear()
     assert seen["model"] == "KBLab/wav2vec2-large-voxrex-swedish"
+
+
+def test_runs_use_the_chosen_model_and_english_only_guard(monkeypatch, tmp_path):
+    monkeypatch.setattr(transcribe.modelstore, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(transcribe.modelstore, "ensure", lambda e: None)
+    monkeypatch.setattr(whisperx, "load_audio", lambda p: np.zeros(16000, dtype=np.float32))
+    loaded = []
+    monkeypatch.setattr(transcribe, "_load_model", lambda name, *a: loaded.append(name) or _FakeModel("is"))
+    monkeypatch.setattr(transcribe, "_load_align", lambda *a: (_ for _ in ()).throw(AssertionError))
+
+    assert transcribe.modelstore.active_whisper() == "large-v3"          # default
+    transcribe.modelstore.set_active_whisper("small")
+    transcribe.transcribe_track(tmp_path / "x.wav", language="is")
+    assert loaded == ["small"]
+
+    transcribe.modelstore.set_active_whisper("distil-large-v3.5")      # English only
+    with pytest.raises(ValueError, match="only transcribes English"):
+        transcribe.transcribe_track(tmp_path / "x.wav", language="nl")
+    with pytest.raises(ValueError):
+        transcribe.modelstore.set_active_whisper("nope")

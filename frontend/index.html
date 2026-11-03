@@ -367,6 +367,12 @@
         <h2>Speech models</h2>
         <div class="muted" style="margin-bottom:10px">Turns audio into text. Download ahead of time, or a run downloads what it needs (with progress you can cancel). A canceled or dropped download resumes where it stopped.</div>
         <table class="models" id="models-whisper"></table>
+        <div class="row" style="margin-top:12px">
+          <button id="bench-run" class="ghost">Benchmark downloaded models</button>
+          <button id="bench-cancel" class="ghost" style="display:none">Cancel</button>
+          <span id="bench-status" class="muted">Times each downloaded model on this machine, on a sentence read by the Windows voice.</span>
+        </div>
+        <table class="models" id="bench-results" style="display:none; margin-top:8px"></table>
       </div>
       <div class="panel">
         <h2>Word-timing models</h2>
@@ -377,7 +383,7 @@
     </section>
   </main>
 
-  <script src="app.js?v=28"></script>
+  <script src="app.js?v=29"></script>
   <script type="module" src="labeltrack.js?v=9"></script>
 </body>
 </html>
