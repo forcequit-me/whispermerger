@@ -476,6 +476,10 @@ function buildExportPanel(container, merged) {
   const minDur = el("input", { type: "number", value: 1, step: 0.5 });
   const pad = el("input", { type: "number", value: 0, step: 0.1, min: 0, title: "extend each segment start/end by N seconds (video-edit breathing room)" });
   const showSpk = el("input", { type: "checkbox", checked: true });
+  // How SRT times a line whose text you changed (its word timings no longer match the words).
+  const editedTiming = el("select", { title: "SRT timing for lines whose text you edited", style: "min-width:180px" });
+  [["align", "keep word timing"], ["even", "spread evenly"], ["whole", "one subtitle per line"]]
+    .forEach(([v, t]) => editedTiming.append(el("option", { value: v, textContent: t })));
 
   // Subtitle limits only apply to SRT; toggling off disables (and ignores) the limit fields.
   const syncLimits = () => [cpl, maxLines, minDur].forEach((n) => { n.disabled = !applyLimits.checked; });
@@ -488,7 +492,7 @@ function buildExportPanel(container, merged) {
       apply_limits: applyLimits.checked,
       chars_per_line: +cpl.value, max_lines: +maxLines.value,
       min_duration: +minDur.value, show_speakers: showSpk.checked,
-      pad_seconds: +pad.value,
+      pad_seconds: +pad.value, edited_timing: editedTiming.value,
     };
     // Drop toggled-off speakers (all formats) — the backend just renders what we send.
     const segs = merged.segments.filter((s) => !container._disabled.has(s.speaker));
@@ -501,7 +505,7 @@ function buildExportPanel(container, merged) {
     field("Format", format), field("Filename", filename),
     el("label", { className: "opt" }, applyLimits, "Subtitle limits"),
     field("Chars/line", cpl), field("Max lines", maxLines), field("Min dur (s)", minDur),
-    field("Pad (s)", pad),
+    field("Pad (s)", pad), field("Edited lines", editedTiming),
     el("label", { className: "opt" }, showSpk, "Show speakers"),
     el("div", { className: "spacer" }), btn);
 }

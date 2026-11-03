@@ -82,6 +82,10 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   With *Show speakers* on, the `Name: ` label counts toward *Chars/line* on each subtitle's first
   line. Known limit: a label (or a single word) longer than *Chars/line* still runs past it,
   since every subtitle line holds at least one word.
+  **Edited lines** sets how SRT times a line whose text you changed: *keep word timing* (unchanged
+  words keep their exact times, changed ones are estimated from their neighbours; a heavy rewrite
+  falls back to even spacing), *spread evenly*, or *one subtitle per line* (exact start/end, may
+  exceed Max lines). Backchannels keep their parentheses in SRT.
   Speakers toggled off in the editor are dropped from whichever format you export. Files are named
   **`<name> Transcript (M-D-YYYY h-mm AMPM)`** so they're self-describing (batch auto-exports use it;
   the interactive Export filename is pre-filled with it and editable).

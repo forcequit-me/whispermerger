@@ -112,6 +112,7 @@ class ExportOptionsIn(BaseModel):
     min_duration: float = 1.0
     show_speakers: bool = True
     pad_seconds: float = 0.0
+    edited_timing: Literal["align", "even", "whole"] = "align"   # SRT timing for edited lines
 
     def to_options(self) -> ExportOptions:
         return ExportOptions(**self.model_dump())

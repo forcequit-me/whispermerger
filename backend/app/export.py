@@ -8,7 +8,9 @@ frontend just requests a format and downloads.
 from __future__ import annotations
 
 import csv
+import difflib
 import io
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +25,11 @@ class ExportOptions:
     min_duration: float = 1.0     # FR-UI-4 minimum cue duration (s)
     show_speakers: bool = True    # FR-UI-5 Show Speakers
     pad_seconds: float = 0.0      # breathing room: extend each segment start/end (video editing)
+    # SRT for a line whose text no longer matches its word timings (edited, or "(yeah)"-style):
+    #   "align" keep timing for unchanged words, estimate changed ones (falls back to "even" on a rewrite)
+    #   "even"  spread the text evenly over the line's start/end
+    #   "whole" one subtitle for the whole line, exact start/end (may exceed max_lines)
+    edited_timing: str = "align"
 
 
 def pad_segments(merged: MergedOutput, pad: float) -> MergedOutput:
@@ -115,8 +122,17 @@ def _segment_cues(seg: Segment, opts: ExportOptions):
         yield seg.start, seg.end, _prefix(speaker, seg.text)
         return
 
-    if seg.words:
-        line_groups = _pack_words(seg.words, opts.chars_per_line, len(speaker), opts.max_lines)
+    words = seg.words
+    if words and " ".join(w.word.strip() for w in words) != seg.text.strip():
+        # The text was edited (or decorated) after transcription, so the words no longer match it.
+        if opts.edited_timing == "whole":
+            lines = _wrap_text(seg.text, opts.chars_per_line, len(speaker), opts.max_lines)
+            yield seg.start, _enforce_min(seg.start, seg.end, opts.min_duration), _prefix(speaker, "\n".join(lines))
+            return
+        words = _retime(words, seg.text) if opts.edited_timing == "align" else None
+
+    if words:
+        line_groups = _pack_words(words, opts.chars_per_line, len(speaker), opts.max_lines)
         cues = _group_lines(line_groups, opts.max_lines)
         for k, words_per_cue in enumerate(cues):
             flat = [w for line in words_per_cue for w in line]
@@ -139,6 +155,40 @@ def _segment_cues(seg: Segment, opts: ExportOptions):
         start = seg.start + i * span
         end = _enforce_min(start, start + span, opts.min_duration)
         yield start, end, _prefix(speaker, "\n".join(cue_lines))
+
+
+def _norm(token: str) -> str:
+    return re.sub(r"[^\w']+", "", token.lower())
+
+
+def _retime(words: list[Word], text: str, min_match: float = 0.5) -> list[Word] | None:
+    """Words for edited `text`, timed from the original `words`: a word that still matches keeps its
+    exact timing; a changed or added one gets an even share of the time around it. Matching ignores
+    case and punctuation, but the edited spelling and punctuation are what's written. None when the
+    text was rewritten so heavily (under `min_match` of words in common) that the old timing says
+    little; the caller then spreads the text evenly instead."""
+    new = text.split()
+    if not new:
+        return None
+    sm = difflib.SequenceMatcher(None, [_norm(w.word) for w in words], [_norm(t) for t in new], autojunk=False)
+    if sm.ratio() < min_match:
+        return None
+    out: list[Word] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "delete":
+            continue
+        if tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):   # same words, or a 1:1 fix
+            out += [Word(word=new[j1 + k], start=words[i1 + k].start, end=words[i1 + k].end)
+                    for k in range(j2 - j1)]
+            continue
+        if tag == "replace":                 # the new words take the time the old ones did
+            t0, t1 = words[i1].start, words[i2 - 1].end
+        else:                                # insert: the gap between the neighbouring words
+            t0 = words[i1 - 1].end if i1 > 0 else words[0].start
+            t1 = words[i1].start if i1 < len(words) else words[-1].end
+        step = max(t1 - t0, 0.0) / (j2 - j1)
+        out += [Word(word=new[j1 + k], start=t0 + k * step, end=t0 + (k + 1) * step) for k in range(j2 - j1)]
+    return out
 
 
 def _prefix(speaker: str, text: str) -> str:

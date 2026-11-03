@@ -152,3 +152,51 @@ def test_srt_speaker_label_counts_toward_chars_per_line():
         lines = [ln for b in srt.split("\n\n") if b.strip() for ln in b.split("\n")[2:]]
         assert all(len(ln) <= 20 for ln in lines), [ln for ln in lines if len(ln) > 20]
         assert sum(ln.startswith("Speaker 2: ") for ln in lines) >= 2   # label on each cue
+
+
+def _times(srt):
+    return [b.split("\n")[1] for b in srt.split("\n\n") if b.strip()]
+
+
+def _texts(srt):
+    return ["\n".join(b.split("\n")[2:]) for b in srt.split("\n\n") if b.strip()]
+
+
+_ORIG = "alpha beta gamma delta epsilon zeta eta theta"           # words at 0.0, 0.4, ... 2.8-3.2 s
+_LIMITS = dict(chars_per_line=12, max_lines=1, min_duration=0.0, show_speakers=False)
+
+
+def _edited(text):
+    return _merged(Segment(speaker="Max", start=0.0, end=3.2, text=text, words=_words(_ORIG, 0.0),
+                           flags=["edited"]))
+
+
+def test_srt_uses_edited_text_and_keeps_word_timing_for_unchanged_words():
+    plain = to_srt(_merged(Segment(speaker="Max", start=0.0, end=3.2, text=_ORIG, words=_words(_ORIG, 0.0))),
+                   ExportOptions(**_LIMITS))
+    srt = to_srt(_edited("alpha Beta gamma delta epsilon Zeta eta theta"), ExportOptions(**_LIMITS))
+    assert "Beta" in srt and "Zeta" in srt                         # the edit is what's written
+    assert _times(srt) == _times(plain)                              # 1:1 fixes keep exact timing
+
+
+def test_srt_added_words_share_the_gap_and_rewrite_falls_back_to_even():
+    srt = to_srt(_edited("alpha beta gamma NEW delta epsilon zeta eta theta"), ExportOptions(**_LIMITS))
+    assert "NEW" in srt and _times(srt)[0].startswith("00:00:00,000")
+    rewrite = _edited("completely different words were said here instead today")
+    assert (to_srt(rewrite, ExportOptions(**_LIMITS)) ==
+            to_srt(rewrite, ExportOptions(edited_timing="even", **_LIMITS)))
+
+
+def test_srt_backchannel_keeps_parentheses():
+    seg = Segment(speaker="Bob", start=2.0, end=2.4, text="(yeah)", words=_words("yeah", 2.0),
+                  flags=["backchannel"])
+    assert "Bob: (yeah)" in to_srt(_merged(seg))
+
+
+def test_srt_edited_line_modes_even_and_whole():
+    seg = _edited("alpha Beta gamma delta epsilon Zeta eta theta")
+    even = to_srt(seg, ExportOptions(edited_timing="even", **_LIMITS))
+    assert len(_times(even)) > 1 and _times(even)[-1].endswith("00:00:03,200")
+    whole = to_srt(seg, ExportOptions(edited_timing="whole", **_LIMITS))
+    assert _times(whole) == ["00:00:00,000 --> 00:00:03,200"]        # one subtitle, exact span
+    assert _texts(whole)[0].count("\n") >= 2                         # all lines kept, past max_lines
