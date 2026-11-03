@@ -395,26 +395,41 @@ def peaks(request: Request, file_id: str, buckets: int = 2000) -> dict:
 
 # --- v2 single-track diarization (PRD §11.4) -------------------------------------------
 
-_AUDIO_KEEP = 4   # full-track wavs are ~115 MB per hour; older ones are rebuilt on demand
-
-
-def _track_wav(app_state, file_id: str, track_index: int, prune: bool = True) -> Path:
+def _track_wav(app_state, file_id: str, track_index: int) -> Path:
     """Extract one track to a cached mono/16k wav (the whole track — VAD/diarize need it).
-    Only the most recently used few are kept; a pruned one is re-extracted when asked for again.
-    `prune=False` lets a caller that needs several at once (combine) prune after it's done."""
+    Kept until Label Track releases the file (/release) or the server restarts. A combined
+    recording is already mono/16k, so it's used as-is rather than copied again."""
     entry = app_state.uploads.get(file_id)
     if entry is None:
         raise HTTPException(404, f"unknown file_id {file_id}")
+    if "boundaries" in entry:                # combined recording (see /combine)
+        return Path(entry["path"])
     out_dir = app_state.upload_dir / "diar"
     out_dir.mkdir(exist_ok=True)
     dest = out_dir / f"{file_id}_t{track_index}.wav"
-    if dest.exists():
-        os.utime(dest)                       # mark as recently used so pruning spares it
-    else:
+    if not dest.exists():
         extract_track(entry["path"], track_index, dest)
-        if prune:
-            _prune_oldest(out_dir, _AUDIO_KEEP)
     return dest
+
+
+@router.post("/release/{file_id}")
+def release(request: Request, file_id: str) -> dict:
+    """Label Track is done with this file: delete its full-track wavs (and, for a combined
+    recording, the combined wav and its registration). Unknown ids are a no-op. Cleanup follows
+    what the user removes, so nothing still in use is ever deleted."""
+    state = request.app.state
+    paths = list((state.upload_dir / "diar").glob(f"{file_id}_t*.wav"))
+    entry = state.uploads.get(file_id)
+    if entry and "boundaries" in entry:
+        paths.append(Path(entry["path"]))
+        del state.uploads[file_id]
+        state.combined = {k: v for k, v in state.combined.items() if v != file_id}
+    for p in paths:
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:                      # still being served (Windows locks open files); restart wipes it
+            pass
+    return {"released": len(paths)}
 
 
 @router.get("/track-audio/{file_id}/{track_index}")
@@ -441,20 +456,16 @@ def combine(request: Request, body: CombineRequest) -> CombineResult:
     state = request.app.state
     combo_key = "|".join(f"{f.file_id}:{f.track_index}" for f in body.files)
     cached_id = state.combined.get(combo_key)
-    if cached_id and cached_id in state.uploads and Path(state.uploads[cached_id]["path"]).exists():
+    if cached_id and cached_id in state.uploads:
         e = state.uploads[cached_id]
-        os.utime(e["path"])                  # recently used: spare it from pruning
         return CombineResult(file_id=cached_id, duration=e["source"].duration,
                              boundaries=e["boundaries"])
 
-    # Cache miss, or the combined wav was pruned: (re)build it under a fresh file_id.
-    wavs = [_track_wav(state, f.file_id, f.track_index, prune=False) for f in body.files]
+    wavs = [_track_wav(state, f.file_id, f.track_index) for f in body.files]
     out_dir = state.upload_dir / "combined"
     out_dir.mkdir(exist_ok=True)
     dest = out_dir / f"{hashlib.sha256(combo_key.encode()).hexdigest()[:16]}.wav"
     total, boundaries = concat_wavs(wavs, dest)
-    _prune_oldest(out_dir, _AUDIO_KEEP)
-    _prune_oldest(state.upload_dir / "diar", _AUDIO_KEEP)
 
     file_id = uuid.uuid4().hex
     source = InputSource(filename=f"Combined ({len(body.files)} files)", duration=total,

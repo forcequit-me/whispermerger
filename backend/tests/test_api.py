@@ -210,28 +210,30 @@ def test_combine_registers_sequenced_source(client, two_stream_file):
     assert client.get(f"/api/track-audio/{d['file_id']}/0").status_code == 200  # usable source
 
 
-def test_track_audio_copies_are_capped_and_rebuilt(client, two_stream_file, monkeypatch):
-    monkeypatch.setattr(routes.api, "_AUDIO_KEEP", 2)
-    ids = [_add(client, two_stream_file)[0]["file_id"] for _ in range(3)]
-    for fid in ids:
-        assert client.get(f"/api/track-audio/{fid}/0").status_code == 200
+def test_release_deletes_only_that_files_track_copies(client, two_stream_file):
+    keep, drop = (_add(client, two_stream_file)[0]["file_id"] for _ in range(2))
+    for fid in (keep, drop):
+        for t in (0, 1):
+            assert client.get(f"/api/track-audio/{fid}/{t}").status_code == 200
+    assert client.post(f"/api/release/{drop}").json() == {"released": 2}
     diar = client.app.state.upload_dir / "diar"
-    names = {p.name for p in diar.iterdir()}
-    assert len(names) == 2 and f"{ids[0]}_t0.wav" not in names       # oldest dropped
-    assert client.get(f"/api/track-audio/{ids[0]}/0").status_code == 200  # rebuilt on demand
-    assert (diar / f"{ids[0]}_t0.wav").exists()
+    assert not list(diar.glob(f"{drop}_t*.wav"))
+    assert len(list(diar.glob(f"{keep}_t*.wav"))) == 2           # other file untouched
+    assert client.post("/api/release/nope").json() == {"released": 0}
 
 
-def test_combine_survives_cap_and_rebuilds_pruned_wav(client, two_stream_file, monkeypatch):
-    monkeypatch.setattr(routes.api, "_AUDIO_KEEP", 2)
-    ids = [_add(client, two_stream_file)[0]["file_id"] for _ in range(3)]
+def test_combined_is_used_directly_and_released(client, two_stream_file):
+    ids = [_add(client, two_stream_file)[0]["file_id"] for _ in range(2)]
     body = {"files": [{"file_id": f, "track_index": 0} for f in ids]}
-    first = client.post("/api/combine", json=body)
-    assert first.status_code == 200                    # 3 inputs even though only 2 are kept
-    Path(client.app.state.uploads[first.json()["file_id"]]["path"]).unlink()   # pretend it was pruned
-    again = client.post("/api/combine", json=body)
-    assert again.status_code == 200
-    assert Path(client.app.state.uploads[again.json()["file_id"]]["path"]).exists()
+    cid = client.post("/api/combine", json=body).json()["file_id"]
+    assert client.get(f"/api/track-audio/{cid}/0").status_code == 200
+    diar = client.app.state.upload_dir / "diar"
+    assert not list(diar.glob(f"{cid}_t*.wav"))                  # no second copy of the combined wav
+    path = Path(client.app.state.uploads[cid]["path"])
+    client.post(f"/api/release/{cid}")
+    assert not path.exists() and cid not in client.app.state.uploads
+    again = client.post("/api/combine", json=body)                # same order later: rebuilt
+    assert again.status_code == 200 and again.json()["file_id"] != cid
     assert client.get(f"/api/track-audio/{again.json()['file_id']}/0").status_code == 200
 
 

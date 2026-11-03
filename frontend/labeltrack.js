@@ -111,7 +111,7 @@ function renderFiles() {
     const down = el("button", { className: "ghost icon-only", title: "Move later" }, window.uiIcon("down"));
     down.onclick = () => { if (i < files.length - 1) swap(i, i + 1); };
     const rm = el("button", { className: "ghost icon-only", title: "Remove" }, window.uiIcon("close"));
-    rm.onclick = () => { files.splice(i, 1); renderFiles(); rebuild(); };
+    rm.onclick = () => { release(f.file_id); files.splice(i, 1); renderFiles(); rebuild(); };
 
     const row = el("div", { className: "track-row" },
       el("span", { className: "ti", textContent: `${i + 1}.` }),
@@ -132,9 +132,20 @@ function renderFiles() {
 
 // --- build / load the (combined) waveform ----------------------------------------------
 
+// Disk cleanup follows the file list: a file's full-track audio is deleted when it's removed,
+// and a combined recording when a different one (or a single file) replaces it on screen.
+// ponytail: a combine superseded mid-flight is left for the restart wipe; rare and harmless.
+const release = (id) => fetch(`/api/release/${id}`, { method: "POST" }).catch(() => {});
+let shownCombined = null;   // file_id of the combined recording on screen, if any
+
+function showCombined(id) {
+  if (shownCombined && shownCombined !== id) release(shownCombined);
+  shownCombined = id;
+}
+
 async function rebuild() {
   const token = ++buildToken;
-  if (!files.length) { if (ws) { ws.destroy(); ws = null; } return; }
+  if (!files.length) { showCombined(null); if (ws) { ws.destroy(); ws = null; } return; }
 
   let fid, track, dur, bounds;
   if (files.length === 1) {
@@ -153,6 +164,8 @@ async function rebuild() {
     $("#label-status").textContent = "";
   }
   if (token !== buildToken) return;
+  if (ws) { ws.destroy(); ws = null; }   // stop streaming the old audio before it's released
+  showCombined(files.length > 1 ? fid : null);
   activeFileId = fid; activeTrack = track; activeDuration = dur; boundaries = bounds;
   initWave(fid, track);
 }
