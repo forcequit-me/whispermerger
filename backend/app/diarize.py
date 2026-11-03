@@ -137,4 +137,17 @@ def transcribe_regions(
             p.unlink(missing_ok=True)
         tmpdir.rmdir()
 
-    return merge(outputs, labels, [0.0] * len(outputs), options=options)
+    merged = merge(outputs, labels, [0.0] * len(outputs), options=options)
+    # Where two speakers' labeled regions overlap, the user marked deliberate talk-over (e.g. a
+    # duplicated region), so both copies transcribe the same audio — that's overlap, not bleed.
+    # ponytail: O(regions²) pairwise scan; fine for hand-labeled counts, sweep-line if it ever isn't.
+    spans = list(speaker_regions.items())
+    shared = [(max(a0, b0), min(a1, b1))
+              for x, (_, ra) in enumerate(spans) for _, rb in spans[x + 1:]
+              for a0, a1 in ra for b0, b1 in rb if min(a1, b1) > max(a0, b0)]
+    for seg in merged.segments:
+        if "bleed_suspected" in seg.flags and any(seg.start < e and seg.end > s for s, e in shared):
+            seg.flags = [f for f in seg.flags if f != "bleed_suspected"]
+            if "overlap" not in seg.flags:
+                seg.flags.append("overlap")
+    return merged

@@ -51,3 +51,13 @@ def test_detect_speech_runs(tmp_path):
     sf.write(str(tmp_path / "s.wav"), np.zeros(sr * 2, dtype=np.float32), sr, subtype="PCM_16")
     regions = detect_speech(str(tmp_path / "s.wav"))
     assert isinstance(regions, list)  # silence -> no regions
+
+
+def test_duplicated_region_is_overlap_not_bleed(tmp_path):
+    # the same span labeled for two speakers transcribes identically — deliberate talk-over
+    sr = 16000
+    sf.write(str(tmp_path / "t.wav"), np.zeros(sr * 10, dtype=np.float32), sr, subtype="PCM_16")
+    stub = lambda _w: {"segments": [{"start": 0.0, "end": 1.5, "text": "we both said this",
+                                     "words": []}]}
+    out = transcribe_regions(str(tmp_path / "t.wav"), {"A": [(1, 3)], "B": [(1, 3)]}, stub)
+    assert [s.flags for s in out.segments] == [["overlap"], ["overlap"]]
