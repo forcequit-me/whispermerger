@@ -130,7 +130,10 @@ def run_per_file_pipeline(
         # background behind the previous file's GPU work. This is the file's true pre-GPU cost,
         # not the (near-zero) idle wait the consumer sees once the audio is already prepped.
         t0 = time.perf_counter()
-        wavs = _extract_into(tmpdir, it[1])
+        try:
+            wavs = _extract_into(tmpdir, it[1])
+        except Exception as exc:     # hand it to the consumer so only this file fails
+            return exc
         extract_secs[it[0]] = time.perf_counter() - t0
         return wavs
 
@@ -143,6 +146,9 @@ def run_per_file_pipeline(
                 break
             if is_file_cancelled(i):
                 on_skip(i, p)
+                continue
+            if isinstance(wavs, Exception):          # extraction failed — isolate like a transcribe error
+                on_error(i, p, wavs)
                 continue
             on_start(i, p, extract_secs.get(i, 0.0))
             try:

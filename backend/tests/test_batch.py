@@ -387,3 +387,16 @@ def test_output_mode_source_writes_next_to_file(two_stream_file, tmp_path):
     batch = _run([proj], output_mode="source")
     assert batch.projects[0].output_dir == str(tmp_path / "NextTo")
     assert _find(tmp_path / "NextTo", "NextTo", "srt")
+
+
+def test_per_file_extraction_failure_isolated(two_stream_file, tmp_path):
+    # an unreadable file errors only its own row; the rest of the project still runs
+    proj = ProjectInput("Lib", [
+        _prepared("C:/nope/missing.mkv", "bad.mkv", 2.0, sequence=0),
+        _prepared(two_stream_file, "good.mkv", 2.0, sequence=1),
+    ], per_file=True, formats=["txt"])
+    batch = _run([proj], output_mode="folder", output_folder=str(tmp_path))
+    files = batch.projects[0].files
+    assert files[0].status is Status.ERROR and files[0].error
+    assert files[1].status is Status.DONE
+    assert _find(tmp_path / "Lib", "good", "txt")
