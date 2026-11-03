@@ -75,3 +75,18 @@ def test_pipeline_sequential_offsets(two_stream_file):
     by_speaker = {s.speaker: s.start for s in out.segments}
     assert by_speaker["A"] == 0.0
     assert by_speaker["B"] == 4.0  # offset by A's duration
+
+
+def test_pipeline_marks_louder_mic_preferred_on_bleed(tmp_path):
+    import subprocess
+    # track 1 is the speaker's own mic; track 2 hears the same audio at 10% (bleed)
+    f = tmp_path / "bleed.mkv"
+    subprocess.run(["ffmpeg", "-v", "error", "-y",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=2,volume=0.1",
+                    "-map", "0:a", "-map", "1:a", "-c:a", "pcm_s16le", str(f)], check=True)
+    src = InputSource(filename="bleed.mkv", duration=2.0,
+                      tracks=[Track(track_index=0, speaker="Alice"), Track(track_index=1, speaker="Bob")])
+    out = run_merge_pipeline([PreparedSource(str(f), src)], _stub_transcribe)   # same text on both
+    flags = {s.speaker: s.flags for s in out.segments}
+    assert flags == {"Alice": ["bleed_suspected", "preferred"], "Bob": ["bleed_suspected"]}

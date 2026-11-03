@@ -155,6 +155,37 @@ def compute_peaks(wav_path: str | Path, buckets: int = 2000) -> list[float]:
     return [round(p / scale, 4) for p in peaks]
 
 
+LOUDNESS_HOP = 0.05   # seconds per loudness frame
+
+
+def loudness_profile(wav_path: str | Path, hop: float = LOUDNESS_HOP):
+    """Mean-square amplitude per `hop` seconds of a mono/16k wav, read in ~10 s blocks so a
+    multi-hour track never lands fully in memory. 20 numbers per second (~0.6 MB per hour), so
+    it's kept after the temp wav is deleted and used to compare mics on a suspected bleed."""
+    import numpy as np
+    import soundfile as sf
+
+    parts = []
+    with sf.SoundFile(str(wav_path)) as f:
+        n = max(1, int(f.samplerate * hop))
+        for block in f.blocks(blocksize=n * 200, dtype="float32", always_2d=False):
+            if block.ndim > 1:
+                block = block.mean(axis=1)
+            starts = np.arange(0, len(block), n)
+            sizes = np.diff(np.append(starts, len(block)))
+            parts.append(np.add.reduceat(block.astype(np.float64) ** 2, starts) / sizes)
+    return np.concatenate(parts) if parts else np.zeros(0)
+
+
+def span_rms(profile, start: float, end: float, hop: float = LOUDNESS_HOP) -> float:
+    """RMS loudness of a loudness_profile between `start` and `end` seconds (0 outside the audio)."""
+    import math
+    i = max(0, int(start / hop))
+    j = max(i + 1, math.ceil(end / hop))
+    frames = profile[i:j]
+    return float(math.sqrt(frames.mean())) if len(frames) else 0.0
+
+
 @contextlib.contextmanager
 def extracted_audio(src: str | Path, track_indices: list[int]) -> Iterator[list[Path]]:
     """Extract the given tracks into a temp dir, yield their paths, delete the dir on exit.

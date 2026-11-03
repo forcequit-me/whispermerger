@@ -78,6 +78,7 @@ class MergeOptionsIn(BaseModel):
     overlap_min_seconds: float = 2.0
     bleed_window_seconds: float = 1.0
     bleed_similarity: float = 0.7
+    bleed_prefer_ratio: float = 2.0
 
     def to_options(self) -> MergeOptions:
         return MergeOptions(**self.model_dump())

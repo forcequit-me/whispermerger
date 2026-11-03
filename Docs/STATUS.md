@@ -396,9 +396,10 @@ exactly what hides the next extraction).
 
 ## Partial / outstanding (v1 polish)
 
-- **FR-MG-4 bleed (P1):** detection flags `bleed_suspected` and an `rms_fn` hook exists, but
-  real RMS-from-source-audio is not yet wired in, and the threshold is untuned (OQ-3). Needs
-  real recordings to calibrate.
+- **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
+  `preferred` from per-track loudness measured before each temp wav is deleted, only when it is at
+  least *Bleed loudness ratio* (default 2×) louder. Verified on a synthetic 15% cross-bleed
+  recording; the default is still untuned on real bleed footage (OQ-3).
 - **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
   CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line

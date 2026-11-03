@@ -131,3 +131,18 @@ def test_extract_ahead_stops_prefetch_when_cancelled():
     # Item 2 may have been prefetched before cancel; items 3/4 must never be extracted.
     assert out == [1]
     assert 3 not in extracted and 4 not in extracted
+
+
+def test_loudness_profile_and_span_rms(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    from app.extract import loudness_profile, span_rms
+    sr = 16000
+    loud = 0.8 * np.ones(sr * 2, dtype=np.float32)     # 0-2 s at 0.8
+    quiet = 0.1 * np.ones(sr * 2, dtype=np.float32)    # 2-4 s at 0.1
+    sf.write(str(tmp_path / "l.wav"), np.concatenate([loud, quiet]), sr, subtype="FLOAT")
+    prof = loudness_profile(tmp_path / "l.wav")
+    assert len(prof) == 80                              # 4 s at 20 frames/s
+    assert abs(span_rms(prof, 0.0, 2.0) - 0.8) < 1e-3
+    assert abs(span_rms(prof, 2.0, 4.0) - 0.1) < 1e-3
+    assert span_rms(prof, 10.0, 11.0) == 0.0            # past the end

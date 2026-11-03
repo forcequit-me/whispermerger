@@ -523,7 +523,7 @@ async function downloadExport(merged, format, filename, options) {
 const uploaded = [];  // [{file_id, source}]
 
 // Declared before initTranscribeTab() runs — it calls syncDetect() immediately at load.
-const MERGE_THRESHOLD_IDS = ["opt-backchannel", "opt-bc-words", "opt-overlap", "opt-bleed-win", "opt-bleed-sim"];
+const MERGE_THRESHOLD_IDS = ["opt-backchannel", "opt-bc-words", "opt-overlap", "opt-bleed-win", "opt-bleed-sim", "opt-bleed-ratio"];
 
 (function initTranscribeTab() {
   $("#choose-btn").onclick = () => browseFiles($("#choose-btn"));
@@ -639,6 +639,7 @@ function gatherOptions() {
     overlap_min_seconds: +$("#opt-overlap").value,
     bleed_window_seconds: +$("#opt-bleed-win").value,
     bleed_similarity: +$("#opt-bleed-sim").value,
+    bleed_prefer_ratio: +$("#opt-bleed-ratio").value,
   };
 }
 

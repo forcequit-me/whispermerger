@@ -26,9 +26,11 @@ from typing import Callable, Optional, Sequence
 
 from .models import InputSource, MergedOutput, Segment, Word
 
-# Optional hook: given (speaker, start, end) return RMS loudness of that source's audio in
-# that window. Used only to pick the `preferred` side of a suspected bleed (FR-MG-4, P1).
-RmsFn = Callable[[str, float, float], float]
+# Optional hook: given (track index into `outputs`, start, end) return the RMS loudness of that
+# track's audio in that window, in the track's own time (offset removed). Used only to pick the
+# `preferred` side of a suspected bleed (FR-MG-4). Keyed by track, not speaker, since two tracks
+# may share a label.
+RmsFn = Callable[[int, float, float], float]
 
 
 class BackchannelRender(str, Enum):
@@ -45,6 +47,8 @@ class MergeOptions:
     overlap_min_seconds: float = 2.0        # FR-MG-3: "several seconds"
     bleed_window_seconds: float = 1.0       # FR-MG-4: "small time window"
     bleed_similarity: float = 0.7           # difflib ratio threshold for "similar text"
+    bleed_prefer_ratio: float = 2.0         # mark `preferred` only if one side is >= this many times
+                                            # louder (RMS); closer than that -> leave it to the user
 
 
 def _to_segments(output: dict, speaker: str, offset: float) -> list[Segment]:
@@ -97,7 +101,8 @@ def _add_flag(seg: Segment, flag: str) -> None:
         seg.flags.append(flag)
 
 
-def _classify_pair(a: Segment, b: Segment, opts: MergeOptions, rms_fn: Optional[RmsFn]) -> None:
+def _classify_pair(a: Segment, b: Segment, opts: MergeOptions,
+                   loudness: Optional[Callable[[Segment, float, float], float]]) -> None:
     """Flag a pair of overlapping, different-speaker segments in place per the hierarchy."""
     # FR-MG-4 bleed: near-duplicate text within a small window.
     if (
@@ -106,9 +111,12 @@ def _classify_pair(a: Segment, b: Segment, opts: MergeOptions, rms_fn: Optional[
     ):
         _add_flag(a, "bleed_suspected")
         _add_flag(b, "bleed_suspected")
-        if rms_fn is not None:
-            louder = a if rms_fn(a.speaker, a.start, a.end) >= rms_fn(b.speaker, b.start, b.end) else b
-            _add_flag(louder, "preferred")
+        if loudness is not None:
+            # Compare both mics over the same moment: the stretch where the two lines overlap.
+            s, e = max(a.start, b.start), min(a.end, b.end)
+            ra, rb = loudness(a, s, e), loudness(b, s, e)
+            if max(ra, rb) > 0 and max(ra, rb) >= opts.bleed_prefer_ratio * min(ra, rb):
+                _add_flag(a if ra >= rb else b, "preferred")
         return
 
     # FR-MG-2 backchannel: one short segment fully inside the other.
@@ -159,7 +167,8 @@ def merge(
                each file lands after the previous on the merged timeline.
     options  : conflict thresholds + backchannel render preference.
     sources  : optional InputSource list embedded in the result's `sources`.
-    rms_fn   : optional loudness hook used only to pick the `preferred` side of a bleed.
+    rms_fn   : optional loudness hook (track index, local start, local end) -> RMS, used only to
+               pick the `preferred` side of a bleed.
     """
     if len(outputs) != len(labels):
         raise ValueError("outputs and labels must be the same length")
@@ -175,6 +184,13 @@ def merge(
         for seg in _to_segments(out, label, off):
             tagged.append((i, seg))
 
+    # rms_fn speaks in (track index, track-local time); segments carry merged-timeline time.
+    track_of = {id(seg): i for i, seg in tagged}
+    loudness = None
+    if rms_fn is not None:
+        loudness = lambda seg, s, e: rms_fn(track_of[id(seg)], s - offs[track_of[id(seg)]],
+                                            e - offs[track_of[id(seg)]])
+
     # Pairwise conflict detection across different tracks only.
     if opts.detect_conflicts:
         for x in range(len(tagged)):
@@ -184,7 +200,7 @@ def merge(
                 if ix == iy:
                     continue
                 if _overlap_seconds(a, b) > 0:
-                    _classify_pair(a, b, opts, rms_fn)
+                    _classify_pair(a, b, opts, loudness)
 
     segments = [seg for _, seg in tagged]
     segments = _apply_backchannel_render(segments, opts.backchannel_render)

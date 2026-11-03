@@ -205,6 +205,8 @@
             <input id="opt-bleed-win" type="number" value="1" step="0.5" /></label>
           <label class="field"><span>Bleed similarity</span>
             <input id="opt-bleed-sim" type="number" value="0.7" step="0.05" min="0" max="1" /></label>
+          <label class="field" title="On a suspected bleed, mark the louder mic's line 'preferred' only if it is at least this many times louder. Closer than that, neither is marked."><span>Bleed loudness ratio</span>
+            <input id="opt-bleed-ratio" type="number" value="2" step="0.5" min="1" /></label>
           <div class="spacer"></div>
           <button id="run-btn" class="primary">Transcribe &amp; Merge</button>
         </div>

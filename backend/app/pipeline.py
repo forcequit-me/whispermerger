@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from .extract import extract_ahead, extract_tracks
+from .extract import extract_ahead, extract_tracks, loudness_profile, span_rms
 from .merge import MergeOptions, merge
 from .models import InputSource, MergedOutput
 
@@ -33,6 +33,11 @@ class _FileCancelled(Exception):
 class PreparedSource:
     path: str               # real path to the source file on disk
     input: InputSource      # filename, duration, tracks (with selected + speaker), sequence
+
+
+def _rms_from(profiles: list):
+    """merge()'s loudness hook over per-track profiles; None when none were measured."""
+    return (lambda i, s, e: span_rms(profiles[i], s, e)) if profiles else None
 
 
 def _extract_into(tmpdir: Path, p: "PreparedSource") -> dict:
@@ -74,6 +79,8 @@ def run_merge_pipeline(
     base = 0.0
     done = 0
     done_weight = 0.0
+    profiles: list = []                        # per-track loudness, for the bleed `preferred` pick
+    detect = (options or MergeOptions()).detect_conflicts
     tmpdir = Path(tempfile.mkdtemp(prefix="wm_pipe_"))
     try:
         if prepared:
@@ -85,6 +92,8 @@ def run_merge_pipeline(
                 n = done + 1
                 report(done_weight / total_weight, f"Transcribing track {n}/{total} · {track.speaker}")
                 outputs.append(transcribe_fn(str(wavs[track.track_index])))
+                if detect:                                         # measure before the wav goes
+                    profiles.append(loudness_profile(wavs[track.track_index]))
                 wavs[track.track_index].unlink(missing_ok=True)   # free it right away
                 labels.append(track.speaker)
                 offsets.append(base)
@@ -93,7 +102,8 @@ def run_merge_pipeline(
             base += p.input.duration
 
         report(0.99, "Merging tracks…")
-        return merge(outputs, labels, offsets, options=options, sources=sources)
+        return merge(outputs, labels, offsets, options=options, sources=sources,
+                     rms_fn=_rms_from(profiles))
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -122,6 +132,7 @@ def run_per_file_pipeline(
     def cancelled() -> bool:
         return bool(is_cancelled and is_cancelled())
 
+    detect = (options or MergeOptions()).detect_conflicts
     tmpdir = Path(tempfile.mkdtemp(prefix="wm_perfile_"))
     extract_secs: dict[int, float] = {}
 
@@ -155,6 +166,7 @@ def run_per_file_pipeline(
                 selected = [t for t in p.input.tracks if t.selected]
                 outputs: list[dict] = []
                 labels: list[str] = []
+                profiles: list = []
                 completed = True
                 for j, track in enumerate(selected):
                     if is_file_cancelled(i):
@@ -164,11 +176,13 @@ def run_per_file_pipeline(
                         break
                     on_track(i, j, len(selected), track.speaker)
                     outputs.append(transcribe_fn(str(wavs[track.track_index])))
+                    if detect:
+                        profiles.append(loudness_profile(wavs[track.track_index]))
                     wavs[track.track_index].unlink(missing_ok=True)
                     labels.append(track.speaker)
                 if completed:
                     merged = merge(outputs, labels, [0.0] * len(outputs),
-                                   options=options, sources=[p.input])
+                                   options=options, sources=[p.input], rms_fn=_rms_from(profiles))
                     on_done(i, p, merged)
             except _FileCancelled:
                 on_skip(i, p)
