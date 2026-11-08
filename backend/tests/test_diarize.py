@@ -72,3 +72,25 @@ def test_transcribe_regions_reports_progress_by_labeled_seconds(tmp_path):
                        progress=lambda f, m: calls.append((round(f, 2), m)))
     # A has 1 of 4 labeled seconds, so B starts at 25%
     assert calls == [(0.0, "transcribing A (1/2)"), (0.25, "transcribing B (2/2)")]
+
+
+def test_detect_speech_is_safe_from_several_threads(tmp_path, monkeypatch):
+    """The server runs each request on its own thread; two detections sharing the stateful
+    silero model at once crashed the server (#25). They must run one at a time."""
+    import threading, time
+    import silero_vad
+    sf.write(tmp_path / "t.wav", np.zeros(16000, dtype=np.float32), 16000)
+    busy, overlaps = [0], []
+
+    def fake_timestamps(*a, **k):
+        busy[0] += 1
+        overlaps.append(busy[0] > 1)
+        time.sleep(0.05)
+        busy[0] -= 1
+        return []
+
+    monkeypatch.setattr(silero_vad, "get_speech_timestamps", fake_timestamps)
+    ts = [threading.Thread(target=detect_speech, args=(tmp_path / "t.wav",)) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert overlaps and not any(overlaps)

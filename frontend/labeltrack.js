@@ -385,11 +385,13 @@ function setLabelBar(frac, msg) {
 
 async function runVad() {
   $("#label-status").textContent = "detecting speech…";
+  const fid = activeFileId, track = activeTrack;
   let res;
-  try { res = await fetch(`/api/vad/${activeFileId}/${activeTrack}`, { method: "POST" }); }
+  try { res = await fetch(`/api/vad/${fid}/${track}`, { method: "POST" }); }
   catch (e) { $("#label-status").textContent = "couldn't reach the server."; return; }
   if (!res.ok) { $("#label-status").textContent = "VAD failed: " + (await res.text()); return; }
   const spans = await res.json();
+  if (fid !== activeFileId || track !== activeTrack) return;   // user moved to another track meanwhile
   regions.clearRegions();
   assign.clear();
   boundaryIds.clear();

@@ -461,6 +461,11 @@ For recordings with no stems (one mixed track, multiple speakers). All phases do
   represent talk-over ("Duplicate region" copies a span onto another speaker); each is
   transcribed and the merge flags `overlap`, and split-lane shows it cleanly. Per PRD §11.4,
   truly simultaneous speech still yields one (garbled) line per speaker — a known limit.
+- **Silent server crash fixed (2026-11-08, #25).** Switching tracks fires a new `/api/vad` while the
+  last one still runs, and the server handles each request on its own thread. silero-VAD keeps state
+  between chunks, so two threads sharing it corrupted memory (Windows logged heap corruption,
+  `0xc0000374`) and the server quit with no traceback. `detect_speech` now runs one at a time
+  (`_vad_lock`), and the UI drops a detection result if you've moved to another track meanwhile.
 
 ## Not started / deferred
 

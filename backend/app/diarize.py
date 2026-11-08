@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import tempfile
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -32,16 +33,22 @@ SR = 16000  # tracks are extracted to mono/16k
 # --- VAD -------------------------------------------------------------------------------
 
 _vad_model = None
+# silero-VAD keeps internal state between chunks, so one model must never run on two threads at
+# once. The server runs each request on its own thread, and switching tracks in Label Track fires a
+# new detection while the last is still running: sharing the model then corrupted memory and the
+# server quit with no error (#25). One detection at a time.
+_vad_lock = threading.Lock()
 
 
 def detect_speech(wav_path: str | Path) -> list[Region]:
     """Run silero-VAD over a mono/16k wav and return speech regions (seconds)."""
     global _vad_model
     from silero_vad import get_speech_timestamps, load_silero_vad, read_audio
-    if _vad_model is None:
-        _vad_model = load_silero_vad()
     wav = read_audio(str(wav_path), sampling_rate=SR)
-    spans = get_speech_timestamps(wav, _vad_model, sampling_rate=SR, return_seconds=True)
+    with _vad_lock:
+        if _vad_model is None:
+            _vad_model = load_silero_vad()
+        spans = get_speech_timestamps(wav, _vad_model, sampling_rate=SR, return_seconds=True)
     return [(float(s["start"]), float(s["end"])) for s in spans]
 
 
