@@ -1,14 +1,25 @@
 # Handoff — GPU uptime / batch speed optimization
 
 **Status:** #1 (prefetch) + #2 (batch_size knob) **implemented** 2026-06-19. #3 skipped as planned.
+Batch size measured 2026-11-08 (#24): **16 is the right value on a 12 GB card**. Nothing left open here.
 
 **What shipped:**
 - Prefetch depth-1 via `extract.extract_ahead` (generic iterator). `pipeline.run_merge_pipeline`
   consumes it (single-job + multi-file merge projects); new `pipeline.run_per_file_pipeline` drives
   it across a project's files for the per-file batch case (`batch._process_project`). Each file
   extracts into its own temp subdir so prefetched WAVs don't collide; cleanup via `shutil.rmtree`.
-- `transcribe.BATCH_SIZE` = `int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))`. **Still default
-  16** — tune on the real 3080 Ti (try 24/32, largest with no OOM) and record the value here.
+- `transcribe.BATCH_SIZE` = `int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))`, and `Startup.bat`
+  ships 16. Measured on the 3080 Ti, 25 min of real audio, large-v3, per-process GPU memory:
+
+  | batch | transcribe | VRAM | shared (system RAM) |
+  |---|---|---|---|
+  | 16 | 17.5 s | 8.6 GB | 0.3 GB |
+  | 24 | 19.8 s | 9.5 GB | 1.2 GB |
+  | 32 | 64.3 s | 11.0 GB | 1.9 GB |
+
+  Above 16 the process outgrows the card, spills into system memory over PCIe and gets slower, not
+  faster (32 was ~3.7x slower). It never runs out of memory: Windows spills silently, so "no OOM" is
+  the wrong test. Watch Task Manager's "Shared GPU memory" instead.
 - Cancel: prefetch stops promptly via `is_cancelled` threaded through both pipelines.
 
 Original analysis below (kept for reference).
@@ -113,6 +124,6 @@ transcription. Foldable, but low payoff. Defer.
   produces identical output + cleans up temp files; cancel still stops promptly.
 
 ## Open questions
-- Optimal `batch_size` for 12 GB / large-v3 fp16 (real-GPU test).
+- ~~Optimal `batch_size` for 12 GB / large-v3 fp16~~ — answered: 16 (see the table above).
 - Is prefetch depth >1 ever worth it for many tiny files? (Likely not — disk + diminishing
   returns. Start at depth 1.)
