@@ -430,7 +430,8 @@ exactly what hides the next extraction).
 - **Extraction overlap — resolved:** extraction is single-pass (`extract_tracks` reads the source
   once for all tracks) and now **prefetched** — `extract.extract_ahead` extracts the next file while
   the GPU transcribes the current one, so the GPU no longer idles between files. GPU throughput is
-  tunable via `WHISPERMERGER_BATCH_SIZE` (default 16; `Startup.bat` ships 24 on the 3080 Ti). See the
+  tunable via `WHISPERMERGER_BATCH_SIZE` (default 16, and `Startup.bat` ships 16: on a 12 GB card 24 and 32 spill into system memory and
+  run slower, measured 2026-11-08, see #24). See the
   2026-06-19 "GPU uptime" entry below.
 - **Bleed (FR-MG-4):** the near-duplicate-text flag works, but real "duplicate lines across
   speakers" on this footage turned out to be **clean-vs-processed captures of the same mic**, not
