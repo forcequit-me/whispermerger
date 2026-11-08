@@ -12,7 +12,9 @@ Usage: python -m app.fetch '<json spec>'
 from __future__ import annotations
 
 import json
+import os
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -37,7 +39,15 @@ def fetch_url(url: str, dest: str) -> None:
     part.replace(dest_p)
 
 
+def _exit_with_parent() -> None:
+    """The server holds our stdin open. If it dies (Shutdown, closed window, crash), stdin hits EOF
+    and we stop too: otherwise a restarted server's download and this one write the same file."""
+    sys.stdin.read()
+    os._exit(1)
+
+
 if __name__ == "__main__":
+    threading.Thread(target=_exit_with_parent, daemon=True).start()
     spec = json.loads(sys.argv[1])
     if spec["kind"] == "hf":
         fetch_hf(spec["repo"], spec["files"])

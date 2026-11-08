@@ -370,6 +370,7 @@
       <div class="panel">
         <h2>Speech models</h2>
         <div class="muted" style="margin-bottom:10px">Turns audio into text. Download ahead of time, or a run downloads what it needs (with progress you can cancel). A canceled or dropped download resumes where it stopped.</div>
+        <div class="row" id="models-whisper-all" style="margin-bottom:10px; display:none"></div>
         <table class="models" id="models-whisper"></table>
         <div class="row" style="margin-top:12px">
           <button id="bench-run" class="ghost">Benchmark downloaded models</button>
@@ -391,13 +392,14 @@
       <div class="panel">
         <h2>Word-timing models</h2>
         <div class="muted" style="margin-bottom:10px">One per language. Pins every word to its exact time for subtitles and per-line playback. A language without one still transcribes, with line timings only.</div>
+        <div class="row" id="models-align-all" style="margin-bottom:10px; display:none"></div>
         <table class="models" id="models-align"></table>
         <div id="models-err" class="err"></div>
       </div>
     </section>
   </main>
 
-  <script src="app.js?v=34"></script>
+  <script src="app.js?v=36"></script>
   <script type="module" src="labeltrack.js?v=10"></script>
 </body>
 </html>

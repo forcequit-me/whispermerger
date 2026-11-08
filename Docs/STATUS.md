@@ -467,6 +467,22 @@ For recordings with no stems (one mixed track, multiple speakers). All phases do
   `0xc0000374`) and the server quit with no traceback. `detect_speech` now runs one at a time
   (`_vad_lock`), and the UI drops a detection result if you've moved to another track meanwhile.
 
+## Model downloader: queue, honest status, Download all (2026-11-08, #26)
+
+- **Queue** — `DownloadManager` runs `MAX_PARALLEL` = 2 at once (a semaphore); the rest show *queued*.
+  A run's `ensure()` passes `skip_queue` so it never waits behind a Download all. A queued model that
+  got installed meanwhile is marked done without fetching again.
+- **Honest status** — `queued | connecting | downloading | retrying | done | error | canceled`.
+  A stall reads "no data for 90 s, retrying (attempt N)"; any other fetch failure shows its real
+  error while retrying, and errors no retry fixes (`_PERMANENT`: 404/401/403, not found, gated, disk
+  full, access denied) fail at once.
+- **Disk check** — before each download, `need > free` on the target drive fails with both sizes.
+  `/api/models` returns `disk_free` for the Download all confirm.
+- **Download all / Cancel all** per section (speech, word-timing) with done / total, speed and time
+  left. The row updates in place, since rebuilding it every second swallowed clicks.
+- **No orphan downloads** — `app.fetch` exits when its stdin (held by the server) closes, so
+  Shutdown or a crash no longer leaves a download running to fight a restarted server's.
+
 ## Not started / deferred
 
 - **Tauri packaging** (PRD §16): wrap FastAPI + browser into a `.exe`. Future.

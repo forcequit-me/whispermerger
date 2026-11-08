@@ -120,7 +120,72 @@ def test_stalled_connection_is_restarted_and_resumed(tmp_path, monkeypatch):
     monkeypatch.setattr(ms, "STALL_SECONDS", 2)
     e = ms.ModelEntry("align:stall", "align", "Stall test", 2, url=f"http://127.0.0.1:{server.server_port}/m.pt")
     d = ms.DownloadManager().start(e)
-    _wait(lambda: d.note == "connection dropped, resuming", timeout=15)
+    _wait(lambda: d.status == "retrying" and d.note.startswith("no data for 2 s"), timeout=15)
     _wait(lambda: d.status == "done", timeout=30)
     assert e.dest.read_bytes() == PAYLOAD
+    server.shutdown()
+
+
+def test_downloads_queue_and_a_run_skips_the_queue(tmp_path, monkeypatch):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _SlowRanged)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(torch.hub, "get_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(ms, "MAX_PARALLEL", 1)
+    url = f"http://127.0.0.1:{server.server_port}/"
+    a, b, c = (ms.ModelEntry(f"align:{n}", "align", n, 2, url=url + f"{n}.pt") for n in "abc")
+    mgr = ms.DownloadManager()
+    da, db = mgr.start(a), mgr.start(b)
+    _wait(lambda: da.status == "downloading")
+    assert db.status == "queued" and db.active and db.describe() == "queued"
+    dc = mgr.start(c, skip_queue=True)                    # a run needs this one now: starts beside a
+    _wait(lambda: dc.status != "queued", timeout=2)
+    assert da.status == "downloading" and db.status == "queued"
+    _wait(lambda: all(d.status == "done" for d in (da, db, dc)), timeout=30)
+    server.shutdown()
+
+
+class _NotFound(_SlowRanged):
+    def do_GET(self):
+        self.send_error(404)
+
+
+def test_permanent_error_fails_at_once_with_the_real_reason(tmp_path, monkeypatch):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(torch.hub, "get_dir", lambda: str(tmp_path))
+    e = ms.ModelEntry("align:gone", "align", "Gone", 2, url=f"http://127.0.0.1:{server.server_port}/m.pt")
+    d = ms.DownloadManager().start(e)
+    _wait(lambda: d.status == "error", timeout=15)        # no minutes of "retrying"
+    assert "404" in d.error
+    server.shutdown()
+
+
+def test_not_enough_disk_space_fails_before_downloading(entry, monkeypatch):
+    monkeypatch.setattr(ms, "_free_bytes", lambda p: 1000)
+    d = ms.DownloadManager().start(entry)
+    _wait(lambda: d.status == "error")
+    assert d.error.startswith("not enough disk space") and d.done == 0
+
+
+def test_already_on_disk_is_not_downloaded_again(entry):
+    entry.dest.parent.mkdir(parents=True, exist_ok=True)
+    entry.dest.write_bytes(b"x")
+    d = ms.DownloadManager().start(entry)
+    _wait(lambda: d.status == "done")
+    assert entry.dest.read_bytes() == b"x"
+
+
+def test_fetch_quits_when_the_server_goes_away(tmp_path):
+    """A fetch left running after the server stops would fight a restarted server's download."""
+    import json, subprocess, sys
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _HangsOnce)   # never finishes on its own
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    _HangsOnce.hung = False
+    spec = {"kind": "url", "url": f"http://127.0.0.1:{server.server_port}/m.pt", "dest": str(tmp_path / "m.pt")}
+    proc = subprocess.Popen([sys.executable, "-m", "app.fetch", json.dumps(spec)], cwd=str(ms.BACKEND_DIR),
+                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1.5)
+    assert proc.poll() is None                     # still downloading while the server is there
+    proc.stdin.close()                             # the server process ends
+    assert proc.wait(timeout=10) == 1
     server.shutdown()

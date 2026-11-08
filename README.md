@@ -184,8 +184,11 @@ split also prints to the server console as a scrollback record (`[timing] <file>
   `.txt` / `.csv`, or paste it) to tweak and re-export (e.g. a batch result).
 - **Models** — every speech and word-timing model, whether it's on disk, its size, Download /
   Remove. Downloads show progress, can be canceled, and resume where they stopped (also after a
-  dropped connection). A run that needs a missing model downloads it as a visible step; Pause and
-  Cancel work during it. Language dropdowns note which languages still need a download.
+  dropped connection). **Download all** per section (with total size and free disk space first) and
+  **Cancel all**; two download at a time, the rest wait as *queued*, with overall progress and time
+  left. Each shows whether it's connecting, downloading or retrying (and why); errors no retry can fix
+  (missing file, no access, disk full) fail at once with the reason. A run that needs a missing model
+  downloads it as a visible step, ahead of the queue; Pause and Cancel work during it. Language dropdowns note which languages still need a download.
   **Use** picks the speech model every run uses (large-v3 by default; also large-v2, turbo,
   medium, small, base, tiny, and English-only distil-large-v3.5 / distil-large-v3 / medium.en /
   distil-medium.en / small.en / distil-small.en / base.en / tiny.en), saved across restarts.

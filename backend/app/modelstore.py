@@ -29,6 +29,10 @@ from typing import Callable, Optional
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 STALL_SECONDS = 90         # no new bytes for this long = dropped connection; restart and resume
 MAX_STALLS = 4             # give up after this many restarts in a row that gained nothing
+MAX_PARALLEL = 2           # downloads at once; the rest wait as "queued" so each gets real bandwidth
+# Errors no retry will fix: fail at once with the real reason instead of "retrying" for minutes.
+_PERMANENT = ("404", "401", "403", "Not Found", "RepositoryNotFound", "EntryNotFound", "GatedRepo",
+              "No space left", "Errno 28", "PermissionError", "Access is denied")
 
 # Word-timing models for languages WhisperX has no default for (wav2vec2 CTC, character vocab).
 EXTRA_ALIGN_MODELS = {
@@ -264,28 +268,53 @@ def _fmt_mb(n: float) -> str:
 @dataclass
 class Download:
     id: str
-    status: str = "starting"     # starting | downloading | done | error | canceled
+    # queued | connecting | downloading | retrying | done | error | canceled
+    status: str = "queued"
     done: int = 0                # bytes on disk so far
     total: int = 0
     speed: float = 0.0           # bytes/s
-    note: str = ""               # e.g. "connection dropped, resuming"
+    note: str = ""               # why it's retrying, e.g. "no data for 90 s, retrying (attempt 2)"
     error: str = ""
+    skip_queue: bool = False     # a run is waiting on this model: don't wait for a free slot
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
 
     @property
     def active(self) -> bool:
-        return self.status in ("starting", "downloading")
+        return self.status in ("queued", "connecting", "downloading", "retrying")
 
     def describe(self) -> str:
+        if self.status == "queued":
+            return "queued"
         if not self.total:
-            return "starting…"
+            return "connecting…" if self.active else self.status
         pct = int(100 * self.done / self.total)
-        speed = f" · {_fmt_mb(self.speed)}/s" if self.speed > 0 else ""
-        return f"{pct}% of {_fmt_mb(self.total)}{speed}" + (f" · {self.note}" if self.note else "")
+        head = f"{pct}% of {_fmt_mb(self.total)}"
+        if self.status == "connecting":
+            return f"{head} · connecting…"
+        if self.status == "retrying":
+            return f"{head} · {self.note}"
+        return head + (f" · {_fmt_mb(self.speed)}/s" if self.speed > 0 else "")
 
     def to_dict(self) -> dict:
-        return {"status": self.status, "done": self.done, "total": self.total, "speed": self.speed,
-                "text": self.describe(), "error": self.error}
+        return {"status": self.status, "active": self.active, "done": self.done, "total": self.total,
+                "speed": self.speed, "text": self.describe(), "error": self.error}
+
+
+def _free_bytes(path: Path) -> int:
+    """Free space on the drive `path` is (or will be) on."""
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return shutil.disk_usage(path).free
+
+
+def _target_dir(e: ModelEntry) -> Path:
+    return e.dest.parent if e.url else _repo_dir(e.repo)
+
+
+def disk_free() -> int:
+    """Free space where Hugging Face models land (the Models tab warns before Download all)."""
+    from huggingface_hub.constants import HF_HUB_CACHE
+    return _free_bytes(Path(HF_HUB_CACHE))
 
 
 def _plan(e: ModelEntry) -> tuple[dict, Callable[[], int], int]:
@@ -334,16 +363,19 @@ def _plan(e: ModelEntry) -> tuple[dict, Callable[[], int], int]:
 class DownloadManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._slots = threading.Semaphore(MAX_PARALLEL)
         self.downloads: dict[str, Download] = {}
 
-    def start(self, e: ModelEntry) -> Download:
-        """Start downloading `e` (or return the download already running for it)."""
+    def start(self, e: ModelEntry, skip_queue: bool = False) -> Download:
+        """Queue a download of `e` (or return the one already queued or running for it).
+        `skip_queue`: a run needs this model now, so it starts without waiting for a slot."""
         with self._lock:
             d = self.downloads.get(e.id)
             if d and d.active:
+                d.skip_queue = d.skip_queue or skip_queue
                 return d
-            d = self.downloads[e.id] = Download(e.id)
-        threading.Thread(target=self._run, args=(e, d), daemon=True).start()
+            d = self.downloads[e.id] = Download(e.id, skip_queue=skip_queue)
+        threading.Thread(target=self._queued, args=(e, d), daemon=True).start()
         return d
 
     def cancel(self, model_id: str) -> bool:
@@ -353,13 +385,34 @@ class DownloadManager:
         d._cancel.set()
         return True
 
+    def _queued(self, e: ModelEntry, d: Download) -> None:
+        """Wait for a free slot (or for a run to need this model), then download."""
+        got = False
+        while not d.skip_queue and not (got := self._slots.acquire(timeout=0.5)):
+            if d._cancel.is_set():
+                d.status = "canceled"
+                return
+        try:
+            self._run(e, d)
+        finally:
+            if got:
+                self._slots.release()
+
     def _run(self, e: ModelEntry, d: Download) -> None:
+        if is_installed(e):              # e.g. a run fetched it while this one sat in the queue
+            d.status = "done"
+            return
+        d.status = "connecting"
         try:
             spec, measure, d.total = _plan(e)
         except Exception as exc:
             d.status, d.error = "error", f"couldn't reach the download server: {exc}"
             return
-        d.status = "downloading"
+        need, free = d.total - measure(), _free_bytes(_target_dir(e))
+        if need > free:
+            d.status = "error"
+            d.error = f"not enough disk space: needs {_fmt_mb(need)}, {_fmt_mb(free)} free"
+            return
         # Classic HTTP download, not Xet: it grows a .incomplete file we can measure and resume,
         # where Xet assembles the file elsewhere and only drops it in place at the end.
         env = {**os.environ, "HF_HUB_DISABLE_PROGRESS_BARS": "1", "HF_HUB_DISABLE_XET": "1"}
@@ -369,8 +422,10 @@ class DownloadManager:
             before = measure()
             log = tempfile.TemporaryFile()
             proc = subprocess.Popen([sys.executable, "-m", "app.fetch", json.dumps(spec)],
-                                    cwd=str(BACKEND_DIR), env=env, stdout=subprocess.DEVNULL, stderr=log)
+                                    cwd=str(BACKEND_DIR), env=env, stdout=subprocess.DEVNULL, stderr=log,
+                                    stdin=subprocess.PIPE)   # closes when the server dies: fetch quits
             last_bytes, last_t, prev = before, time.time(), (before, time.time())
+            stalled = False
             while proc.poll() is None:
                 if d._cancel.wait(1.0):
                     proc.kill()
@@ -382,10 +437,11 @@ class DownloadManager:
                 d.speed = max(0.0, (now_b - prev[0]) / max(now_t - prev[1], 1e-6))
                 prev = (now_b, now_t)
                 if now_b > last_bytes:
-                    last_bytes, last_t, d.note = now_b, now_t, ""
+                    last_bytes, last_t, d.note, d.status = now_b, now_t, "", "downloading"
                 elif now_t - last_t > STALL_SECONDS:      # dropped connection: restart, resume
                     proc.kill()
                     proc.wait()
+                    stalled = True
                     break
             if proc.returncode == 0 and is_installed(e):
                 d.done, d.speed, d.status = d.total, 0.0, "done"
@@ -393,11 +449,14 @@ class DownloadManager:
             stalls = 0 if measure() > before else stalls + 1
             log.seek(0)
             err = log.read().decode("utf-8", "replace").strip().splitlines()
-            if stalls >= MAX_STALLS:
+            reason = err[-1].strip() if err else ""
+            if (reason and any(p in reason for p in _PERMANENT)) or stalls >= MAX_STALLS:
                 d.status = "error"
-                d.error = (err[-1] if err else "") or "the download stopped making progress"
+                d.error = reason or "the download stopped making progress"
                 return
-            d.note, d.speed = "connection dropped, resuming", 0.0
+            why = f"no data for {STALL_SECONDS} s" if stalled or not reason else f"error: {reason[:120]}"
+            d.status, d.speed = "retrying", 0.0
+            d.note = f"{why}, retrying (attempt {attempt + 1})"
             if d._cancel.wait(min(2 * attempt, 10)):
                 d.status = "canceled"
                 return
@@ -427,7 +486,7 @@ def ensure(e: ModelEntry) -> None:
     """Download `e` if it isn't on disk yet, reporting progress to this thread's reporter."""
     if is_installed(e):
         return
-    d = downloads.start(e)
+    d = downloads.start(e, skip_queue=True)
     fn = getattr(_reporter, "fn", None)
     try:
         while d.active:

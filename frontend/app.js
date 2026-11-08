@@ -1630,13 +1630,15 @@ const LANG_SELECTS = ["#opt-language", "#batch-language", "#label-language"];
 let modelsPoll = null;
 
 const fmtSize = (mb) => (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`);
-const isDownloading = (m) => m.download && ["starting", "downloading"].includes(m.download.status);
+const isDownloading = (m) => !!(m.download && m.download.active);   // queued, connecting, downloading or retrying
 
 async function refreshModels() {
   let data;
   // first call loads the speech library on the server (~10 s), hence the long timeout
   try { data = await (await fetchTO("/api/models", {}, 60000)).json(); } catch { return; }
   renderModels(data);
+  renderGroup("whisper", data.models, data.disk_free);
+  renderGroup("align", data.models, data.disk_free);
   annotateLanguages(data.models, data.variants);
   $("#auto-portuguese").value = data.auto_portuguese || "";
   $("#pt-punctuation").checked = !!data.pt_punctuation;
@@ -1676,6 +1678,52 @@ function modelAction(m, active) {
   const note = d && d.status === "error" ? el("span", { className: "err", textContent: d.error })
     : d && d.status === "canceled" ? el("span", { className: "meta", textContent: "canceled — partial download kept" }) : "";
   return el("span", { className: "dl" }, note, get);
+}
+
+// One row per section: Download all (what isn't on disk), Cancel all, and progress across the queue.
+// The buttons are built once and their labels updated in place: the 1 s refresh would otherwise
+// swap a button out between mouse-down and mouse-up and the click would be lost.
+function renderGroup(kind, models, free) {
+  const box = $(`#models-${kind}-all`);
+  const group = models.filter((m) => m.kind === kind);
+  const missing = group.filter((m) => !m.installed && !isDownloading(m));
+  const active = group.filter(isDownloading);
+  const post = (ms, path) => Promise.all(ms.map((m) =>
+    fetch(`/api/models/${encodeURIComponent(m.id)}${path}`, { method: "POST" }))).then(refreshModels);
+  if (!box.firstChild) {
+    box.all = el("button", { className: "ghost" });
+    box.cancel = el("button", { className: "ghost", textContent: "Cancel all" });
+    box.meta = el("span", { className: "meta" });
+    box.all.onclick = () => {
+      const { missing, free } = box.state, mb = missing.reduce((s, m) => s + m.size_mb, 0);
+      const freeTxt = fmtSize(Math.round(free / 1e6));
+      $("#models-err").textContent = "";
+      if (mb * 1e6 > free) {
+        $("#models-err").textContent = `Not enough disk space: these need ${fmtSize(mb)}, ${freeTxt} free.`;
+        return;
+      }
+      if (confirm(`Download ${missing.length} models, ${fmtSize(mb)} in total?\n${freeTxt} free on disk. They download two at a time; the rest wait in a queue.`))
+        post(missing, "/download");
+    };
+    box.cancel.onclick = () => post(box.state.active, "/cancel");
+    box.append(box.all, box.cancel, box.meta);
+  }
+  box.state = { missing, active, free };
+  const mb = missing.reduce((s, m) => s + m.size_mb, 0);
+  box.all.textContent = `Download all (${missing.length} · ${fmtSize(mb)})`;
+  box.all.style.display = missing.length ? "" : "none";
+  box.cancel.style.display = box.meta.style.display = active.length ? "" : "none";
+  if (active.length) {
+    const total = active.reduce((s, m) => s + (m.download.total || m.size_mb * 1e6), 0);
+    const done = active.reduce((s, m) => s + m.download.done, 0);
+    const speed = active.reduce((s, m) => s + m.download.speed, 0);
+    const queued = active.filter((m) => m.download.status === "queued").length;
+    const parts = [`${active.length - queued} downloading` + (queued ? `, ${queued} queued` : ""),
+      `${fmtSize(Math.round(done / 1e6))} of ${fmtSize(Math.round(total / 1e6))}`];
+    if (speed > 0) parts.push(`${(speed / 1e6).toFixed(1)} MB/s`, `about ${fmtAudio((total - done) / speed)} left`);
+    box.meta.textContent = parts.join(" · ");
+  }
+  box.style.display = missing.length || active.length ? "" : "none";
 }
 
 const modelNames = {};   // short name -> display name, for the benchmark table

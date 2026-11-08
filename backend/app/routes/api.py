@@ -790,6 +790,7 @@ def list_models() -> dict:
     return {"active": f"whisper:{modelstore.active_whisper()}", "models": out,
             "auto_portuguese": modelstore.pt_default(),
             "pt_punctuation": modelstore.pt_punctuation(),
+            "disk_free": modelstore.disk_free(),     # bytes, for the Download all warning
             # what each dropdown variant needs on disk, so the dropdowns can show the download size
             "variants": {"pt-PT": ["align:pt", f"whisper:{modelstore.portugal_model()}"]
                          + (["whisper:large-v3"] if modelstore.pt_punctuation() else []),
