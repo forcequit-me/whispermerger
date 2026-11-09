@@ -58,6 +58,9 @@ def test_compute_peaks_shape_and_range(tmp_path):
     assert all(0.0 <= p <= 1.0 for p in peaks)
     assert max(peaks) == 1.0                 # normalized to peak
     assert peaks[-1] > peaks[0]              # ramp -> louder at the end
+    # a window (zoomed in): its own bucket count, raw amplitudes, only that stretch of audio
+    first = compute_peaks(tmp_path / "r.wav", buckets=50, start=0.0, end=2.0, normalize=False)
+    assert len(first) == 50 and max(first) < 0.6   # quiet first half of the ramp
 
 
 def test_extracted_audio_context_cleans_up(two_stream_file):

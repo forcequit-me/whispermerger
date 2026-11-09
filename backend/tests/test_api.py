@@ -172,6 +172,9 @@ def test_peaks_for_one_track(client, two_stream_file):
     b = client.get(f"/api/peaks/{file_id}?track=1&buckets=20").json()
     assert len(a["peaks"]) == len(b["peaks"]) == 20 and a["duration"] > 0
     assert client.get(f"/api/peaks/{file_id}?track=1&buckets=20").json() == b      # cached
+    # zoomed-in window: asked-for bucket count, same scale as the whole track
+    w = client.get(f"/api/peaks/{file_id}?track=1&buckets=30&start=0&end=0.5").json()
+    assert len(w["peaks"]) == 30 and 0 < max(w["peaks"]) <= 1.0
     assert list((client.app.state.upload_dir / "diar").glob(f"{file_id}_t1.wav"))  # freed by /release
     client.post(f"/api/release/{file_id}")
     assert not list((client.app.state.upload_dir / "diar").glob(f"{file_id}_t*.wav"))

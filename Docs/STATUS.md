@@ -586,6 +586,12 @@ For recordings with no stems (one mixed track, multiple speakers). All phases do
   the full-track wav Label Track extracts (freed by `/release`). Speech detection already ran on
   load; the button is now *Detect again* at the end of the row, asks before replacing labeled
   regions, and Region pad re-pads the last detection straight away while nothing is labeled.
+- **All tracks stays sharp when zoomed in (2026-11-09).** It was blurry past ~zoom 10: 4000
+  whole-file peaks stretched over one canvas (capped at 16384 px). Now each row's canvas is only
+  as wide as the view and redraws as it scrolls, from the whole-file peaks at first, then from a
+  window around what's on screen (`/api/peaks/{id}?track=N&start=&end=`, one column per pixel,
+  the view plus one view-width either side). Windows are scaled by the whole track's loudest point
+  so they match. One window request at a time; when it lands, the next one follows the view.
 
 ## Not started / deferred
 

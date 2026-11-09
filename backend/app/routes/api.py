@@ -391,19 +391,26 @@ def _prune_oldest(folder: Path, keep: int) -> None:
 
 
 @router.get("/peaks/{file_id}")
-def peaks(request: Request, file_id: str, buckets: int = 2000, track: int | None = None) -> dict:
+def peaks(request: Request, file_id: str, buckets: int = 2000, track: int | None = None,
+          start: float | None = None, end: float | None = None) -> dict:
     """Downsampled waveform peaks for the editor (downmix of all streams, matching /clip).
     Browser draws these instead of downloading audio — scales to huge files. Cached per file.
     `track`: one stream only (Label Track's stacked view), from the same full-track wav Label
-    Track already extracts, so it's freed with the file (/release)."""
+    Track already extracts, so it's freed with the file (/release). With `start`/`end` it's just
+    that window (zoomed in), scaled by the whole track's loudest point so it matches; not cached."""
     entry = request.app.state.uploads.get(file_id)
     if entry is None:
         raise HTTPException(404, f"unknown file_id {file_id}")
     if track is not None:
-        cache = entry.setdefault("track_peaks", {})
-        if (track, buckets) not in cache:
-            cache[(track, buckets)] = compute_peaks(_track_wav(request.app.state, file_id, track), buckets)
-        return {"duration": entry["source"].duration, "peaks": cache[(track, buckets)]}
+        wav = _track_wav(request.app.state, file_id, track)
+        cache = entry.setdefault("track_peaks", {})        # raw whole-track peaks
+        whole = (track, buckets if start is None and end is None else 4000)
+        if whole not in cache:
+            cache[whole] = compute_peaks(wav, whole[1], normalize=False)
+        raw = cache[whole] if start is None and end is None else \
+            compute_peaks(wav, buckets, start, end, normalize=False)
+        scale = max(cache[whole], default=0.0) or 1.0
+        return {"duration": entry["source"].duration, "peaks": [round(p / scale, 4) for p in raw]}
     cached = entry.get("peaks")
     if cached and cached["buckets"] == buckets:
         return {"duration": entry["source"].duration, "peaks": cached["peaks"]}

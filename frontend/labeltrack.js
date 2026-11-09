@@ -224,7 +224,7 @@ function initWave(fid, track) {
   ws.on("decode", () => busy("Drawing the waveform"));
   ws.on("error", (e) => { busy(null); $("#label-err").textContent = "Couldn't load the audio: " + (e && e.message || e); });
   ws.on("ready", () => { captureDecoded(); applyZoom(); runVad(); });   // fit whole file, then auto-detect speech
-  ws.on("scroll", (_s, _e, left) => { $("#label-stack").scrollLeft = left; });   // stacked tracks follow
+  ws.on("scroll", (_s, _e, left) => { $("#label-stack").scrollLeft = left; drawStack(); });   // stacked tracks follow
   // Spacebar transport + button glyph both reflect the real play state.
   ws.on("play", () => {
     setPlayIcon("pause");
@@ -358,47 +358,88 @@ function renderLanes() {
 
 // "All tracks": the file's other tracks as read-only waveforms under the main one, same width
 // (fit width x zoom) and scroll, so you can see who's talking when. One multi-track file only;
-// several files are combined into one track.
-let stackToken = 0;
+// several files are combined into one track. Each row's canvas is only as wide as the view and
+// redrawn as it scrolls: from whole-track peaks straight away, then from a sharper window around
+// what's on screen once zoomed in past what those can show.
+let stackToken = 0, stackW = 1, stackRows = [], stackFetching = false;
 async function renderStack() {
   const root = $("#label-stack");
   const f = files.length === 1 && files[0].tracks.length > 1 ? files[0] : null;
   $("#label-stack-btn").style.display = f ? "" : "none";
   const token = ++stackToken;
   root.innerHTML = "";
+  stackRows = [];
   if (!stackView || !f || !ws) { root.style.display = "none"; return; }
   root.style.display = "";
-  const w = Math.round(($("#waveform").clientWidth || 600) * (+$("#label-zoom").value || 1));
-  const gain = +$("#label-vzoom").value || 1;
-  const inner = el("div", { style: `width:${w}px` });
+  stackW = Math.round(($("#waveform").clientWidth || 600) * (+$("#label-zoom").value || 1));
+  const vw = root.clientWidth || 600;
+  const inner = el("div", { style: `width:${stackW}px` });
   root.append(inner);
   for (const t of f.tracks) {
     if (t.track_index === activeTrack) continue;           // that one is the main waveform
-    // ponytail: one canvas per track, capped at 16384 px (browser limit); very deep zoom stretches it
-    const canvas = el("canvas", { width: Math.min(w, 16384), height: 44, style: `display:block; width:${w}px; height:44px` });
+    const canvas = el("canvas", { width: vw, height: 44,
+      style: `display:block; flex:none; position:sticky; left:0; width:${vw}px; height:44px` });
     inner.append(el("div", { className: "stack-row" },
       el("span", { className: "stack-label", textContent: `track ${t.track_index + 1} · ${t.speaker}` }), canvas));
-    const key = `${f.file_id}:${t.track_index}`;
-    if (!stackPeaks.has(key)) {
-      try {
-        stackPeaks.set(key, (await (await fetch(`/api/peaks/${f.file_id}?track=${t.track_index}&buckets=4000`)).json()).peaks);
-      } catch { continue; }
-      if (token !== stackToken) return;                      // re-rendered meanwhile
-    }
-    drawPeaks(canvas, stackPeaks.get(key), gain);
+    stackRows.push({ canvas, key: `${f.file_id}:${t.track_index}`,
+                     url: `/api/peaks/${f.file_id}?track=${t.track_index}`, detail: null });
   }
   root.scrollLeft = ws.getScroll();
+  for (const r of stackRows) {
+    if (stackPeaks.has(r.key)) continue;
+    try { stackPeaks.set(r.key, (await (await fetch(`${r.url}&buckets=4000`)).json()).peaks); } catch { /* row stays blank */ }
+    if (token !== stackToken) return;                        // re-rendered meanwhile
+  }
+  drawStack();
 }
 
-function drawPeaks(canvas, peaks, gain) {
+// Redraw the stacked rows for the part of the file on screen.
+function drawStack() {
+  const root = $("#label-stack");
+  if (!stackRows.length || !activeDuration) return;
+  const vw = root.clientWidth, dur = activeDuration, gain = +$("#label-vzoom").value || 1;
+  const from = root.scrollLeft / stackW * dur, to = (root.scrollLeft + vw) / stackW * dur;
+  for (const r of stackRows) {
+    const d = r.detail, all = stackPeaks.get(r.key);
+    if (d && d.from <= from && d.to >= Math.min(to, dur)) drawPeaks(r.canvas, d.peaks, d.from, d.to, from, to, gain);
+    else if (all) {
+      drawPeaks(r.canvas, all, 0, dur, from, to, gain);
+      if (all.length * (to - from) / dur < vw) fetchDetail(r, from, Math.min(to, dur), vw);   // too coarse here
+    }
+  }
+}
+
+// One sharper window (the view plus one view-width either side) at a time across all rows; when
+// it lands, redraw, which fetches the next one if the view has moved or another row still needs it.
+async function fetchDetail(r, from, to, vw) {
+  if (stackFetching) return;
+  stackFetching = true;
+  const span = to - from, a = Math.max(0, from - span), b = Math.min(activeDuration, to + span);
+  let ok = false;
+  try {
+    const n = Math.max(1, Math.round(vw * (b - a) / span));
+    r.detail = { from: a, to: b, peaks: (await (await fetch(`${r.url}&buckets=${n}&start=${a}&end=${b}`)).json()).peaks };
+    ok = true;
+  } catch { /* keep the coarse drawing */ }
+  stackFetching = false;
+  if (ok) drawStack();
+}
+
+// Draw peaks covering pFrom..pTo seconds into the canvas for from..to seconds, one column per pixel.
+function drawPeaks(canvas, peaks, pFrom, pTo, from, to, gain) {
   const ctx = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
-  const bw = w / (peaks.length || 1);
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "#566";
-  peaks.forEach((p, i) => {
+  const per = peaks.length / ((pTo - pFrom) || 1);         // peaks per second
+  const idx = (x) => Math.floor((from + (to - from) * x / w - pFrom) * per);
+  for (let x = 0; x < w; x++) {
+    const i0 = idx(x), i1 = Math.max(i0 + 1, idx(x + 1));
+    if (i0 >= peaks.length || i1 <= 0) continue;           // past the end of the audio
+    let p = 0;
+    for (let i = Math.max(0, i0); i < Math.min(peaks.length, i1); i++) if (peaks[i] > p) p = peaks[i];
     const ph = Math.min(h, Math.max(1, p * h * 0.9 * gain));
-    ctx.fillRect(i * bw, (h - ph) / 2, Math.max(1, bw - 0.3), ph);
-  });
+    ctx.fillRect(x, (h - ph) / 2, 1, ph);
+  }
 }
 
 // DAW-style time ruler aligned to the lane tracks: ticks + mm:ss labels at a readable spacing.
