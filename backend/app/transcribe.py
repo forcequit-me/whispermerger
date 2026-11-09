@@ -55,18 +55,25 @@ BATCH_SIZE = int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))
 # ~0.4 GB per item (large-v3 at 16: 5.8 GB, at 4: 0.6 GB). A batch that doesn't fit spills into
 # system memory and runs 4x+ slower, while a smaller one costs far less (8: +22%, 4: +77%). On a free
 # 12 GB card this still picks 16; with another app holding VRAM it shrinks instead of spilling.
-GB_PER_BATCH_ITEM = 0.4
-VRAM_MARGIN_GB = 0.5               # left for the desktop and other apps' small changes
+GB_PER_BATCH_ITEM = 0.37          # measured 0.36 at 16 (less per item at smaller batches)
+VRAM_MARGIN_GB = 0.3               # left for the desktop and other apps' small changes
+# The word-timing model loads after the speech model and stays on the GPU (one at a time, see
+# _load_align): leave room for it, or a batch sized before it loaded spills once it's there.
+# Measured on a free 3080 Ti: speech model + batch 16 + one word-timing model leaves ~0.5 GB.
+ALIGN_MODEL_GB = 1.3
 
 
 def _fit_batch(cap: int) -> int:
-    """The largest batch up to `cap` that fits the free VRAM now (with the model already loaded)."""
+    """The largest batch up to `cap` that fits the free VRAM now (with the speech model loaded),
+    keeping room for one word-timing model."""
     try:
         import torch
         free_gb = torch.cuda.mem_get_info()[0] / 1e9
+        # a word-timing model already loaded is torch memory, already out of free_gb
+        reserve = max(0.0, ALIGN_MODEL_GB - torch.cuda.memory_allocated() / 1e9)
     except Exception:                  # no CUDA: nothing to fit
         return cap
-    return max(1, min(cap, int((free_gb - VRAM_MARGIN_GB) / GB_PER_BATCH_ITEM)))
+    return max(1, min(cap, int((free_gb - VRAM_MARGIN_GB - reserve) / GB_PER_BATCH_ITEM)))
 ALIGN_TAG = "wav2vec2"  # alignment method, part of the cache key (FR-CA-2)
 # Optional language override: set WHISPERMERGER_LANGUAGE=en to skip auto-detect (and the
 # per-language align-model download it can trigger). Unset = auto-detect (original behavior).
@@ -172,10 +179,22 @@ def _build_model(model_name: str, compute_type: str, device: str):
     return pipe
 
 
-@lru_cache(maxsize=4)
+# One word-timing model on the GPU at a time (~1.3 GB each): several cached together pushed a
+# 12 GB card into system memory mid-batch, several times slower (2026-11-09). Another language
+# reloads from disk in a few seconds.
+@lru_cache(maxsize=1)
 def _load_align(language: str, device: str):
     import whisperx
     with MODEL_LOAD_LOCK:
+        _load_align.cache_clear()          # drop the previous language's model before loading this one
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
         _allow_full_torch_load()
         try:
             return whisperx.load_align_model(language_code=language, device=device,
