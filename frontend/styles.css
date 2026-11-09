@@ -139,6 +139,7 @@ label.opt { display: inline-flex; gap: 6px; align-items: center; margin-right: 1
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field span { font-size: 11px; color: var(--muted); }
 .field input, .field select { width: 120px; }
+#opt-language, #batch-language, #label-language { width: auto; }   /* fit "Portuguese (Portugal)" */
 .field .fmt-set { gap: 10px; min-height: 34px; }
 .field .fmt-set input { width: auto; }
 

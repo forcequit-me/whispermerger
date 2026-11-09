@@ -592,6 +592,8 @@ For recordings with no stems (one mixed track, multiple speakers). All phases do
   window around what's on screen (`/api/peaks/{id}?track=N&start=&end=`, one column per pixel,
   the view plus one view-width either side). Windows are scaled by the whole track's loudest point
   so they match. One window request at a time; when it lands, the next one follows the view.
+- **Language dropdowns fit their longest name (2026-11-09).** They were 120 px like every field and
+  cut "Portuguese (Brazil)" to "Portuguese (I"; the three Language selects now size to their options.
 
 ## Not started / deferred
 
