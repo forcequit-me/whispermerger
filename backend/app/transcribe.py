@@ -50,6 +50,23 @@ DEVICE = "cuda"
 # a real run. Not part of cache_key — output is identical regardless, so changing it never busts
 # the cache.
 BATCH_SIZE = int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))
+# The batch size actually used is BATCH_SIZE or less: whatever fits the VRAM left once the model is
+# loaded (#37). Measured on a 3080 Ti, 2026-11-09: on top of the loaded model a batch needs at most
+# ~0.4 GB per item (large-v3 at 16: 5.8 GB, at 4: 0.6 GB). A batch that doesn't fit spills into
+# system memory and runs 4x+ slower, while a smaller one costs far less (8: +22%, 4: +77%). On a free
+# 12 GB card this still picks 16; with another app holding VRAM it shrinks instead of spilling.
+GB_PER_BATCH_ITEM = 0.4
+VRAM_MARGIN_GB = 0.5               # left for the desktop and other apps' small changes
+
+
+def _fit_batch(cap: int) -> int:
+    """The largest batch up to `cap` that fits the free VRAM now (with the model already loaded)."""
+    try:
+        import torch
+        free_gb = torch.cuda.mem_get_info()[0] / 1e9
+    except Exception:                  # no CUDA: nothing to fit
+        return cap
+    return max(1, min(cap, int((free_gb - VRAM_MARGIN_GB) / GB_PER_BATCH_ITEM)))
 ALIGN_TAG = "wav2vec2"  # alignment method, part of the cache key (FR-CA-2)
 # Optional language override: set WHISPERMERGER_LANGUAGE=en to skip auto-detect (and the
 # per-language align-model download it can trigger). Unset = auto-detect (original behavior).
@@ -131,6 +148,13 @@ def _load_model(model_name: str, compute_type: str, device: str):
         wm.feat_kwargs["feature_size"] = wm.model.n_mels
         wm.feature_extractor = FeatureExtractor(**wm.feat_kwargs)
     _loaded.append(pipe)
+    # Measured once, right after loading: CTranslate2 keeps memory it has used, so free VRAM read
+    # later would shrink after every run. ponytail: an app grabbing VRAM mid-run isn't seen until the
+    # model reloads (next run after a Pause, a model switch or a restart).
+    pipe.fit_batch = _fit_batch(BATCH_SIZE)
+    if pipe.fit_batch < BATCH_SIZE:
+        print(f"[gpu] {model_name}: batch size {pipe.fit_batch} (not {BATCH_SIZE}) to fit the free GPU "
+              "memory; close other GPU apps for full speed", flush=True)
     return pipe
 
 
@@ -162,6 +186,8 @@ def _transcribe_counted(pipe, audio, lo: float = 0.0, hi: float = 1.0, **kw) -> 
     """pipe.transcribe(audio, **kw), reporting chunk progress scaled into [lo, hi]. WhisperX's loop
     calls `self.__call__(chunks)`, so a wrapper set on the instance sees each chunk as it finishes,
     without copying WhisperX's loop or parsing its printed "Progress: X%"."""
+    if "batch_size" in kw:             # never more than fits the VRAM (#37)
+        kw["batch_size"] = min(kw["batch_size"], getattr(pipe, "fit_batch", kw["batch_size"]))
     fn = getattr(_chunk, "fn", None)
     if fn is None:
         return pipe.transcribe(audio, **kw)

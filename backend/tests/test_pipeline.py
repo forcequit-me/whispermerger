@@ -191,3 +191,20 @@ def test_models_unload_for_real_unless_another_thread_is_transcribing():
     assert not b.unloaded and not t._loaded            # references dropped, model left working
     done.set()
     th.join()
+
+
+def test_batch_size_fits_free_vram(monkeypatch):
+    """#37: the batch shrinks to what fits the VRAM left after the model loads, never above the cap."""
+    import torch
+    from app import transcribe as t
+    gb = lambda free: monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *a: (free * 1e9, 12.9e9))
+    gb(7.6); assert t._fit_batch(16) == 16          # free 12 GB card with large-v3 loaded
+    gb(7.6); assert t._fit_batch(24) == 17          # 24 would spill: capped by memory
+    gb(2.1); assert t._fit_batch(16) == 4           # another app holds ~5.5 GB
+    gb(0.3); assert t._fit_batch(16) == 1           # never below 1
+
+    class Pipe:                                     # the cap is applied to every transcribe call
+        fit_batch = 4
+        def transcribe(self, audio, batch_size=None, language=None):
+            return {"batch_size": batch_size}
+    assert t._transcribe_counted(Pipe(), [], batch_size=16) == {"batch_size": 4}

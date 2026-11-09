@@ -162,7 +162,10 @@ track-audio, ~11,860 words. Comfortably beats the 12–20 min / 5 h target. In a
 audio is **prefetched** while the GPU works, so it doesn't idle between files; GPU throughput is
 tunable via **`WHISPERMERGER_BATCH_SIZE`** (default 16, which `Startup.bat` also ships — on a 12 GB
 card, 24 spilled ~1–2 GB into shared system memory, which runs at PCIe speed and *slowed* the run;
-keep 16 unless Task Manager shows 0 "Shared GPU memory" in use).
+keep 16 unless Task Manager shows 0 "Shared GPU memory" in use). It's a maximum: once a model
+loads, WhisperMerger lowers it to what fits the free GPU memory, so another app holding VRAM (a
+local LLM, a game) costs some speed instead of a spill into system memory that runs several times
+slower. The server console says when it does.
 
 **Where the time actually goes:** prefetch only hides extraction when reading the source is *faster*
 than transcribing it. Pulling audio out of an 80–100 GB video means ffmpeg streams ~the whole file,

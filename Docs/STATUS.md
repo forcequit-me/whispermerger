@@ -450,6 +450,15 @@ the cache replaces its model and in `unload_models()`. Jobs share no GPU lock, s
 when no other thread is mid-transcription (`gpu_user()` marks `transcribe_track` and Benchmark);
 otherwise it drops the references as before. Portugal merge on that clip: 79.3 s → 28.5 s.
 
+## Batch size fits the free GPU memory (2026-11-09, #37)
+
+`WHISPERMERGER_BATCH_SIZE` (16) is now a maximum. Right after a speech model loads,
+`transcribe._fit_batch` reads free VRAM once and caps the batch at `(free - 0.5 GB) / 0.4 GB`
+(`pipe.fit_batch`, applied in `_transcribe_counted`). Measured on the 3080 Ti: on top of the loaded
+model a batch needs at most ~0.4 GB per item; free card → 16 as before. With 6.5 GB held by another
+process (like LM Studio), 35.7 min of speech: auto batch 6 = 46.9 s vs fixed 16 = 81.2 s (spilling).
+Read once per load because CTranslate2 keeps memory it has used, so later readings would shrink.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
