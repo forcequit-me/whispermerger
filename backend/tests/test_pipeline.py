@@ -90,3 +90,45 @@ def test_pipeline_marks_louder_mic_preferred_on_bleed(tmp_path):
     out = run_merge_pipeline([PreparedSource(str(f), src)], _stub_transcribe)   # same text on both
     flags = {s.speaker: s.flags for s in out.segments}
     assert flags == {"Alice": ["bleed_suspected", "preferred"], "Bob": ["bleed_suspected"]}
+
+
+def test_chunk_progress_reports_each_chunk_and_restores_the_model():
+    """#33: a wrapper on the WhisperX pipeline instance reports chunk progress, then goes away."""
+    from app.transcribe import _transcribe_counted, chunk_progress
+
+    class FakePipe:                                   # mimics WhisperX: transcribe() calls self.__call__
+        def __call__(self, inputs, batch_size=None):
+            assert not isinstance(inputs, list)       # must stay lazy, or progress lands all at once
+            for x in inputs:
+                yield {"text": x}
+
+        def transcribe(self, audio, batch_size=None, language=None):
+            return {"segments": [o["text"] for o in self.__call__(iter(audio), batch_size=batch_size)]}
+
+    pipe, seen = FakePipe(), []
+    with chunk_progress(seen.append):
+        out = _transcribe_counted(pipe, ["a", "b", "c", "d"], 0.5, 1.0, batch_size=2)
+    assert out == {"segments": ["a", "b", "c", "d"]}
+    assert seen == [0.625, 0.75, 0.875, 1.0]
+    assert "__call__" not in vars(pipe)               # instance wrapper removed
+    assert _transcribe_counted(pipe, ["x"]) == {"segments": ["x"]}   # no callback: plain call
+
+
+def test_pipeline_progress_moves_during_a_track(tmp_path):
+    """The bar moves inside a track (weighted like whole tracks), and the message shows its percent."""
+    from app.transcribe import _chunk
+    seen = []
+
+    def stub(path):
+        _chunk.fn(0.5)                                # what transcribe_track reports mid-track
+        return {"segments": []}
+
+    import numpy as np, soundfile as sf
+    from app.models import InputSource, Track
+    from app.pipeline import PreparedSource, run_merge_pipeline
+    wav = tmp_path / "a.wav"
+    sf.write(wav, np.zeros(16000, dtype=np.float32), 16000)
+    src = InputSource(filename="a.wav", duration=1.0, tracks=[Track(track_index=0, speaker="S1")])
+    run_merge_pipeline([PreparedSource(input=src, path=str(wav))], stub,
+                       progress_cb=lambda f, m: seen.append((round(f, 2), m)))
+    assert (0.45, "Transcribing track 1/1 · S1 · 50%") in seen   # 90% of the track is transcription

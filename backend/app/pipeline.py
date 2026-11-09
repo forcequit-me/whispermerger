@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from .extract import extract_ahead, extract_tracks, loudness_profile, span_rms
 from .merge import MergeOptions, merge
 from .models import InputSource, MergedOutput
+from .transcribe import chunk_progress
 
 # transcribe_fn(audio_path) -> WhisperX output dict ({"segments": [...]})
 TranscribeFn = Callable[[str], dict]
@@ -90,8 +91,15 @@ def run_merge_pipeline(
             sources.append(p.input)
             for track in (t for t in p.input.tracks if t.selected):
                 n = done + 1
-                report(done_weight / total_weight, f"Transcribing track {n}/{total} · {track.speaker}")
-                outputs.append(transcribe_fn(str(wavs[track.track_index])))
+                label = f"Transcribing track {n}/{total} · {track.speaker}"
+                report(done_weight / total_weight, label)
+
+                # ponytail: chunks fill 90% of the track's share; word timing (no progress hook) the rest
+                def on_chunk(f: float, w=p.input.duration, d=done_weight, label=label) -> None:
+                    report((d + 0.9 * f * w) / total_weight, f"{label} · {int(f * 100)}%")
+
+                with chunk_progress(on_chunk):     # moves the bar while this track transcribes
+                    outputs.append(transcribe_fn(str(wavs[track.track_index])))
                 if detect:                                         # measure before the wav goes
                     profiles.append(loudness_profile(wavs[track.track_index]))
                 wavs[track.track_index].unlink(missing_ok=True)   # free it right away

@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import threading
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .cache import Cache, cache_key
 from . import modelstore
@@ -100,6 +102,47 @@ def _load_align(language: str, device: str):
                                      model_name=EXTRA_ALIGN_MODELS.get(language))
 
 
+# Per-chunk progress while a track transcribes (#33). The pipeline sets a callback for its thread;
+# transcribe_track reports the share of VAD chunks done (0..1) through it.
+_chunk = threading.local()
+
+
+@contextmanager
+def chunk_progress(fn: Callable[[float], None]):
+    """Report this thread's transcription progress (0..1, per VAD chunk) to `fn` while inside."""
+    prev = getattr(_chunk, "fn", None)
+    _chunk.fn = fn
+    try:
+        yield
+    finally:
+        _chunk.fn = prev
+
+
+def _transcribe_counted(pipe, audio, lo: float = 0.0, hi: float = 1.0, **kw) -> dict:
+    """pipe.transcribe(audio, **kw), reporting chunk progress scaled into [lo, hi]. WhisperX's loop
+    calls `self.__call__(chunks)`, so a wrapper set on the instance sees each chunk as it finishes,
+    without copying WhisperX's loop or parsing its printed "Progress: X%"."""
+    fn = getattr(_chunk, "fn", None)
+    if fn is None:
+        return pipe.transcribe(audio, **kw)
+    orig = pipe.__call__
+
+    def counted(inputs, *a, **k):
+        items = list(inputs)                       # the VAD chunks (views into the audio, no copy)
+        n = max(len(items), 1)
+        # Hand them over as a generator: given a list, the transformers pipeline computes every
+        # chunk before returning anything, and the progress would all land at the end.
+        for i, out in enumerate(orig((x for x in items), *a, **k), 1):
+            fn(lo + (hi - lo) * i / n)
+            yield out
+
+    pipe.__call__ = counted
+    try:
+        return pipe.transcribe(audio, **kw)
+    finally:
+        del pipe.__call__
+
+
 def has_align_model(language: str) -> bool:
     """Whether word-level timing is available for this language code."""
     from whisperx.alignment import DEFAULT_ALIGN_MODELS_HF, DEFAULT_ALIGN_MODELS_TORCH
@@ -173,11 +216,14 @@ def transcribe_track(
 
     modelstore.ensure(modelstore.whisper_entry(model_name))   # downloads visibly if missing
     model = _load_model(model_name, compute_type, device)
-    result = model.transcribe(audio, batch_size=batch_size, language=whisper_lang)  # VAD on by default
-    if punct and language == "pt-PT":            # #23: large-v3's capitals and punctuation on CAMOES's words
+    two_pass = punct and language == "pt-PT"
+    result = _transcribe_counted(model, audio, 0.0, 0.5 if two_pass else 1.0,
+                                 batch_size=batch_size, language=whisper_lang)  # VAD on by default
+    if two_pass:                                 # #23: large-v3's capitals and punctuation on CAMOES's words
         unload_models()                          # one model in VRAM at a time (12 GB cards)
         modelstore.ensure(modelstore.whisper_entry("large-v3"))
-        v3 = _load_model("large-v3", compute_type, device).transcribe(audio, batch_size=batch_size, language="pt")
+        v3 = _transcribe_counted(_load_model("large-v3", compute_type, device), audio, 0.5, 1.0,
+                                 batch_size=batch_size, language="pt")
         texts = merge_punctuation([s["text"] for s in result["segments"]],
                                   " ".join(s["text"] for s in v3["segments"]))
         for s, t in zip(result["segments"], texts):
