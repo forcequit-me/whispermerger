@@ -412,6 +412,10 @@ exactly what hides the next extraction).
   merge works as designed (sentence ends found 89–94% vs CAMÕES's 47–55%) but can't restore missed
   words. Stays off by default. Caveats: two speakers, clean studio speech, transcripts slightly out of
   step with the audio. Timing not measured cleanly (another app held 6.5 GB of VRAM).
+  **To do: clean timing re-test.** Close every other GPU app first (LM Studio, games, video tools;
+  Task Manager → GPU should show nothing else holding dedicated memory), then time CAMÕES then
+  large-v3 on one ~7 min clip with `compare_pt.py`, to confirm whether the merge really costs ~2× GPU
+  time. Any GPU timing in this project needs the same clean setup, or it measures the other app.
 - **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
   CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line
