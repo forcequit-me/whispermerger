@@ -267,7 +267,7 @@ table.editor tr.editing { background: var(--panel-2); }
 .batch-item .bi-bar { height: 6px; margin: 8px 0 6px; }
 .bi-msg { font-size: 12px; margin-top: 4px; word-break: break-word; }
 .bi-msg.bi-err { color: var(--bleed); display: flex; align-items: center; gap: 3px; }
-.bi-act { font-size: 12px; padding: 4px 8px; }
+.bi-act, .bi-open { font-size: 12px; padding: 4px 8px; }
 
 /* per-file rows inside a per-file project card */
 .batch-files { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px;

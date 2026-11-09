@@ -1554,7 +1554,45 @@ function projectHead(p, i, id, btn, ended, meta) {
     el("span", { className: `chip-status ${meta.cls}`, textContent: meta.label }),
     el("div", { className: "spacer" }),
     el("span", { className: "muted bi-elapsed", textContent: fmtElapsed(p.elapsed) }),
+    p.status === "done" && !(p.files && p.files.length)
+      ? openResultBtn(`/api/batch/${id}/project/${i}/result`) : "",
     projectActionBtn(p, i, id, btn, ended));
+}
+
+// "Open in editor" on a finished batch row: loads its transcript into Edit Transcript with the
+// source attached (waveform + per-line playback), and switches there. The batch keeps running.
+function openResultBtn(url) {
+  const b = el("button", { className: "ghost bi-open", textContent: "Open in editor",
+    title: "Review this transcript in Edit Transcript" });
+  b.onclick = () => openBatchResult(url, b);
+  return b;
+}
+
+async function openBatchResult(url, b) {
+  b.disabled = true;
+  $("#batch-err").textContent = "";
+  try {
+    const r = await fetchTO(url, {}, 30000);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    const { merged, source_path } = await r.json();
+    loadEdit(JSON.stringify(merged), "result.json");
+    if (source_path) {
+      const a = await fetchTO("/api/add-path", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: [source_path] }) }, 60000);
+      if (a.ok) {
+        const it = (await a.json())[0];
+        const src = (merged.sources || [])[0];   // speaker -> track, so a line plays its own mic
+        editPreview = { file_id: it.file_id, duration: it.source.duration,
+          trackOf: src ? Object.fromEntries(src.tracks.map((t) => [t.speaker, t.track_index])) : undefined };
+        $("#edit-attach-name").textContent = it.source.filename;
+        renderEditor($("#editor-edit"), editMerged, editPreview);
+      }
+    }
+    document.querySelector('.tab-btn[data-tab="edit"]').click();
+  } catch (e) {
+    $("#batch-err").textContent = "Couldn't open that transcript: " + e.message;
+  }
+  b.disabled = false;
 }
 
 function projectDetail(p, meta, pct) {
@@ -1680,7 +1718,9 @@ function buildBatchFile(f, pidx, fidx, id, btn, ended) {
     head.append(el("span", { className: "muted bf-trk",
       textContent: `track ${f.track || 1}/${f.tracks}` }));
   }
-  head.append(el("div", { className: "spacer" }), msg, fileActionBtn(f, pidx, fidx, id, btn, ended));
+  head.append(el("div", { className: "spacer" }), msg);
+  if (f.status === "done") head.append(openResultBtn(`/api/batch/${id}/project/${pidx}/file/${fidx}/result`));
+  head.append(fileActionBtn(f, pidx, fidx, id, btn, ended));
   row.append(head);
   const tl = fileTiming(f);
   if (tl) row.append(el("div", { className: "bf-timing muted", textContent: tl }));
@@ -1715,6 +1755,14 @@ function updateBatchFile(row, f, pidx, fidx, id, btn, ended) {
   const msg = head.querySelector(".bf-msg");
   msg.textContent = detail; msg.title = detail;
   msg.style.color = f.error ? "var(--bleed)" : "";
+
+  let open = head.querySelector(".bi-open");             // only while done; kept across polls
+  if (f.status === "done" && !open) {
+    open = openResultBtn(`/api/batch/${id}/project/${pidx}/file/${fidx}/result`);
+    head.insertBefore(open, head.querySelector(".bi-act"));
+  } else if (f.status !== "done" && open) {
+    open.remove();
+  }
 
   const act = head.querySelector(".bi-act");
   const wantKind = (f.status === "running" || f.status === "queued") ? "cancel" : "restart";

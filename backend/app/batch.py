@@ -20,6 +20,7 @@ from typing import Callable, Optional
 from . import modelstore
 from .export import ExportOptions, export_all, pad_segments
 from .merge import MergeOptions
+from .models import MergedOutput
 from .pipeline import PreparedSource, run_merge_pipeline, run_per_file_pipeline
 
 TranscribeFn = Callable[[str], dict]
@@ -76,6 +77,11 @@ class FileStatus:
     cancel_requested: bool = False
     paused_total: float = 0.0                     # total wall time spent paused (excluded from elapsed)
     pause_started: float = 0.0                    # start of the current pause, 0 when running
+    # The finished transcript, kept so the app can open it in the editor (#34), and its source
+    # for playback. ponytail: held in memory until the server restarts; fine for typical batches,
+    # read it back from the written JSON if a huge library ever strains RAM.
+    result: Optional[MergedOutput] = field(default=None, repr=False)
+    source_path: Optional[str] = None
 
     @property
     def elapsed(self) -> float:
@@ -97,6 +103,8 @@ class ProjectStatus:
     paused_total: float = 0.0                     # total wall time spent paused (excluded from elapsed)
     pause_started: float = 0.0                    # start of the current pause, 0 when running
     files: list[FileStatus] = field(default_factory=list)   # per-file rows (per-file projects only)
+    result: Optional[MergedOutput] = field(default=None, repr=False)   # merged project's transcript
+    source_path: Optional[str] = None            # its source, when it has exactly one (playback)
 
     @property
     def elapsed(self) -> float:
@@ -327,6 +335,7 @@ def _process_project(
                 if seen[(str(dest), stem)] > 1:
                     stem = f"{stem}_{seen[(str(dest), stem)]}"
                 write(merged, dest, transcript_basename(stem))
+                fs.result, fs.source_path = merged, src.path
                 fs.status = Status.DONE
                 fs.progress = 1.0
                 fs.finished_at = time.time()
@@ -380,6 +389,9 @@ def _process_project(
                 stem = f"{base}_{n}"
             write(merged, out_dir, transcript_basename(stem, when))
             ps.output_dir = str(out_dir)
+            ps.result = merged
+            # One source: the merged timeline is that file's, so playback lines up.
+            ps.source_path = project.prepared[0].path if len(project.prepared) == 1 else None
         ps.finished_at = time.time()
         ps.progress = 1.0
         ps.message = _file_summary(ps) if ps.files else f"done in {ps.elapsed:.0f}s"

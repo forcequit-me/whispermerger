@@ -298,6 +298,29 @@ def test_batch_flow_writes_outputs(client, two_stream_file, tmp_path, monkeypatc
     assert body["elapsed"] >= 0 and body["projects"][0]["elapsed"] >= 0
     assert list((tmp_path / "Perf Poser").glob("Perf Poser Transcript (*).srt"))
 
+    # #34: the finished transcript can be opened in the editor, with its source for playback
+    res = client.get(f"/api/batch/{batch_id}/project/0/result").json()
+    assert res["merged"]["segments"] and res["source_path"] == str(two_stream_file)
+    assert client.get(f"/api/batch/{batch_id}/project/9/result").status_code == 404
+    assert client.get(f"/api/batch/{batch_id}/project/0/file/0/result").status_code == 404
+
+
+def test_batch_per_file_result_opens_each_file(client, two_stream_file, tmp_path, monkeypatch):
+    monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    r = client.post("/api/batch", json={
+        "output_mode": "folder", "output_folder": str(tmp_path),
+        "projects": [{"name": "Each", "per_file": True, "sources": [
+            {"file_id": file_id, "sequence": 0,
+             "tracks": [{"track_index": 0, "speaker": "Speaker 1", "selected": True}]}]}]})
+    batch_id = r.json()["batch_id"]
+    deadline = time.time() + 5
+    while client.get(f"/api/batch/{batch_id}").json()["status"] != "done" and time.time() < deadline:
+        time.sleep(0.02)
+    res = client.get(f"/api/batch/{batch_id}/project/0/file/0/result")
+    assert res.status_code == 200 and res.json()["source_path"] == str(two_stream_file)
+    assert res.json()["merged"]["segments"][0]["speaker"] == "Speaker 1"
+
 
 def test_batch_settings_global_and_per_project_override(client, two_stream_file, tmp_path, monkeypatch):
     import json as _json
