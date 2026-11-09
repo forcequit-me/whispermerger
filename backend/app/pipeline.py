@@ -20,6 +20,8 @@ from .merge import MergeOptions, merge
 from .models import InputSource, MergedOutput
 from .transcribe import chunk_progress
 
+WAITING = "waiting for another run to finish"   # shown while another job has the GPU
+
 # transcribe_fn(audio_path) -> WhisperX output dict ({"segments": [...]})
 TranscribeFn = Callable[[str], dict]
 ProgressCb = Callable[[float, str], None]
@@ -95,8 +97,9 @@ def run_merge_pipeline(
                 report(done_weight / total_weight, label)
 
                 # ponytail: chunks fill 90% of the track's share; word timing (no progress hook) the rest
-                def on_chunk(f: float, w=p.input.duration, d=done_weight, label=label) -> None:
-                    report((d + 0.9 * f * w) / total_weight, f"{label} · {int(f * 100)}%")
+                def on_chunk(f: float, waiting=False, w=p.input.duration, d=done_weight, label=label) -> None:
+                    report((d + 0.9 * f * w) / total_weight,
+                           f"{label} · {WAITING if waiting else f'{int(f * 100)}%'}")
 
                 with chunk_progress(on_chunk):     # moves the bar while this track transcribes
                     outputs.append(transcribe_fn(str(wavs[track.track_index])))
@@ -130,7 +133,7 @@ def run_per_file_pipeline(
     on_skip: Callable[[int, "PreparedSource"], None],
     is_file_cancelled: Callable[[int], bool],
     on_wait: Optional[Callable[[int, "PreparedSource"], None]] = None,
-    on_chunk: Optional[Callable[[int, int, int, float], None]] = None,
+    on_chunk: Optional[Callable[[int, int, int, float, bool], None]] = None,
 ) -> None:
     """Transcribe the given file positions (one transcript each) with depth-1 prefetch: while one
     file transcribes, the next extracts in the background. Per-file lifecycle is reported through
@@ -185,7 +188,8 @@ def run_per_file_pipeline(
                         break
                     on_track(i, j, len(selected), track.speaker)
                     # on_chunk(i, j, tracks, share of this track's chunks done) while it transcribes
-                    report_chunk = (lambda f, i=i, j=j, n=len(selected): on_chunk(i, j, n, f)) if on_chunk else None
+                    report_chunk = (lambda f, waiting=False, i=i, j=j, n=len(selected):
+                                    on_chunk(i, j, n, f, waiting)) if on_chunk else None
                     with chunk_progress(report_chunk):
                         outputs.append(transcribe_fn(str(wavs[track.track_index])))
                     if detect:

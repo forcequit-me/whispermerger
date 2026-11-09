@@ -177,3 +177,33 @@ def test_runs_take_turns_on_the_shared_model(monkeypatch, tmp_path):
     for r in runs:
         r.join(5)
     assert most[0] == 1
+
+
+def test_a_waiting_run_says_so(monkeypatch, tmp_path):
+    """While another run has the GPU, the progress hook hears waiting=True, then a normal 0.0 when
+    this run's turn starts."""
+    import threading
+    import time
+    monkeypatch.setattr(whisperx, "load_audio", lambda p: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(transcribe.modelstore, "ensure", lambda e: None)
+    class Hooked(_FakeModel):                          # the progress hook wraps __call__
+        def __call__(self, inputs, *a, **k):
+            return iter(())
+    monkeypatch.setattr(transcribe, "_load_model", lambda *a: Hooked("is"))
+    seen = []
+
+    def run():
+        with transcribe.chunk_progress(lambda f, waiting=False: seen.append((f, waiting))):
+            transcribe.transcribe_track(tmp_path / "x.wav", language="is")
+
+    transcribe.GPU_TURN.acquire()                      # another run holds the GPU
+    th = threading.Thread(target=run)
+    try:
+        th.start()
+        time.sleep(0.3)
+        waiting_seen = list(seen)
+    finally:
+        transcribe.GPU_TURN.release()
+    th.join(5)
+    assert waiting_seen == [(0.0, True)]
+    assert seen[:2] == [(0.0, True), (0.0, False)]

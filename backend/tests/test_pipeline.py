@@ -153,7 +153,7 @@ def test_per_file_pipeline_reports_chunks_per_track(tmp_path):
     run_per_file_pipeline([PreparedSource(input=src, path=str(wav))], stub, [0],
                           on_start=noop, on_track=noop, on_done=noop, on_error=noop, on_skip=noop,
                           is_file_cancelled=lambda i: False, on_chunk=lambda *a: chunks.append(a))
-    assert chunks == [(0, 0, 2, 0.5), (0, 1, 2, 0.5)]
+    assert chunks == [(0, 0, 2, 0.5, False), (0, 1, 2, 0.5, False)]   # last: waiting for the GPU
 
 
 def test_models_unload_for_real_unless_another_thread_is_transcribing():

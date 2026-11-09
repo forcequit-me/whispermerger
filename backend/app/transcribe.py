@@ -225,12 +225,13 @@ def _load_align(language: str, device: str):
 
 
 # Per-chunk progress while a track transcribes (#33). The pipeline sets a callback for its thread;
-# transcribe_track reports the share of VAD chunks done (0..1) through it.
+# transcribe_track reports the share of VAD chunks done (0..1) through it, and fn(0.0, waiting=True)
+# while it waits for another run to finish with the GPU (GPU_TURN).
 _chunk = threading.local()
 
 
 @contextmanager
-def chunk_progress(fn: Optional[Callable[[float], None]]):
+def chunk_progress(fn: Optional[Callable[..., None]]):
     """Report this thread's transcription progress (0..1, per VAD chunk) to `fn` while inside (None: off)."""
     prev = getattr(_chunk, "fn", None)
     _chunk.fn = fn
@@ -328,8 +329,14 @@ def transcribe_track(
         return hit
 
     # One run at a time on the shared models (GPU_TURN); counted as a GPU user meanwhile so
-    # another thread can't unload them under it.
+    # another thread can't unload them under it. While another run has the GPU, say so.
+    fn = getattr(_chunk, "fn", None)
+    waited = bool(fn) and GPU_TURN.locked()
+    if waited:
+        fn(0.0, waiting=True)
     with GPU_TURN, gpu_user():
+        if waited:
+            fn(0.0)                                   # our turn: back to the normal label
         audio = whisperx.load_audio(str(audio_path))
         if pt_default:                                # find out first whether it's Portuguese at all
             modelstore.ensure(modelstore.whisper_entry(model_name))

@@ -22,7 +22,7 @@ from . import modelstore
 from .export import ExportOptions, export_all, pad_segments
 from .merge import MergeOptions
 from .models import MergedOutput
-from .pipeline import PreparedSource, run_merge_pipeline, run_per_file_pipeline
+from .pipeline import WAITING, PreparedSource, run_merge_pipeline, run_per_file_pipeline
 
 TranscribeFn = Callable[[str], dict]
 
@@ -328,9 +328,11 @@ def _process_project(
                 fs.message = f"track {j + 1}/{total_tracks} · {speaker}"
                 _recalc_project(ps)
 
-            def on_chunk(i: int, j: int, total_tracks: int, frac: float) -> None:
+            def on_chunk(i: int, j: int, total_tracks: int, frac: float, waiting: bool = False) -> None:
                 # Moves the row within a track; transcription is 90% of it, word timing the rest.
                 files[i].progress = (j + 0.9 * frac) / max(total_tracks, 1)
+                base = files[i].message.removesuffix(f" · {WAITING}")
+                files[i].message = f"{base} · {WAITING}" if waiting else base
                 _recalc_project(ps)
 
             def on_done(i: int, src: PreparedSource, merged, seen=seen) -> None:
