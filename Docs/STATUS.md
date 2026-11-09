@@ -459,6 +459,27 @@ model a batch needs at most ~0.4 GB per item; free card → 16 as before. With 6
 process (like LM Studio), 35.7 min of speech: auto batch 6 = 46.9 s vs fixed 16 = 81.2 s (spilling).
 Read once per load because CTranslate2 keeps memory it has used, so later readings would shrink.
 
+## "Cannot copy out of meta tensor" on a first run in a new language (2026-11-09)
+
+Reported: a CLI run in Korean failed right after the word-timing model downloaded; the same command
+again worked. Not reproducible on demand (a fresh Korean download then load worked first time), so
+the fix covers the confirmed hazard plus a safety net:
+
+- **Cause class, confirmed:** transformers 4.57 always builds models empty on the meta device by
+  patching `torch.nn.Module.register_parameter` for the whole process. While a word-timing model
+  loaded, 75 modules built on another thread came out empty; two overlapping patches can also
+  restore each other out of order. The server builds models on several threads.
+- **Fix:** `transcribe.MODEL_LOAD_LOCK` serializes every model build (`_load_model`, `_load_align`).
+- **Safety net:** `_load_align` reloads once on a "meta tensor" error (a second load worked when it
+  happened) and logs it with the traceback, as `[models] ...`.
+- Failed jobs and batch projects now print their traceback to the server console (they only kept
+  the message before, so this one couldn't be traced).
+- A finished model download reports "Downloaded <model> · loading it"; it used to stop at the last
+  99% tick, which looked like the load started before the download finished. It didn't.
+
+Repro note: move the model's folder out of `~/.cache/huggingface/hub` (Korean:
+`models--kresnik--wav2vec2-large-xlsr-korean`), then `whispermerger transcribe <uncached Korean clip> --wait`.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

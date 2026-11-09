@@ -496,5 +496,7 @@ def ensure(e: ModelEntry) -> None:
     except BaseException:                 # the run was canceled: stop what it was waiting on
         downloads.cancel(e.id)
         raise
+    if d.status == "done" and fn:         # the last tick may have shown 99%: say it finished
+        fn(f"Downloaded {e.name} · loading it")
     if d.status != "done":
         raise RuntimeError(f"Download of {e.name} {d.status}" + (f": {d.error}" if d.error else ""))

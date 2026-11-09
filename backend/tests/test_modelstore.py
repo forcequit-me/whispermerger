@@ -92,9 +92,11 @@ def test_ensure_reports_progress_and_cancel_stops_the_download(entry, monkeypatc
     assert seen[0].startswith("Downloading Test word timing")
     _wait(lambda: mgr.downloads[entry.id].status == "canceled")
 
-    with ms.reporting(lambda msg: None):                  # next run: resumes and completes
+    after = []
+    with ms.reporting(after.append):                      # next run: resumes and completes
         ms.ensure(entry)
     assert ms.is_installed(entry) and entry.dest.read_bytes() == PAYLOAD
+    assert after[-1] == "Downloaded Test word timing · loading it"   # not stuck at the last 99% tick
 
 
 class _HangsOnce(_SlowRanged):

@@ -132,8 +132,22 @@ def _release_loaded() -> None:
                 pass
 
 
+# One model built at a time, process-wide. transformers (4.57) builds every model empty on the "meta"
+# device by patching torch.nn.Module.register_parameter for the WHOLE process, then fills the
+# weights in. A model built on another thread meanwhile comes out with empty (meta) layers, and two
+# overlapping patches can restore each other out of order. The server builds models on several
+# threads (jobs, batch, Benchmark), and a first run in a new language failed with "Cannot copy out
+# of meta tensor" while a retry worked (2026-11-09). So every model load takes this lock.
+MODEL_LOAD_LOCK = threading.RLock()
+
+
 @lru_cache(maxsize=1)
 def _load_model(model_name: str, compute_type: str, device: str):
+    with MODEL_LOAD_LOCK:
+        return _build_model(model_name, compute_type, device)
+
+
+def _build_model(model_name: str, compute_type: str, device: str):
     import whisperx
     _release_loaded()                  # the cache is replacing its model: free the old one's VRAM
     _allow_full_torch_load()
@@ -161,9 +175,22 @@ def _load_model(model_name: str, compute_type: str, device: str):
 @lru_cache(maxsize=4)
 def _load_align(language: str, device: str):
     import whisperx
-    _allow_full_torch_load()
-    return whisperx.load_align_model(language_code=language, device=device,
-                                     model_name=EXTRA_ALIGN_MODELS.get(language))
+    with MODEL_LOAD_LOCK:
+        _allow_full_torch_load()
+        try:
+            return whisperx.load_align_model(language_code=language, device=device,
+                                             model_name=EXTRA_ALIGN_MODELS.get(language))
+        except (RuntimeError, NotImplementedError) as exc:
+            if "meta tensor" not in str(exc):
+                raise
+            # Safety net for the case above: the model came out with empty layers. A second load
+            # worked when this happened, so try once more, and say so in the server console.
+            import traceback
+            print(f"[models] loading the {language} word-timing model left empty (meta) weights; "
+                  "loading it again", flush=True)
+            traceback.print_exc()
+            return whisperx.load_align_model(language_code=language, device=device,
+                                             model_name=EXTRA_ALIGN_MODELS.get(language))
 
 
 # Per-chunk progress while a track transcribes (#33). The pipeline sets a callback for its thread;

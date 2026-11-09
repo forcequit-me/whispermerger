@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import threading
+import traceback
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -412,6 +413,7 @@ def _process_project(
                 fs.message = "canceled"
         raise
     except Exception as exc:  # record + let the queue continue to the next project
+        traceback.print_exc()
         ps.finished_at = time.time()
         ps.error = str(exc)
         ps.status = Status.ERROR

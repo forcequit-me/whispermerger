@@ -208,3 +208,32 @@ def test_batch_size_fits_free_vram(monkeypatch):
         def transcribe(self, audio, batch_size=None, language=None):
             return {"batch_size": batch_size}
     assert t._transcribe_counted(Pipe(), [], batch_size=16) == {"batch_size": 4}
+
+
+def test_model_loads_never_overlap_and_a_meta_load_is_retried(monkeypatch):
+    """transformers builds models empty by patching torch for the whole process, so two builds at
+    once can leave one with empty (meta) layers. Loads take one lock; a meta failure reloads once."""
+    import threading, time
+    import whisperx
+    from app import transcribe as t
+
+    busy, overlaps, calls = [0], [], []
+
+    def fake_load(language_code, device, model_name=None):
+        busy[0] += 1
+        overlaps.append(busy[0] > 1)
+        time.sleep(0.05)
+        busy[0] -= 1
+        calls.append(language_code)
+        if language_code == "ko" and calls.count("ko") == 1:
+            raise RuntimeError("Cannot copy out of meta tensor; no data!")
+        return ("model", language_code)
+
+    monkeypatch.setattr(whisperx, "load_align_model", fake_load)
+    t._load_align.cache_clear()
+    ths = [threading.Thread(target=t._load_align, args=(lang, "cpu")) for lang in ("pt", "vi", "sv")]
+    [x.start() for x in ths]
+    [x.join() for x in ths]
+    assert overlaps and not any(overlaps)
+    assert t._load_align("ko", "cpu") == ("model", "ko") and calls.count("ko") == 2   # retried once
+    t._load_align.cache_clear()

@@ -7,6 +7,7 @@ WhisperX transcription is blocking/GPU-bound, so a thread (not asyncio) is the r
 from __future__ import annotations
 
 import threading
+import traceback
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -134,6 +135,7 @@ class JobRegistry:
                 job.message = "cancelled"
                 job.status = JobStatus.CANCELLED
             except Exception as exc:  # surface failure via the job, not a crashed thread
+                traceback.print_exc()          # the job keeps the message; the console the whole story
                 job.finished_at = time.time()
                 job.error = str(exc)
                 job.status = JobStatus.ERROR
