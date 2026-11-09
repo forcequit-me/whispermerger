@@ -569,7 +569,12 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
   through the text and, from its very start/end, on to the row above/below (landing at the end of
   the text going up, the start going down, so every line of a multi-line cell is visited).
 - **FR-UI-6:** per-file framerate / timecode handling (for Edit mode) not implemented.
-- **FR-UI-9:** per-tab settings preservation not implemented.
+- **FR-UI-9:** done (2026-11-09). Switching tabs never lost anything (tabs are hidden, not rebuilt);
+  now each tab's settings also survive a reload or restart, in this browser (`localStorage`
+  `wm-settings`): Batch language, one-transcript-per-file and its merge + subtitle settings;
+  Transcribe & Merge language, conflict detection and thresholds; Label Track region pad and
+  language; and each tab's Export panel (formats, limits, pad, speaker options). Not remembered:
+  files, filenames, zoom, per-project overrides. Models-tab settings are saved by the server.
 - **FR-MD-2 import:** Edit tab now loads **all of our export formats** — JSON / SRT / TXT / CSV
   (auto-detected by extension, with a content sniff fallback; parsers in `app.js` mirror
   `export.py`). JSON round-trips word-level timing; SRT/TXT/CSV import as plain segments

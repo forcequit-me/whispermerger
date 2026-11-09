@@ -31,6 +31,17 @@ const el = (tag, props = {}, ...kids) => {
   return n;
 };
 
+// Each tab's settings survive a reload or restart (FR-UI-9), in this browser only: the fields below,
+// Batch's merge + subtitle settings, and each tab's Export panel. Not files, names or zoom.
+const SAVED = (() => { try { return JSON.parse(localStorage.getItem("wm-settings")) || {}; } catch { return {}; } })();
+function saveSettings() { try { localStorage.setItem("wm-settings", JSON.stringify(SAVED)); } catch {} }
+for (const id of ["batch-language", "batch-perfile", "opt-detect", "opt-language", "opt-backchannel", "opt-bc-words",
+                  "opt-overlap", "opt-bleed-win", "opt-bleed-sim", "opt-bleed-ratio", "label-pad", "label-language"]) {
+  const n = $(`#${id}`), k = n.type === "checkbox" ? "checked" : "value";
+  if (SAVED[id] !== undefined) n[k] = SAVED[id];
+  n.addEventListener("change", () => { SAVED[id] = n[k]; saveSettings(); });
+}
+
 // Inline SVG icons — no emoji (Phosphor/Radix-style). currentColor inherits the button's color.
 const ICONS = {
   play:  { fill: true, d: "M8 5v14l11-7z" },
@@ -531,17 +542,22 @@ function longSpeakerNames(names, x) {
 const EDITED_TIMING = [["align", "keep word timing"], ["even", "spread evenly"], ["whole", "one subtitle per line"]];
 
 function buildExportPanel(container, merged) {
+  // This tab's last export choices (FR-UI-9), else the defaults.
+  const tabId = container.closest("section.tab")?.id || "tab";
+  const was = (SAVED.export || {})[tabId] || {};
   // One format downloads as that file; several as one zip.
-  const fmtBoxes = ["srt", "txt", "csv", "json"].map((f) => el("input", { type: "checkbox", value: f, checked: f === "srt" }));
+  const fmtBoxes = ["srt", "txt", "csv", "json"].map((f) => el("input", { type: "checkbox", value: f,
+    checked: was.formats ? was.formats.includes(f) : f === "srt" }));
   const formats = () => fmtBoxes.filter((c) => c.checked).map((c) => c.value);
   const filename = el("input", { value: transcriptName(exportBase(merged)), size: 36 });
-  const applyLimits = el("input", { type: "checkbox", checked: true });
-  const cpl = el("input", { type: "number", value: 42 });
-  const maxLines = el("input", { type: "number", value: 2 });
-  const minDur = el("input", { type: "number", value: 1, step: 0.5 });
-  const pad = el("input", { type: "number", value: 0, step: 0.1, min: 0, title: "extend each segment start/end by N seconds (video-edit breathing room)" });
-  const showSpk = el("input", { type: "checkbox", checked: true });
-  const onChange = el("input", { type: "checkbox", title: "SRT: name the speaker on the first subtitle after a speaker change only" });
+  const applyLimits = el("input", { type: "checkbox", checked: was.apply_limits ?? true });
+  const cpl = el("input", { type: "number", value: was.chars_per_line ?? 42 });
+  const maxLines = el("input", { type: "number", value: was.max_lines ?? 2 });
+  const minDur = el("input", { type: "number", value: was.min_duration ?? 1, step: 0.5 });
+  const pad = el("input", { type: "number", value: was.pad_seconds ?? 0, step: 0.1, min: 0, title: "extend each segment start/end by N seconds (video-edit breathing room)" });
+  const showSpk = el("input", { type: "checkbox", checked: was.show_speakers ?? true });
+  const onChange = el("input", { type: "checkbox", checked: was.label_on_change ?? false,
+    title: "SRT: name the speaker on the first subtitle after a speaker change only" });
   const warn = el("div", { className: "warn", style: "flex-basis:100%" });
   const checkNames = () => {
     const names = merged.segments.filter((s) => !container._disabled.has(s.speaker)).map((s) => s.speaker);
@@ -551,6 +567,7 @@ function buildExportPanel(container, merged) {
   // How SRT times a line whose text you changed (its word timings no longer match the words).
   const editedTiming = el("select", { title: "SRT timing for lines whose text you edited", style: "min-width:180px" });
   EDITED_TIMING.forEach(([v, t]) => editedTiming.append(el("option", { value: v, textContent: t })));
+  editedTiming.value = was.edited_timing ?? "align";
 
   // Subtitle limits only apply to SRT; toggling off disables (and ignores) the limit fields.
   const syncLimits = () => [cpl, maxLines, minDur].forEach((n) => { n.disabled = !applyLimits.checked; });
@@ -559,14 +576,15 @@ function buildExportPanel(container, merged) {
   cpl.oninput = showSpk.onchange = checkNames;
   checkNames();
 
+  const exportOptions = () => ({
+    apply_limits: applyLimits.checked,
+    chars_per_line: +cpl.value, max_lines: +maxLines.value,
+    min_duration: +minDur.value, show_speakers: showSpk.checked,
+    pad_seconds: +pad.value, edited_timing: editedTiming.value, label_on_change: onChange.checked,
+  });
   const btn = el("button", { className: "primary", textContent: "Export" });
   btn.onclick = async () => {
-    const options = {
-      apply_limits: applyLimits.checked,
-      chars_per_line: +cpl.value, max_lines: +maxLines.value,
-      min_duration: +minDur.value, show_speakers: showSpk.checked,
-      pad_seconds: +pad.value, edited_timing: editedTiming.value, label_on_change: onChange.checked,
-    };
+    const options = exportOptions();
     const fmts = formats();
     if (!fmts.length) { alert("Tick at least one format."); return; }
     // Drop toggled-off speakers (all formats) — the backend just renders what we send.
@@ -579,7 +597,7 @@ function buildExportPanel(container, merged) {
   };
 
   const field = (label, node) => el("label", { className: "field" }, el("span", { textContent: label }), node);
-  return el("div", { className: "row", style: "margin:14px 0; padding-top:14px; border-top:1px solid var(--line)" },
+  const panel = el("div", { className: "row", style: "margin:14px 0; padding-top:14px; border-top:1px solid var(--line)" },
     field("Formats", el("div", { className: "row fmt-set" },
       ...fmtBoxes.map((c) => el("label", { className: "opt" }, c, c.value.toUpperCase())))),
     field("Filename", filename),
@@ -589,6 +607,11 @@ function buildExportPanel(container, merged) {
     el("label", { className: "opt" }, showSpk, "Show speakers"),
     el("label", { className: "opt" }, onChange, "Name only on speaker change"),
     el("div", { className: "spacer" }), btn, warn);
+  panel.addEventListener("change", () => {
+    (SAVED.export ||= {})[tabId] = { formats: formats(), ...exportOptions() };
+    saveSettings();
+  });
+  return panel;
 }
 
 // What will shape the export, shown before writing it. "Don't show again" is remembered in this
@@ -1098,6 +1121,9 @@ const DEFAULT_BATCH_SETTINGS = {
             show_speakers: true, edited_timing: "align", label_on_change: false },
 };
 const batchSettings = structuredClone(DEFAULT_BATCH_SETTINGS);
+if (SAVED.batch) for (const k of ["options", "export"]) Object.assign(batchSettings[k], SAVED.batch[k]);
+// Fields write into batchSettings on change before this (bubbling) listener runs.
+$("#tab-batch").addEventListener("change", () => { SAVED.batch = batchSettings; saveSettings(); });
 
 // Editable fields bound to a settings object `s` (writes go straight into it, so re-renders keep them).
 function buildSettingsBlock(s) {
