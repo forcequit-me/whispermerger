@@ -13,7 +13,7 @@ PAYLOAD = bytes(range(256)) * 8192          # 2 MB
 
 
 class _SlowRanged(BaseHTTPRequestHandler):
-    """Serves PAYLOAD in 64 KB steps (~1.3 MB/s), honoring `Range: bytes=N-` like the real servers."""
+    """Serves PAYLOAD in 64 KB steps (~0.65 MB/s), honoring `Range: bytes=N-` like the real servers."""
 
     def do_HEAD(self):
         self.send_response(200)
@@ -28,7 +28,7 @@ class _SlowRanged(BaseHTTPRequestHandler):
         try:
             for i in range(start, len(PAYLOAD), 65536):
                 self.wfile.write(PAYLOAD[i:i + 65536])
-                time.sleep(0.05)
+                time.sleep(0.1)    # ~3 s per download: well over the 1 s progress tick, so tests can act mid-download
         except (ConnectionError, OSError):
             pass
 
