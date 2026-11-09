@@ -202,6 +202,16 @@ function renderEditor(container, merged, preview) {
   container.append(buildTable(container, merged, preview));
 }
 
+// Per-line ▶ on a multi-track file: false = that speaker's track only, true = all tracks mixed.
+// Kept for the browser session.
+let _lineAll = null;
+function lineAllTracks() {
+  if (_lineAll === null) {
+    try { _lineAll = sessionStorage.getItem("wm-line-all") === "all"; } catch { _lineAll = false; }
+  }
+  return _lineAll;
+}
+
 // Lightweight canvas waveform fed by server-side peaks (/api/peaks). No full-audio download.
 // Click to play from that point (input-seek clip); horizontal zoom for precision on long files.
 function buildWaveform(preview) {
@@ -251,10 +261,24 @@ function buildWaveform(preview) {
   zoom.oninput = draw;
   vzoom.oninput = draw;
 
+  // Multi-track source: a line's ▶ can play just that speaker's mic, or every track mixed.
+  const tracks = new Set(Object.values(preview.trackOf || {}).filter((t) => t != null));
+  let lineMode = "";
+  if (tracks.size > 1) {
+    lineMode = el("select", { title: "What a line's ▶ plays" },
+      el("option", { value: "", textContent: "▶ plays this speaker" }),
+      el("option", { value: "all", textContent: "▶ plays all tracks" }));
+    lineMode.value = lineAllTracks() ? "all" : "";
+    lineMode.onchange = () => {
+      try { sessionStorage.setItem("wm-line-all", lineMode.value); } catch {}
+      _lineAll = lineMode.value === "all";
+    };
+  }
+
   return el("div", {},
     el("div", { className: "row", style: "margin:10px 0 6px" },
       el("span", { className: "muted", textContent: "Waveform" }), status,
-      el("div", { className: "spacer" }),
+      el("div", { className: "spacer" }), lineMode,
       el("span", { className: "muted", textContent: "zoom" }), zoom,
       el("span", { className: "muted", textContent: "amp" }), vzoom),
     scroller);
@@ -398,7 +422,8 @@ function buildRow(container, merged, seg, i, preview) {
     const jump = el("button", { className: "ghost icon-only", title: "Play from here" }, icon("play"));
     // play only this line's stream when we know the mapping (multi-track source); else downmix
     const track = segTrack.get(seg);
-    jump.onclick = () => toggleClip(jump, preview.file_id, seg.start, seg.end - seg.start, track);
+    jump.onclick = () => toggleClip(jump, preview.file_id, seg.start, seg.end - seg.start,
+      lineAllTracks() ? null : track);
     rowActions.append(jump);
   }
   rowActions.append(del);
