@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import modelstore
-from .transcribe import BATCH_SIZE, COMPUTE_TYPE, DEVICE, _load_model, unload_models
+from .transcribe import BATCH_SIZE, COMPUTE_TYPE, DEVICE, _load_model, gpu_user, unload_models
 
 SENTENCE = ("Let's move the quarterly review to Thursday afternoon, and make sure the budget numbers "
             "are final before then. If anything changes, send me a message and I'll update the calendar.")
@@ -104,6 +104,8 @@ def run(progress: Callable[[float, str], None], names: Optional[list[str]] = Non
         progress(0.0, "Speaking the test sentences")
         tests = _tests(Path(tmp), names)
     results = []
+    busy = gpu_user()                             # so another job won't unload a model mid-benchmark
+    busy.__enter__()
     try:
         for i, name in enumerate(names):
             progress(i / len(names), f"Benchmarking {modelstore.whisper_entry(name).name} ({i + 1}/{len(names)})")
@@ -125,4 +127,5 @@ def run(progress: Callable[[float, str], None], names: Optional[list[str]] = Non
                                 "match": round(match_score(heard, expected), 3), "heard": heard})
     finally:
         unload_models()                           # leave VRAM free; the chosen model loads on the next run
+        busy.__exit__(None, None, None)
     return results

@@ -154,3 +154,40 @@ def test_per_file_pipeline_reports_chunks_per_track(tmp_path):
                           on_start=noop, on_track=noop, on_done=noop, on_error=noop, on_skip=noop,
                           is_file_cancelled=lambda i: False, on_chunk=lambda *a: chunks.append(a))
     assert chunks == [(0, 0, 2, 0.5), (0, 1, 2, 0.5)]
+
+
+def test_models_unload_for_real_unless_another_thread_is_transcribing():
+    """CTranslate2 keeps VRAM until unload_model(); without it the next model ran ~10x slower. But
+    jobs share no GPU lock, so never unload under another thread's transcription."""
+    import threading
+    from app import transcribe as t
+
+    class Pipe:                                        # whisperx pipeline -> .model (faster-whisper) -> .model (ct2)
+        def __init__(self):
+            self.unloaded = False
+            self.model = type("FW", (), {})()
+            self.model.model = self
+
+        def unload_model(self):
+            self.unloaded = True
+
+    a = Pipe()
+    t._loaded[:] = [a]
+    t.unload_models()
+    assert a.unloaded and not t._loaded
+
+    b, busy, done = Pipe(), threading.Event(), threading.Event()
+
+    def other_job():
+        with t.gpu_user():
+            busy.set()
+            done.wait(5)
+
+    th = threading.Thread(target=other_job)
+    th.start()
+    busy.wait(5)
+    t._loaded[:] = [b]
+    t.unload_models()                                  # another thread is mid-transcription
+    assert not b.unloaded and not t._loaded            # references dropped, model left working
+    done.set()
+    th.join()

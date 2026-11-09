@@ -437,6 +437,19 @@ exactly what hides the next extraction).
   export SRT/TXT; folder batch with a subfolder; the same flow over a real MCP stdio client.
   `tests/test_actions.py` runs the actions and CLI against the app in-process.
 
+## Second model in a process ran ~10x slower: fixed (2026-11-09)
+
+Found while timing #23 on a free GPU: whichever speech model loaded *second* in a process ran about
+10x slower (large-v3: 7 s first, 60-67 s second, same 7 min clip). CTranslate2 keeps a model's VRAM
+after Python drops it, until `unload_model()`; `unload_models()` only cleared the Python caches.
+This hit the Portugal punctuation merge (its large-v3 pass), resume after Pause, auto-detect
+switching to CAMOES, and every Benchmark model after the first (so Benchmark times were wrong).
+
+`transcribe._release_loaded()` now calls `unload_model()` on the pipelines `_load_model` built, when
+the cache replaces its model and in `unload_models()`. Jobs share no GPU lock, so it only does so
+when no other thread is mid-transcription (`gpu_user()` marks `transcribe_track` and Benchmark);
+otherwise it drops the references as before. Portugal merge on that clip: 79.3 s → 28.5 s.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

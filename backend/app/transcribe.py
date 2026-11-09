@@ -77,9 +77,48 @@ def _allow_full_torch_load() -> None:
     _torch_load_patched = True
 
 
+# CTranslate2 keeps a model's VRAM after Python lets go of it, until unload_model() is called. So
+# without an explicit unload, every model loaded after the first in a process (the Portugal merge's
+# large-v3 pass, resume after Pause, each Benchmark model) ran ~10x slower: 66.6 s vs 6.5 s for the
+# same 7 min clip on a free 3080 Ti, 2026-11-09. Jobs share no GPU lock, so the hard unload only
+# happens when no other thread is mid-transcription; otherwise the old behaviour (drop references).
+_loaded: list = []                 # pipelines _load_model built and hasn't unloaded yet
+_gpu_users: dict[int, int] = {}    # thread id -> transcriptions it has in progress
+_gpu_users_lock = threading.Lock()
+
+
+@contextmanager
+def gpu_user():
+    """Mark this thread as using the loaded models, so another thread won't unload them under it."""
+    tid = threading.get_ident()
+    with _gpu_users_lock:
+        _gpu_users[tid] = _gpu_users.get(tid, 0) + 1
+    try:
+        yield
+    finally:
+        with _gpu_users_lock:
+            _gpu_users[tid] -= 1
+            if not _gpu_users[tid]:
+                del _gpu_users[tid]
+
+
+def _release_loaded() -> None:
+    """Unload the speech models built so far, for real, if no other thread is using them."""
+    with _gpu_users_lock:
+        others = any(tid != threading.get_ident() for tid in _gpu_users)
+    while _loaded:
+        pipe = _loaded.pop()
+        if not others:
+            try:
+                pipe.model.model.unload_model()
+            except Exception:
+                pass
+
+
 @lru_cache(maxsize=1)
 def _load_model(model_name: str, compute_type: str, device: str):
     import whisperx
+    _release_loaded()                  # the cache is replacing its model: free the old one's VRAM
     _allow_full_torch_load()
     # A catalog model may name its own repo and precision (e.g. an int8 conversion).
     compute_type = modelstore.WHISPER_MODELS.get(model_name, {}).get("compute_type", compute_type)
@@ -91,6 +130,7 @@ def _load_model(model_name: str, compute_type: str, device: str):
         from faster_whisper.feature_extractor import FeatureExtractor
         wm.feat_kwargs["feature_size"] = wm.model.n_mels
         wm.feature_extractor = FeatureExtractor(**wm.feat_kwargs)
+    _loaded.append(pipe)
     return pipe
 
 
@@ -154,6 +194,7 @@ def unload_models() -> None:
     """Drop the cached ASR + alignment models and hand their VRAM back to CUDA. Called when a run
     is paused so a paused job stops occupying the GPU; the models reload lazily on the next
     transcribe. Must run on the worker thread that owns the GPU (where the models were created)."""
+    _release_loaded()
     _load_model.cache_clear()
     _load_align.cache_clear()
     import gc
@@ -166,7 +207,14 @@ def unload_models() -> None:
         pass
 
 
-def transcribe_track(
+def transcribe_track(audio_path: str | Path, **kw) -> dict:
+    """Transcribe + align one mono/16k WAV (see _transcribe_track), counted as a GPU user meanwhile
+    so another thread can't unload the models under it."""
+    with gpu_user():
+        return _transcribe_track(audio_path, **kw)
+
+
+def _transcribe_track(
     audio_path: str | Path,
     *,
     model_name: Optional[str] = None,
