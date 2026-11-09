@@ -458,8 +458,12 @@ otherwise it drops the references as before. Portugal merge on that clip: 79.3 s
 `WHISPERMERGER_BATCH_SIZE` (16) is now a maximum. Right after a speech model loads,
 `transcribe._fit_batch` reads free VRAM once and caps the batch at `(free - 0.5 GB) / 0.4 GB`
 (`pipe.fit_batch`, applied in `_transcribe_counted`). Measured on the 3080 Ti: on top of the loaded
-model a batch needs at most ~0.4 GB per item; free card → 16 as before. With 6.5 GB held by another
+model a batch needs at most ~0.4 GB per item. With 6.5 GB held by another
 process (like LM Studio), 35.7 min of speech: auto batch 6 = 46.9 s vs fixed 16 = 81.2 s (spilling).
+**Margin raised 0.3 → 0.9 GB (2026-11-09):** the speech model takes ~0.6 GB more on its first run,
+after free VRAM is read. At 0.3 a free 12 GB card picked 16, and with the word-timing model in,
+16 spilled 0.4–0.7 GB and ran ~2× slower (CAMÕES and large-v3 alike); a free 12 GB card now picks 14.
+Two 7 min pt-PT tracks: 30.7 / 30.6 s (was 32.3 / 38.8), no spill, steady run to run.
 Read once per load because CTranslate2 keeps memory it has used, so later readings would shrink.
 
 **Clean sweep (2026-11-09):** large-v3, 20 min English clip, each size in a fresh process after a
@@ -536,8 +540,8 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
   step with the audio. Timing not measured cleanly (another app held 6.5 GB of VRAM).
   **Clean timing (2026-11-09):** the app's real path (`transcribe_track`, pt-PT, no cache), two RTP
   tracks of ~7 min in a row after a warm-up, each setting in a fresh process, run twice; GPU had only
-  Windows + NVIDIA Broadcast (1 GB). After the word-timing spill fix below: setting off 32.3 / 38.8 s,
-  on 78.8 / 69.5 s, so the merge costs about **2×** (roughly +20 s per 7 min track): each track also
+  Windows + NVIDIA Broadcast (1 GB). After both spill fixes (below, and the #37 margin): setting off
+  30.7 / 30.6 s, on 65.1 / 65.7 s, so the merge costs about **2×** (roughly +17 s per 7 min track): each track also
   swaps models (unload CAMÕES, load large-v3, reload CAMÕES for the next). Before that fix it looked
   like 1.6× (off 47.0 / 61.9, on 78.1 / 93.9) only because "off" was slowed by the spill too. Words
   are identical either way; punctuation marks 61 → 133 and 73 → 120. Keeping both models loaded is
@@ -549,10 +553,8 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
   track after the first in a run spilled its batch into system memory: 41–57 s instead of 6.7 s for a
   7 min track's transcription (A/B, twice each). `transcribe_track` now calls
   `torch.cuda.empty_cache()` after aligning. Any language, any multi-track file or batch.
-  Still tight: CAMÕES at batch 16 plus the resident word-timing model peaks at ~11.7 GB of 12.3, and
-  spilled 0.1–0.5 GB in some runs. Possible follow-up: `_fit_batch` reads free memory before the
-  speech model's weights reach the GPU (they arrive on the first transcribe), so on a clean card it
-  never limits the batch; counting the weights would let it trim to ~14 there.
+  The small spill left after this (0.1–0.7 GB at batch 16) was the batch-size margin, now 0.9 GB
+  (see #37 above).
 - **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
   CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line

@@ -199,12 +199,12 @@ def test_batch_size_fits_free_vram(monkeypatch):
     from app import transcribe as t
     gb = lambda free: monkeypatch.setattr(torch.cuda, "mem_get_info", lambda *a: (free * 1e9, 12.9e9))
     monkeypatch.setattr(torch.cuda, "memory_allocated", lambda *a: 0)   # no word-timing model loaded yet
-    gb(7.6); assert t._fit_batch(16) == 16          # free 12 GB card with large-v3 loaded
-    gb(7.6); assert t._fit_batch(24) == 16          # 24 would spill: capped by memory
-    gb(4.0); assert t._fit_batch(16) == 6           # another app holds ~3.6 GB
+    gb(7.6); assert t._fit_batch(16) == 14          # free 12 GB card with large-v3 loaded (16 spilled)
+    gb(7.6); assert t._fit_batch(24) == 14          # 24 would spill: capped by memory
+    gb(4.0); assert t._fit_batch(16) == 4           # another app holds ~3.6 GB
     gb(0.3); assert t._fit_batch(16) == 1           # never below 1
     monkeypatch.setattr(torch.cuda, "memory_allocated", lambda *a: 1.3e9)   # word-timing model already in
-    gb(6.3); assert t._fit_batch(16) == 16          # its memory is already out of "free"
+    gb(6.3); assert t._fit_batch(16) == 14          # its memory is already out of "free"
 
     class Pipe:                                     # the cap is applied to every transcribe call
         fit_batch = 4

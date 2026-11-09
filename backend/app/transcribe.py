@@ -54,9 +54,13 @@ BATCH_SIZE = int(os.environ.get("WHISPERMERGER_BATCH_SIZE", "16"))
 # loaded (#37). Measured on a 3080 Ti, 2026-11-09: on top of the loaded model a batch needs at most
 # ~0.4 GB per item (large-v3 at 16: 5.8 GB, at 4: 0.6 GB). A batch that doesn't fit spills into
 # system memory and runs 4x+ slower, while a smaller one costs far less (8: +22%, 4: +77%). On a free
-# 12 GB card this still picks 16; with another app holding VRAM it shrinks instead of spilling.
+# 12 GB card this picks 14; with another app holding VRAM it shrinks instead of spilling.
 GB_PER_BATCH_ITEM = 0.37          # measured 0.36 at 16 (less per item at smaller batches)
-VRAM_MARGIN_GB = 0.3               # left for the desktop and other apps' small changes
+# Left for the desktop and other apps' small changes (0.3 GB), plus ~0.6 GB the speech model takes
+# on its first run, after free VRAM was read. At 0.3 a free 12 GB card picked 16, and with the
+# word-timing model in, batch 16 spilled 0.4-0.7 GB and ran ~2x slower (CAMOES and large-v3 alike;
+# 14 didn't), 2026-11-09.
+VRAM_MARGIN_GB = 0.9
 # The word-timing model loads after the speech model and stays on the GPU (one at a time, see
 # _load_align): leave room for it, or a batch sized before it loaded spills once it's there.
 # Measured on a free 3080 Ti: speech model + batch 16 + one word-timing model leaves ~0.5 GB.
