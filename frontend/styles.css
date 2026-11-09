@@ -172,7 +172,8 @@ table.editor tr.flag-overlap { background: rgba(217, 164, 65, .07); }
 table.editor tr.flag-backchannel { background: rgba(91, 157, 255, .07); }
 table.editor tr.flag-bleed_suspected { background: rgba(224, 98, 94, .07); }
 table.editor td.tc input { width: 116px; }   /* fits HH:MM:SS.ss in monospace without clipping */
-table.editor td.spk input { width: 96px; }
+/* Sized to the longest speaker name (--spk-ch, set by buildTable), within 96–260 px. */
+table.editor td.spk input { width: clamp(96px, calc(var(--spk-ch, 0) * 1ch + 22px), 260px); }
 /* Text is the main column — it absorbs the slack so Speaker/Start/End group up tight on the left. */
 table.editor td.txt { width: 100%; }
 table.editor td.spk, table.editor td.tc { padding-left: 6px; padding-right: 6px; }

@@ -338,7 +338,9 @@ function buildTable(container, merged, preview) {
   const tbody = el("tbody");
   // "Notes" column only shows once a visible line carries a flag (conflict / edited).
   const hasNotes = merged.segments.some((s) => !container._disabled.has(s.speaker) && (s.flags || []).length);
-  const table = el("table", { className: "editor" + (hasNotes ? " has-notes" : "") },
+  // Speaker column fits the longest name (CSS caps it; longer names show in full on hover).
+  const longest = merged.segments.reduce((n, s) => Math.max(n, (s.speaker || "").length), 0);
+  const table = el("table", { className: "editor" + (hasNotes ? " has-notes" : ""), style: `--spk-ch:${longest}` },
     el("thead", {}, el("tr", {},
       el("th", { textContent: "Speaker" }), el("th", { textContent: "Start" }),
       el("th", { textContent: "End" }), el("th", { textContent: "Text" }),
@@ -358,8 +360,8 @@ function buildRow(container, merged, seg, i, preview) {
   for (const f of seg.flags || []) tr.classList.add(`flag-${f}`);
   const snapshot = JSON.stringify(seg);
 
-  const spk = el("input", { value: seg.speaker });
-  spk.oninput = () => { seg.speaker = spk.value; };
+  const spk = el("input", { value: seg.speaker, title: seg.speaker });
+  spk.oninput = () => { seg.speaker = spk.title = spk.value; };
 
   const start = el("input", { value: fmtTimeShort(seg.start) });
   const end = el("input", { value: fmtTimeShort(seg.end) });
