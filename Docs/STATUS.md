@@ -534,10 +534,15 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
   merge works as designed (sentence ends found 89–94% vs CAMÕES's 47–55%) but can't restore missed
   words. Stays off by default. Caveats: two speakers, clean studio speech, transcripts slightly out of
   step with the audio. Timing not measured cleanly (another app held 6.5 GB of VRAM).
-  **To do: clean timing re-test.** Close every other GPU app first (LM Studio, games, video tools;
-  Task Manager → GPU should show nothing else holding dedicated memory), then time CAMÕES then
-  large-v3 on one ~7 min clip with `compare_pt.py`, to confirm whether the merge really costs ~2× GPU
-  time. Any GPU timing in this project needs the same clean setup, or it measures the other app.
+  **Clean timing (2026-11-09):** the app's real path (`transcribe_track`, pt-PT, no cache), two RTP
+  tracks of ~7 min in a row after a warm-up, each setting in a fresh process, run twice; GPU had only
+  Windows + NVIDIA Broadcast (1 GB). Setting off: 47.0 / 61.9 s. On: 78.1 / 93.9 s. So the merge
+  costs about **1.5–1.7×**, not 2× (roughly +15 s per 7 min track): large-v3 is the faster model, but
+  each track also swaps models (unload CAMÕES, load large-v3, reload CAMÕES for the next). Words are
+  identical either way; punctuation marks 61 → 133 and 73 → 120. Runs vary by up to ~15 s on the
+  same input, so treat the ratio as approximate. `compare_pt.py` times transcription only (no swaps,
+  no warm-up), so use the app path for timing. Any GPU timing in this project needs a clean GPU, or
+  it measures the other app.
 - **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
   CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line
