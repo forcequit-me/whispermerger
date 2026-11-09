@@ -54,6 +54,11 @@ class Cache:
             json.dumps(whisperx_output, ensure_ascii=False), encoding="utf-8"
         )
 
+    def stats(self) -> dict:
+        """How many entries the cache holds and their total size in bytes (the Clear cache button)."""
+        sizes = [p.stat().st_size for p in self.dir.glob("*.json")]
+        return {"entries": len(sizes), "bytes": sum(sizes)}
+
     def clear(self) -> int:
         """Delete every cached entry; returns how many were removed. Used to force a cold
         (re)transcription, e.g. when benchmarking real GPU time."""

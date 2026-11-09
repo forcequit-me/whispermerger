@@ -120,19 +120,34 @@ $("#shutdown-btn").onclick = async () => {
 // --- clear cache -----------------------------------------------------------------------
 // Wipes the WhisperX-output cache so the next run transcribes cold (e.g. to benchmark real
 // GPU time). Confirm first — afterwards re-runs of the same files are no longer instant.
+// The button shows what's cached ("42 · 1.2 GB") and greys out when there's nothing to clear.
+async function refreshCacheStats() {
+  const btn = $("#clear-cache-btn"), stat = $("#cache-stat");
+  try {
+    const s = await (await fetch("/api/cache/stats")).json();
+    const size = s.bytes >= 1e9 ? `${(s.bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(s.bytes / 1e6))} MB`;
+    stat.textContent = s.entries ? `${s.entries} · ${size}` : "empty";
+    btn.disabled = !s.entries;
+    btn.title = s.entries ? `${s.entries} cached transcription${s.entries === 1 ? "" : "s"} (${size}). `
+      + "Delete them so the next run transcribes cold (for benchmarking)." : "Nothing cached";
+  } catch { stat.textContent = ""; btn.disabled = false; }
+}
+refreshCacheStats();
+
 $("#clear-cache-btn").onclick = async (e) => {
   const btn = e.currentTarget;
   if (!confirm("Delete all cached transcriptions? The next run will transcribe from scratch.")) return;
-  const label = btn.querySelector("span"), prev = label.textContent;
-  btn.disabled = true; label.textContent = "Clearing…";
+  const stat = $("#cache-stat");
+  btn.disabled = true; stat.textContent = "clearing…";
   try {
     const r = await fetch("/api/cache/clear", { method: "POST" });
-    const data = r.ok ? await r.json() : null;
-    label.textContent = data ? `Cleared ${data.cleared}` : "Failed";
+    if (!r.ok) throw new Error();
   } catch (_) {
-    label.textContent = "Failed";
+    stat.textContent = "failed";
+    setTimeout(refreshCacheStats, 2000);
+    return;
   }
-  setTimeout(() => { label.textContent = prev; btn.disabled = false; }, 2000);
+  refreshCacheStats();
 };
 
 // --- tab switching ---------------------------------------------------------------------
@@ -764,6 +779,7 @@ function pollJob(jobId, runBtn) {
     const msg = (p.paused && !p.gpu_freed) ? "pausing… (finishing current stage)" : (p.message || p.status);
     setProgress(p.progress, `${msg}${p.elapsed ? " · " + fmtElapsed(p.elapsed) : ""}`);
     if (p.status === "done") {
+      refreshCacheStats();
       try {
         const merged = await (await fetchTO(`/api/result/${jobId}`)).json();
         $("#result-panel").style.display = "";
@@ -1307,6 +1323,7 @@ function pollBatch(id, btn) {
     pauseBtn.disabled = false;
     pauseBtn.textContent = b.paused ? "Resume" : "Pause";
     if (b.status === "done" || b.status === "canceled") {
+      refreshCacheStats();
       btn.disabled = false;
       cancelBtn.style.display = "none";
       pauseBtn.style.display = "none"; pauseBtn.textContent = "Pause"; pauseBtn.disabled = false;
@@ -1799,6 +1816,7 @@ $("#pt-punctuation").onchange = async (e) => {
 };
 
 document.querySelectorAll(".tab-btn").forEach((b) => b.addEventListener("click", refreshModels));
+document.querySelectorAll(".tab-btn").forEach((b) => b.addEventListener("click", refreshCacheStats));
 refreshModels();
 
 // Benchmark: every downloaded speech model, cold load + transcription of a spoken test sentence.

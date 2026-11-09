@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhisperMerger</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=21" />
+  <link rel="stylesheet" href="styles.css?v=23" />
 </head>
 <body>
   <header>
@@ -36,7 +36,7 @@
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/>
       </svg>
-      <span>Clear cache</span>
+      <span class="cache-label">Clear cache<small id="cache-stat"></small></span>
     </button>
     <button id="shutdown-btn" class="ghost icon-btn" title="Stop the local server">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -399,7 +399,7 @@
     </section>
   </main>
 
-  <script src="app.js?v=38"></script>
+  <script src="app.js?v=39"></script>
   <script type="module" src="labeltrack.js?v=10"></script>
 </body>
 </html>

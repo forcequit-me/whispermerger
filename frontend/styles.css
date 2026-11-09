@@ -42,6 +42,8 @@ header .sub { color: var(--muted); font-size: 12px; }
 
 .icon-btn { display: inline-flex; align-items: center; gap: 6px; }
 .icon-btn svg { flex: none; }
+.cache-label { display: inline-flex; flex-direction: column; line-height: 1.15; text-align: left; white-space: nowrap; }
+.cache-label small { font-size: 10px; color: var(--muted); font-family: var(--mono); }
 .icon-only { display: inline-flex; align-items: center; justify-content: center; padding: 6px; line-height: 0; }
 .icon-only svg { flex: none; }
 #shutdown-btn { color: var(--muted); background: transparent; border-color: transparent; margin-left: 8px; }

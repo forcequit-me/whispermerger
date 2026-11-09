@@ -46,6 +46,12 @@ def shutdown() -> dict:
     return {"stopping": True}
 
 
+@router.get("/cache/stats")
+def cache_stats(request: Request) -> dict:
+    """Number of cached transcriptions and their total size, shown on the Clear cache button."""
+    return request.app.state.cache.stats()
+
+
 @router.post("/cache/clear")
 def clear_cache(request: Request) -> dict:
     """Wipe the WhisperX-output cache so the next run transcribes cold (e.g. to benchmark real

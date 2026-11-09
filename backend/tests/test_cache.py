@@ -54,3 +54,14 @@ def test_clear_removes_all_entries(tmp_path):
     assert cache.clear() == 2
     assert cache.get("k1") is None and cache.get("k2") is None
     assert cache.clear() == 0                               # idempotent on an empty cache
+
+
+def test_stats_counts_entries_and_bytes(tmp_path):
+    cache = Cache(tmp_path / "cache")
+    assert cache.stats() == {"entries": 0, "bytes": 0}
+    cache.put("k1", {"segments": []})
+    cache.put("k2", {"segments": [{"text": "hi"}]})
+    s = cache.stats()
+    assert s["entries"] == 2 and s["bytes"] == sum(p.stat().st_size for p in (tmp_path / "cache").glob("*.json"))
+    cache.clear()
+    assert cache.stats() == {"entries": 0, "bytes": 0}
