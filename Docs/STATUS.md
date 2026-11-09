@@ -462,6 +462,25 @@ model a batch needs at most ~0.4 GB per item; free card → 16 as before. With 6
 process (like LM Studio), 35.7 min of speech: auto batch 6 = 46.9 s vs fixed 16 = 81.2 s (spilling).
 Read once per load because CTranslate2 keeps memory it has used, so later readings would shrink.
 
+**Clean sweep (2026-11-09):** large-v3, 20 min English clip, each size in a fresh process after a
+warm-up, nothing else on the GPU but Windows + NVIDIA Broadcast (0.8 GB idle). Spill = Windows
+shared GPU memory above idle.
+
+| Batch | Time | Speed | Peak VRAM | Spill |
+|---|---|---|---|---|
+| 4 | 26.3 s | 46× | 6.7 GB | — |
+| 8 | 18.1 s | 66× | 7.5 GB | — |
+| 12 | 15.9 s | 76× | 8.8 GB | — |
+| **16** | **15.1 s** | **80×** | 10.5 GB | — |
+| 20 | 20.3 s | 59× | 11.5 GB | 0.3 GB |
+| 24 | 39.2 s | 31× | 11.8 GB | 1.4 GB |
+
+16 is the fastest size on a 12 GB card; 12→16 gains only 5%, while any spill costs far more (20 is
+25% slower, 24 is 2.6× slower). Transcripts are the same at every size (3066–3073 words). So the cap
+of 16 plus fitting to free memory is right, and a batch-size Benchmark isn't worth building: the
+only risk is spilling, which the fit already prevents. ~0.32 GB per batch item measured here, under
+the 0.37 GB the fit assumes (a little headroom).
+
 ## "Cannot copy out of meta tensor" on a first run in a new language (2026-11-09)
 
 Reported: a CLI run in Korean failed right after the word-timing model downloaded; the same command
