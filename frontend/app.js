@@ -1894,21 +1894,50 @@ function renderGroup(kind, models, free) {
 
 const modelNames = {};   // short name -> display name, for the benchmark table
 
+// Speech models grouped by what they cover; the catalog is already in this order.
+const speechGroup = (m) => m.info.for_language ? "One language"
+  : m.info.languages === "English only" ? "English only" : `Multilingual · ${m.info.languages}`;
+
 function renderModels(data) {
   data.models.forEach((m) => { if (m.kind === "whisper") modelNames[m.id.slice(8)] = m.name; });
   const w = $("#models-whisper"), a = $("#models-align");
   w.innerHTML = a.innerHTML = "";
+  let group = null;
   for (const m of data.models) {
-    const size = el("td", { className: "size", textContent: fmtSize(m.size_mb) });
-    const act = el("td", { className: "act" }, modelAction(m, data.active));
     if (m.kind === "whisper") {
-      const meta = `${m.info.accuracy} accuracy · ${m.info.speed} · ${m.info.languages}`;
-      w.append(el("tr", {}, el("td", {}, el("div", { textContent: m.name }), el("div", { className: "meta", textContent: meta })), size, act));
+      if (speechGroup(m) !== group) {
+        group = speechGroup(m);
+        w.append(el("tr", { className: "grp" }, el("td", { colSpan: 3, textContent: group })));
+      }
+      // One line: name, then accuracy · speed (and the language, for a one-language model).
+      const meta = `${m.info.accuracy} accuracy · ${m.info.speed}` + (m.info.for_language ? ` · ${m.info.languages}` : "");
+      w.append(el("tr", {}, el("td", {}, el("span", { className: "mname", textContent: m.name }),
+        el("span", { className: "meta", textContent: meta })),
+        el("td", { className: "size", textContent: fmtSize(m.size_mb) }),
+        el("td", { className: "act" }, modelAction(m, data.active))));
     } else {
-      a.append(el("tr", {}, el("td", { textContent: m.name.replace(/ word timing$/, "") }), size, act));
+      const lang = m.name.replace(/ word timing$/, "");
+      a.append(el("div", { className: "mg-item" },
+        el("span", { className: "mg-name", title: `Word timing for ${lang}` }, lang, " ",
+          el("span", { className: "meta", textContent: m.info.language })),
+        el("span", { className: "size", textContent: fmtSize(m.size_mb) }),
+        modelAction(m, data.active)));
     }
   }
+  for (const [kind, id] of [["whisper", "#models-speech-count"], ["align", "#models-align-count"]]) {
+    const of = data.models.filter((m) => m.kind === kind);
+    $(id).textContent = `· ${of.filter((m) => m.installed).length} of ${of.length} downloaded`;
+  }
 }
+
+// Speech / Word-timing sub-tabs. Only visibility changes, so downloads keep their live progress.
+document.querySelectorAll("#models-subtabs .subtab").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("#models-subtabs .subtab").forEach((x) => x.classList.toggle("active", x === b));
+    $("#models-speech").style.display = b.dataset.sub === "speech" ? "" : "none";
+    $("#models-alignp").style.display = b.dataset.sub === "align" ? "" : "none";
+  };
+});
 
 // Language dropdowns say up front when picking a language means a download (and how big).
 function annotateLanguages(models, variants = {}) {

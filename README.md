@@ -185,7 +185,8 @@ split also prints to the server console as a scrollback record (`[timing] <file>
 - **Edit Transcript** — load a WhisperMerger transcript in any export format (`.json` / `.srt` /
   `.txt` / `.csv`, or paste it) to tweak and re-export (e.g. a batch result).
 - **Models** — every speech and word-timing model, whether it's on disk, its size, Download /
-  Remove. Downloads show progress, can be canceled, and resume where they stopped (also after a
+  Remove, on two tabs: **Speech models** (one line each, grouped Multilingual / English only / One
+  language) and **Word-timing models** (a compact grid by language, with its code). Downloads show progress, can be canceled, and resume where they stopped (also after a
   dropped connection). **Download all** per section (with total size and free disk space first) and
   **Cancel all**; two download at a time, the rest wait as *queued*, with overall progress and time
   left. Each shows whether it's connecting, downloading or retrying (and why); errors no retry can fix

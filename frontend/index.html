@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhisperMerger</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=27" />
+  <link rel="stylesheet" href="styles.css?v=29" />
 </head>
 <body>
   <header>
@@ -364,7 +364,12 @@
 
     <!-- ============ Models ============ -->
     <section id="tab-models" class="tab">
-      <div class="panel">
+      <div class="subtabs" id="models-subtabs">
+        <button class="subtab active" data-sub="speech">Speech models <span class="meta" id="models-speech-count"></span></button>
+        <button class="subtab" data-sub="align">Word-timing models <span class="meta" id="models-align-count"></span></button>
+      </div>
+      <div id="models-err" class="err"></div>
+      <div class="panel" id="models-speech">
         <h2>Speech models</h2>
         <div class="muted" style="margin-bottom:10px">Turns audio into text. Download ahead of time, or a run downloads what it needs (with progress you can cancel). A canceled or dropped download resumes where it stopped.</div>
         <div class="row" id="models-whisper-all" style="margin-bottom:10px; display:none"></div>
@@ -386,17 +391,16 @@
             <input type="checkbox" id="pt-punctuation"> Portugal: add punctuation from large-v3 (about 2× slower)</label>
         </div>
       </div>
-      <div class="panel">
+      <div class="panel" id="models-alignp" style="display:none">
         <h2>Word-timing models</h2>
         <div class="muted" style="margin-bottom:10px">One per language. Pins every word to its exact time for subtitles and per-line playback. A language without one still transcribes, with line timings only.</div>
         <div class="row" id="models-align-all" style="margin-bottom:10px; display:none"></div>
-        <table class="models" id="models-align"></table>
-        <div id="models-err" class="err"></div>
+        <div class="models models-grid" id="models-align"></div>
       </div>
     </section>
   </main>
 
-  <script src="app.js?v=44"></script>
+  <script src="app.js?v=45"></script>
   <script type="module" src="labeltrack.js?v=10"></script>
 </body>
 </html>

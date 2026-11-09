@@ -315,7 +315,22 @@ table.models { width: 100%; border-collapse: collapse; }
 table.models td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 table.models td.size { color: var(--muted); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
 table.models td.act { text-align: right; white-space: nowrap; }
-table.models .meta { color: var(--muted); font-size: 12px; }
-table.models .dl { display: inline-flex; align-items: center; gap: 8px; }
-table.models .dl .bar { width: 140px; height: 8px; }
-table.models .ok { color: var(--ok); }
+.models .meta { color: var(--muted); font-size: 12px; }
+.models .dl { display: inline-flex; align-items: center; gap: 8px; }
+.models .dl .bar { width: 140px; height: 8px; }
+.models .ok { color: var(--ok); }
+/* Models tab: Speech / Word-timing sub-tabs, compact grouped speech rows, word-timing grid. */
+.subtabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.subtab { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+.subtab.active { background: var(--panel-2); color: var(--text); border-color: var(--accent); }
+table.models tr.grp td { padding: 14px 8px 4px; color: var(--muted); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .6px; border-bottom: 1px solid var(--line); }
+table.models td .mname { margin-right: 8px; }
+.models-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); column-gap: 20px; }
+.models-grid .mg-item { display: flex; align-items: center; gap: 10px; padding: 6px 4px; min-height: 42px;
+  border-bottom: 1px solid var(--line); }
+.models-grid .mg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.models-grid .size { color: var(--muted); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.models-grid .dl .bar { width: 70px; }
+/* Row height is set by the action buttons, so keep them small in the model lists. */
+table.models td.act button, .models-grid .mg-item button { font-size: 12px; padding: 4px 10px; }
