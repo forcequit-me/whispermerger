@@ -717,6 +717,7 @@ async function runPipeline() {
   const runBtn = $("#run-btn");
   runBtn.disabled = true;
   $("#progress-wrap").classList.add("show");
+  $("#progress-wrap").classList.remove("finished");
   setProgress(0, "starting…");
 
   let res;
@@ -790,7 +791,10 @@ function pollJob(jobId, runBtn) {
               trackOf: Object.fromEntries(uploaded[0].source.tracks.map((t) => [t.speaker, t.track_index])) }
           : null;
         renderEditor($("#editor-transcribe"), merged, preview);
-        setProgress(1, "done");
+        // Collapse to one line: "Done in 4m 12s · 2 tracks".
+        const tracks = uploaded.reduce((n, it) => n + it.source.tracks.filter((t) => t.selected !== false).length, 0);
+        setProgress(1, `Done in ${fmtElapsed(p.elapsed)} · ${tracks} track${tracks === 1 ? "" : "s"}`);
+        $("#progress-wrap").classList.add("finished");
       } catch (e) { setProgress(1, "done — but couldn't load the result: " + e.message); }
       finish();
       return;

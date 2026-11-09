@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhisperMerger</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=23" />
+  <link rel="stylesheet" href="styles.css?v=24" />
 </head>
 <body>
   <header>
@@ -211,24 +211,21 @@
           <div class="spacer"></div>
           <button id="run-btn" class="primary">Transcribe &amp; Merge</button>
         </div>
-      </div>
-
-      <div class="panel progress-wrap" id="progress-wrap">
-        <div class="progress-head">
-          <h2>Progress</h2>
-          <div class="spacer"></div>
-          <button id="pause-job" class="ghost" style="display:none">Pause</button>
-          <button id="cancel-job" class="ghost" style="display:none">Cancel</button>
-          <span class="progress-pct" id="progress-pct">0%</span>
+        <!-- Compact progress, right under the button so options and transcript stay together. -->
+        <div class="progress-wrap" id="progress-wrap">
+          <div class="progress-line">
+            <ol class="stage-steps" id="stage-steps">
+              <li data-stage="extract"><span class="dot"></span>Extract</li>
+              <li data-stage="transcribe"><span class="dot"></span>Transcribe</li>
+              <li data-stage="merge"><span class="dot"></span>Merge</li>
+            </ol>
+            <div class="bar" title="% = share of audio transcribed, weighted by track length · the next file's audio is extracted while the current one transcribes"><div id="progress-bar"></div></div>
+            <span class="progress-pct" id="progress-pct">0%</span>
+            <button id="pause-job" class="ghost" style="display:none">Pause</button>
+            <button id="cancel-job" class="ghost" style="display:none">Cancel</button>
+          </div>
+          <div class="progress-msg" id="progress-msg"></div>
         </div>
-        <ol class="stage-steps" id="stage-steps">
-          <li data-stage="extract"><span class="dot"></span>Extract</li>
-          <li data-stage="transcribe"><span class="dot"></span>Transcribe</li>
-          <li data-stage="merge"><span class="dot"></span>Merge</li>
-        </ol>
-        <div class="bar"><div id="progress-bar"></div></div>
-        <div class="progress-msg" id="progress-msg"></div>
-        <div class="progress-note">% = share of audio transcribed, weighted by track length · the next file's audio is extracted while the current one transcribes</div>
       </div>
 
       <div class="panel" id="result-panel" style="display:none">
@@ -399,7 +396,7 @@
     </section>
   </main>
 
-  <script src="app.js?v=39"></script>
+  <script src="app.js?v=40"></script>
   <script type="module" src="labeltrack.js?v=10"></script>
 </body>
 </html>

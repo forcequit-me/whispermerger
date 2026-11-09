@@ -142,6 +142,17 @@ label.opt { display: inline-flex; gap: 6px; align-items: center; margin-right: 1
 
 .progress-wrap { display: none; }
 .progress-wrap.show { display: block; }
+/* Transcribe & Merge: one compact line under the run button; collapses to the message when done. */
+#progress-wrap { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+#progress-wrap .progress-line { display: flex; align-items: center; gap: 12px; }
+#progress-wrap .stage-steps { margin: 0; flex: none; gap: 12px; }
+#progress-wrap .stage-steps li { flex: none; }
+#progress-wrap .stage-steps li::after { display: none; }
+#progress-wrap .bar { flex: 1; height: 8px; min-width: 80px; }
+#progress-wrap .progress-pct { font-size: 15px; min-width: 3.5ch; text-align: right; }
+#progress-wrap .progress-msg { margin-top: 6px; }
+#progress-wrap.finished .progress-line { display: none; }
+#progress-wrap.finished .progress-msg { margin-top: 0; color: var(--ok); }
 .progress-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
 .progress-head h2 { margin: 0; }
 .progress-pct { font-size: 26px; font-weight: 700; letter-spacing: .5px; color: var(--text);
