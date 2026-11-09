@@ -188,8 +188,10 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
     language: language code such as "en", "pt-PT" or "pt-BR" (default: detect it).
     out: folder to write the transcript files to; implies waiting for the result.
     formats: what to write to `out`: srt, txt, csv, json.
-    wait: wait for the result instead of returning the job id at once.
-    Returns the job id; use get_progress and get_transcript with it."""
+    wait: wait until it's done (long files take minutes) and return {job_id, status, elapsed}.
+    Returns {job_id} at once otherwise (plus "files" when `out` is given); follow it with
+    get_progress, then read it with get_transcript. A file transcribed before with the same model
+    and language comes from the cache and is done immediately."""
     items = _register(paths)
     sources = [_selection(it, names, tracks, k) for k, it in enumerate(items)]
     job_id = _api("POST", "/api/transcribe", {"sources": sources, "language": language})["job_id"]
@@ -204,16 +206,17 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
 
 
 def get_progress(job_id: str) -> dict:
-    """Progress of a transcription job: status (queued, running, done, error, cancelled), percent and stage."""
+    """Progress of a transcription job: status (queued, running, done, error, cancelled), percent and
+    stage. Poll every few seconds until status is done, then call get_transcript."""
     p = _api("GET", f"/api/progress/{job_id}")
     return {"status": p["status"], "percent": round(p["progress"] * 100), "message": p["message"],
             "elapsed": round(p["elapsed"], 1), "error": p["error"]}
 
 
 def get_transcript(source: str, full: bool = False) -> dict:
-    """A finished transcript, from a job id or a WhisperMerger .json file: numbered lines with start
-    and end (seconds), speaker, text and flags (overlap, backchannel, edited...). full: the complete
-    transcript including word-level timings."""
+    """A finished transcript, from a job id or a WhisperMerger .json file: lines numbered from 0
+    (the numbers edit_lines takes), with start and end (seconds), speaker, text and flags (overlap,
+    backchannel, edited...). full: the complete transcript including word-level timings."""
     merged, _ = _merged(source)
     if full:
         return merged
@@ -223,32 +226,39 @@ def get_transcript(source: str, full: bool = False) -> dict:
                       for i, s in enumerate(merged["segments"])]}
 
 
-def edit_lines(job_id: str, rename: Optional[list[str]] = None, line: Optional[int] = None,
-               text: Optional[str] = None, speaker: Optional[str] = None,
+def edit_lines(job_id: str, rename_from: Optional[str] = None, rename_to: Optional[str] = None,
+               line: Optional[int] = None, text: Optional[str] = None, speaker: Optional[str] = None,
                start: Optional[float] = None, end: Optional[float] = None,
                delete: bool = False) -> dict:
-    """Edit a finished job's transcript; later reads and exports use the edits.
+    """Edit a finished job's transcript; later reads and exports use the edits. Give a rename, or a
+    line with at least one change, or both.
 
-    rename: ["old name", "new name"] renames a speaker on every line.
-    line: the line number (from get_transcript) to change with text / speaker / start / end, or delete.
+    rename_from: a speaker name to rename on every line, to rename_to.
+    rename_to: the new name for rename_from.
+    line: line number from get_transcript (counted from 0) to change with text / speaker / start / end, or delete.
     A changed text is marked edited, so subtitle timing treats it like an edit made in the app."""
     merged = _api("GET", f"/api/result/{job_id}")
     segs = merged["segments"]
     changed = 0
-    if rename:
-        if len(rename) != 2:
-            raise ActionError('rename takes two names: ["old", "new"]')
+    if rename_from is not None or rename_to is not None:
+        if not (rename_from and rename_to):
+            raise ActionError("a rename needs both rename_from and rename_to")
+        names = sorted({s["speaker"] for s in segs})
+        if rename_from not in names:
+            raise ActionError(f"no speaker {rename_from!r} (speakers: {', '.join(names)})")
         for s in segs:
-            if s["speaker"] == rename[0]:
-                s["speaker"] = rename[1]
+            if s["speaker"] == rename_from:
+                s["speaker"] = rename_to
                 changed += 1
         for src in merged.get("sources", []):
             for t in src.get("tracks", []):
-                if t["speaker"] == rename[0]:
-                    t["speaker"] = rename[1]
+                if t["speaker"] == rename_from:
+                    t["speaker"] = rename_to
     if line is not None:
         if not 0 <= line < len(segs):
-            raise ActionError(f"no line {line} (there are {len(segs)})")
+            raise ActionError(f"no line {line}: lines are numbered 0 to {len(segs) - 1}")
+        if not delete and all(v is None for v in (text, speaker, start, end)):
+            raise ActionError(f"line {line}: say what to change (text, speaker, start, end) or delete")
         if delete:
             segs.pop(line)
         else:
@@ -265,7 +275,7 @@ def edit_lines(job_id: str, rename: Optional[list[str]] = None, line: Optional[i
                 s["end"] = end
         changed += 1
     if not changed:
-        raise ActionError("nothing to change: give rename, or line with text/speaker/start/end/delete")
+        raise ActionError("nothing to change: give rename_from + rename_to, or line with text/speaker/start/end/delete")
     _api("PUT", f"/api/result/{job_id}", merged)
     return {"changed_lines": changed, "lines": len(segs)}
 
@@ -329,13 +339,23 @@ def get_batch(batch_id: str) -> dict:
             "done": sum(f["status"] == "done" for f in files), "items": files}
 
 
-def list_models() -> dict:
-    """Speech and word-timing models: which are downloaded, which one runs, and download progress."""
+def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
+    """Models: which are downloaded, which speech model runs (active), and download progress.
+
+    kind: "speech" (speech-to-text, default), "word-timing" (one per language, for word-level
+    timing; about 40, mostly not downloaded) or "all".
+    installed_only: only models already on disk."""
+    want = {"speech": "whisper", "word-timing": "align", "all": None}
+    if kind not in want:
+        raise ActionError('kind is "speech", "word-timing" or "all"')
     d = _api("GET", "/api/models", timeout=120)
+    models = [m for m in d["models"] if want[kind] in (None, m["kind"]) and (m["installed"] or not installed_only)]
     return {"active": d["active"],
+            "downloaded": f"{sum(m['installed'] for m in d['models'] if want[kind] in (None, m['kind']))} "
+                          f"of {sum(1 for m in d['models'] if want[kind] in (None, m['kind']))}",
             "models": [{"id": m["id"], "name": m["name"], "size_mb": m["size_mb"], "installed": m["installed"],
                         "download": (m["download"] or {}).get("text") if (m["download"] or {}).get("active") else None}
-                       for m in d["models"]]}
+                       for m in models]}
 
 
 def download_model(model_id: str) -> dict:

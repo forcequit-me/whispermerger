@@ -212,7 +212,7 @@ isn't running and leave it running, so the speech model stays loaded. Files are 
 ```bat
 whispermerger transcribe "D:\rec\ep1.mov" --names "Host,Guest" --language en --out D:\subs --formats srt,json
 whispermerger transcript <job id>                       :: numbered lines with speakers and times
-whispermerger edit-lines <job id> --rename "Guest,Ana"   :: or --line 12 --text "..." / --delete
+whispermerger edit-lines <job id> --rename-from Guest --rename-to Ana   :: or --line 12 --text "..." / --delete
 whispermerger export <job id or transcript.json> --format srt --max-chars 42
 whispermerger run-batch D:\rec --out D:\subs --formats srt,txt --wait
 whispermerger models                                    :: also download-model, use-model

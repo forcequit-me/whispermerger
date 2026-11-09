@@ -46,7 +46,7 @@ def test_transcribe_edit_export(api, two_stream_file, tmp_path):
     t = actions.get_transcript(job["job_id"])
     assert t["speakers"] == ["Guest", "Host"]
 
-    actions.edit_lines(job["job_id"], rename=["Host", "Presenter"])
+    actions.edit_lines(job["job_id"], rename_from="Host", rename_to="Presenter")
     actions.edit_lines(job["job_id"], line=0, text="fixed")
     t = actions.get_transcript(job["job_id"])
     assert "Presenter" in t["speakers"] and t["lines"][0]["text"] == "fixed"
@@ -58,8 +58,13 @@ def test_transcribe_edit_export(api, two_stream_file, tmp_path):
     saved = next(f for f in job["files"] if f.endswith(".json"))
     assert actions.export(saved, formats=["txt"])["files"][0].startswith(str(tmp_path))
 
-    with pytest.raises(actions.ActionError, match="no line 99"):
+    with pytest.raises(actions.ActionError, match="no line 99: lines are numbered 0 to"):
         actions.edit_lines(job["job_id"], line=99, text="x")
+    with pytest.raises(actions.ActionError, match=r"no speaker 'Nobody' \(speakers: Guest, Presenter\)"):
+        actions.edit_lines(job["job_id"], rename_from="Nobody", rename_to="X")
+    with pytest.raises(actions.ActionError, match="say what to change"):
+        actions.edit_lines(job["job_id"], line=0)
+    assert {m["id"].split(":")[0] for m in actions.list_models()["models"]} == {"whisper"}
 
 
 def test_batch_on_a_folder(api, two_stream_file, tmp_path):
