@@ -142,3 +142,38 @@ def test_portugal_punctuation_is_optional(monkeypatch, tmp_path):
     loaded.clear()
     transcribe.transcribe_track(tmp_path / "x.wav", language="pt-BR")            # other languages untouched
     assert loaded == ["large-v3"]
+
+
+def test_runs_take_turns_on_the_shared_model(monkeypatch, tmp_path):
+    """Two runs at once on the shared model crashed one of them (WhisperX clears the model's
+    tokenizer when a run ends). Now the second waits for its turn; a cached result doesn't wait."""
+    import threading
+    monkeypatch.setattr(whisperx, "load_audio", lambda p: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(transcribe.modelstore, "ensure", lambda e: None)
+    active, most, release = [0], [0], threading.Event()
+
+    class Slow(_FakeModel):
+        def transcribe(self, audio, batch_size, language):
+            active[0] += 1
+            most[0] = max(most[0], active[0])
+            release.wait(5)
+            active[0] -= 1
+            return super().transcribe(audio, batch_size, language)
+
+    monkeypatch.setattr(transcribe, "_load_model", lambda *a: Slow("is"))
+    runs = [threading.Thread(target=transcribe.transcribe_track, args=(tmp_path / "x.wav",),
+                             kwargs={"language": "is"}) for _ in range(2)]
+    for r in runs:
+        r.start()
+    import time
+    time.sleep(0.3)                                    # both started; one is in, one is waiting
+
+    class Hit:                                         # a cached result returns while the GPU is busy
+        def get(self, key): return {"cached": True}
+    monkeypatch.setattr(transcribe, "cache_key", lambda *a: "k")
+    assert transcribe.transcribe_track(tmp_path / "y.wav", language="is", cache=Hit()) == {"cached": True}
+
+    release.set()
+    for r in runs:
+        r.join(5)
+    assert most[0] == 1

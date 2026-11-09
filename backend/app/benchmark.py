@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import modelstore
-from .transcribe import BATCH_SIZE, COMPUTE_TYPE, DEVICE, _load_model, gpu_user, unload_models
+from .transcribe import BATCH_SIZE, COMPUTE_TYPE, DEVICE, GPU_TURN, _load_model, gpu_user, unload_models
 
 SENTENCE = ("Let's move the quarterly review to Thursday afternoon, and make sure the budget numbers "
             "are final before then. If anything changes, send me a message and I'll update the calendar.")
@@ -104,6 +104,9 @@ def run(progress: Callable[[float, str], None], names: Optional[list[str]] = Non
         progress(0.0, "Speaking the test sentences")
         tests = _tests(Path(tmp), names)
     results = []
+    if not GPU_TURN.acquire(blocking=False):      # one run at a time on the shared models (and fair timings)
+        progress(0.0, "Waiting for the current transcription to finish")
+        GPU_TURN.acquire()
     busy = gpu_user()                             # so another job won't unload a model mid-benchmark
     busy.__enter__()
     try:
@@ -128,4 +131,5 @@ def run(progress: Callable[[float, str], None], names: Optional[list[str]] = Non
     finally:
         unload_models()                           # leave VRAM free; the chosen model loads on the next run
         busy.__exit__(None, None, None)
+        GPU_TURN.release()
     return results

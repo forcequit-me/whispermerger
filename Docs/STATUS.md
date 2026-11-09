@@ -483,6 +483,20 @@ the fix covers the confirmed hazard plus a safety net:
 Repro note: move the model's folder out of `~/.cache/huggingface/hub` (Korean:
 `models--kresnik--wav2vec2-large-xlsr-korean`), then `whispermerger transcribe <uncached Korean clip> --wait`.
 
+## Two transcriptions at once crashed one of them: fixed (2026-11-09)
+
+Found while testing batch buttons: a batch and a second run (another batch, Transcribe & Merge, or the
+CLI/MCP) on the shared speech model at the same time failed with `'NoneType' object has no attribute
+'sot_sequence'` then `'FasterWhisperPipeline' object has no attribute '__call__'`. WhisperX sets the
+model's tokenizer for each run's language and clears it when the run ends, and the per-chunk progress
+hook (#33) is put on the model per run, so one run pulled them from under the other.
+
+- **Fix:** `transcribe.GPU_TURN`, one uncached transcription at a time process-wide; the second waits
+  (its bar sits at 0% until then). Cache hits don't wait. The Benchmark takes the same turn and says
+  "Waiting for the current transcription to finish" when it has to wait.
+- Waiting runs don't count as GPU users, so the Portugal two-pass can still fully unload a model.
+- Verified: a 2-project batch and a CLI job started together, twice; all finished, no errors.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

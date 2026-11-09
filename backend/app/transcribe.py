@@ -147,6 +147,14 @@ def _release_loaded() -> None:
 # of meta tensor" while a retry worked (2026-11-09). So every model load takes this lock.
 MODEL_LOAD_LOCK = threading.RLock()
 
+# One transcription at a time, process-wide. The speech model is shared, and a run changes it while
+# it works: WhisperX sets its tokenizer for the run's language and clears it at the end, and
+# _transcribe_counted puts a progress hook on it. Two runs at once (a batch plus a Transcribe job,
+# or the CLI/MCP while the app is busy) crashed one of them ("'NoneType' object has no attribute
+# 'sot_sequence'", then "no attribute '__call__'"), 2026-11-09. One card can't run two side by side
+# anyway, so the second waits for its turn. Cache hits don't wait.
+GPU_TURN = threading.Lock()
+
 
 @lru_cache(maxsize=1)
 def _load_model(model_name: str, compute_type: str, device: str):
@@ -279,14 +287,7 @@ def unload_models() -> None:
         pass
 
 
-def transcribe_track(audio_path: str | Path, **kw) -> dict:
-    """Transcribe + align one mono/16k WAV (see _transcribe_track), counted as a GPU user meanwhile
-    so another thread can't unload the models under it."""
-    with gpu_user():
-        return _transcribe_track(audio_path, **kw)
-
-
-def _transcribe_track(
+def transcribe_track(
     audio_path: str | Path,
     *,
     model_name: Optional[str] = None,
@@ -322,52 +323,55 @@ def _transcribe_track(
     if cache and (hit := cache.get(key)) is not None:
         return hit
 
-    audio = whisperx.load_audio(str(audio_path))
-    if pt_default:                                # find out first whether it's Portuguese at all
-        modelstore.ensure(modelstore.whisper_entry(model_name))
-        if _load_model(model_name, compute_type, device).detect_language(audio) == "pt":
-            language = pt_default
-    if language == "pt-PT":
-        model_name = modelstore.portugal_model()
-    whisper_lang = modelstore.LANGUAGE_VARIANTS.get(language, language)
-    if whisper_lang not in (None, "en") and modelstore.english_only(model_name):
-        raise ValueError(f"Whisper {model_name} only transcribes English. Choose another speech model "
-                         f"in the Models tab, or set Language to English or Auto-detect.")
+    # One run at a time on the shared models (GPU_TURN); counted as a GPU user meanwhile so
+    # another thread can't unload them under it.
+    with GPU_TURN, gpu_user():
+        audio = whisperx.load_audio(str(audio_path))
+        if pt_default:                                # find out first whether it's Portuguese at all
+            modelstore.ensure(modelstore.whisper_entry(model_name))
+            if _load_model(model_name, compute_type, device).detect_language(audio) == "pt":
+                language = pt_default
+        if language == "pt-PT":
+            model_name = modelstore.portugal_model()
+        whisper_lang = modelstore.LANGUAGE_VARIANTS.get(language, language)
+        if whisper_lang not in (None, "en") and modelstore.english_only(model_name):
+            raise ValueError(f"Whisper {model_name} only transcribes English. Choose another speech model "
+                             f"in the Models tab, or set Language to English or Auto-detect.")
 
-    modelstore.ensure(modelstore.whisper_entry(model_name))   # downloads visibly if missing
-    model = _load_model(model_name, compute_type, device)
-    two_pass = punct and language == "pt-PT"
-    result = _transcribe_counted(model, audio, 0.0, 0.5 if two_pass else 1.0,
-                                 batch_size=batch_size, language=whisper_lang)  # VAD on by default
-    if two_pass:                                 # #23: large-v3's capitals and punctuation on CAMOES's words
-        unload_models()                          # one model in VRAM at a time (12 GB cards)
-        modelstore.ensure(modelstore.whisper_entry("large-v3"))
-        v3 = _transcribe_counted(_load_model("large-v3", compute_type, device), audio, 0.5, 1.0,
-                                 batch_size=batch_size, language="pt")
-        texts = merge_punctuation([s["text"] for s in result["segments"]],
-                                  " ".join(s["text"] for s in v3["segments"]))
-        for s, t in zip(result["segments"], texts):
-            s["text"] = t
+        modelstore.ensure(modelstore.whisper_entry(model_name))   # downloads visibly if missing
+        model = _load_model(model_name, compute_type, device)
+        two_pass = punct and language == "pt-PT"
+        result = _transcribe_counted(model, audio, 0.0, 0.5 if two_pass else 1.0,
+                                     batch_size=batch_size, language=whisper_lang)  # VAD on by default
+        if two_pass:                                 # #23: large-v3's capitals and punctuation on CAMOES's words
+            unload_models()                          # one model in VRAM at a time (12 GB cards)
+            modelstore.ensure(modelstore.whisper_entry("large-v3"))
+            v3 = _transcribe_counted(_load_model("large-v3", compute_type, device), audio, 0.5, 1.0,
+                                     batch_size=batch_size, language="pt")
+            texts = merge_punctuation([s["text"] for s in result["segments"]],
+                                      " ".join(s["text"] for s in v3["segments"]))
+            for s, t in zip(result["segments"], texts):
+                s["text"] = t
 
-    detected = result.get("language", "en")
-    if has_align_model(detected):
-        modelstore.ensure(modelstore.align_entry(detected))
-        align_model, metadata = _load_align(detected, device)
-        segments = whisperx.align(
-            result["segments"], align_model, metadata, audio, device,
-            return_char_alignments=False,
-        )["segments"]
-    else:
-        # No word-timing model for this language: keep Whisper's line timings rather than fail
-        # the run. Lines have no words, so SRT splits inside a long line are estimated.
-        print(f"[align] no word-timing model for language '{detected}'; keeping line timings only",
-              flush=True)
-        segments = [{"start": s["start"], "end": s["end"], "text": s["text"], "words": []}
-                    for s in result["segments"]]
+        detected = result.get("language", "en")
+        if has_align_model(detected):
+            modelstore.ensure(modelstore.align_entry(detected))
+            align_model, metadata = _load_align(detected, device)
+            segments = whisperx.align(
+                result["segments"], align_model, metadata, audio, device,
+                return_char_alignments=False,
+            )["segments"]
+        else:
+            # No word-timing model for this language: keep Whisper's line timings rather than fail
+            # the run. Lines have no words, so SRT splits inside a long line are estimated.
+            print(f"[align] no word-timing model for language '{detected}'; keeping line timings only",
+                  flush=True)
+            segments = [{"start": s["start"], "end": s["end"], "text": s["text"], "words": []}
+                        for s in result["segments"]]
 
-    # Label results with the variant ("pt-PT" / "pt-BR") when one was chosen or defaulted to.
-    output = {"language": language if language in modelstore.LANGUAGE_VARIANTS else detected,
-              "segments": segments}
-    if cache:
-        cache.put(key, output)
-    return output
+        # Label results with the variant ("pt-PT" / "pt-BR") when one was chosen or defaulted to.
+        output = {"language": language if language in modelstore.LANGUAGE_VARIANTS else detected,
+                  "segments": segments}
+        if cache:
+            cache.put(key, output)
+        return output
