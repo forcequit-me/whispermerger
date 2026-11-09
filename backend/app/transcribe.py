@@ -361,6 +361,11 @@ def transcribe_track(
                 result["segments"], align_model, metadata, audio, device,
                 return_char_alignments=False,
             )["segments"]
+            # Word timing leaves 1.1-1.7 GB of PyTorch's spare working memory on the GPU, on top of
+            # its model. The next track's batch then spilled into system memory: 41-57 s instead of
+            # 6.7 s for a 7 min track on a 12 GB card, 2026-11-09. Hand it back.
+            import torch
+            torch.cuda.empty_cache()
         else:
             # No word-timing model for this language: keep Whisper's line timings rather than fail
             # the run. Lines have no words, so SRT splits inside a long line are estimated.

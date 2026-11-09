@@ -536,13 +536,23 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
   step with the audio. Timing not measured cleanly (another app held 6.5 GB of VRAM).
   **Clean timing (2026-11-09):** the app's real path (`transcribe_track`, pt-PT, no cache), two RTP
   tracks of ~7 min in a row after a warm-up, each setting in a fresh process, run twice; GPU had only
-  Windows + NVIDIA Broadcast (1 GB). Setting off: 47.0 / 61.9 s. On: 78.1 / 93.9 s. So the merge
-  costs about **1.5–1.7×**, not 2× (roughly +15 s per 7 min track): large-v3 is the faster model, but
-  each track also swaps models (unload CAMÕES, load large-v3, reload CAMÕES for the next). Words are
-  identical either way; punctuation marks 61 → 133 and 73 → 120. Runs vary by up to ~15 s on the
-  same input, so treat the ratio as approximate. `compare_pt.py` times transcription only (no swaps,
-  no warm-up), so use the app path for timing. Any GPU timing in this project needs a clean GPU, or
-  it measures the other app.
+  Windows + NVIDIA Broadcast (1 GB). After the word-timing spill fix below: setting off 32.3 / 38.8 s,
+  on 78.8 / 69.5 s, so the merge costs about **2×** (roughly +20 s per 7 min track): each track also
+  swaps models (unload CAMÕES, load large-v3, reload CAMÕES for the next). Before that fix it looked
+  like 1.6× (off 47.0 / 61.9, on 78.1 / 93.9) only because "off" was slowed by the spill too. Words
+  are identical either way; punctuation marks 61 → 133 and 73 → 120. Keeping both models loaded is
+  much slower on 12 GB (165.6 / 248.6 s): only batch 5 fits and it still spills 1.3–1.4 GB.
+  `compare_pt.py` times transcription only (no swaps, no warm-up), so use the app path for timing.
+  Any GPU timing in this project needs a clean GPU, or it measures the other app.
+- **Word timing left GPU memory behind (fixed 2026-11-09).** After `whisperx.align`, PyTorch kept
+  1.1–1.7 GB of spare working memory on the card on top of the 1.2 GB word-timing model, so every
+  track after the first in a run spilled its batch into system memory: 41–57 s instead of 6.7 s for a
+  7 min track's transcription (A/B, twice each). `transcribe_track` now calls
+  `torch.cuda.empty_cache()` after aligning. Any language, any multi-track file or batch.
+  Still tight: CAMÕES at batch 16 plus the resident word-timing model peaks at ~11.7 GB of 12.3, and
+  spilled 0.1–0.5 GB in some runs. Possible follow-up: `_fit_batch` reads free memory before the
+  speech model's weights reach the GPU (they arrive on the first transcribe), so on a clean card it
+  never limits the batch; counting the weights would let it trim to ~14 there.
 - **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
   CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line
