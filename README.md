@@ -91,7 +91,9 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
 - **Edit Transcript loads any of our formats** — drop/choose/paste a WhisperMerger **JSON, SRT,
   TXT, or CSV** (format auto-detected); JSON round-trips word-level timing, the others import as
   plain segments. Standard SRT from other tools loads too (the parser is generic).
-- **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing; SRT splits lines on real
+- **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing. Tick one format for a plain
+  file or several for one zip; a summary (formats, subtitle limits, padding, edited-line timing,
+  hidden speakers, edited-line count) shows before writing, with *Don't show again*. SRT splits lines on real
   word timestamps (toggleable subtitle limits). **Pad (s)** extends each segment's start/end by N
   seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.
   With *Show speakers* on, the `Name: ` label counts toward *Chars/line* on each subtitle's first

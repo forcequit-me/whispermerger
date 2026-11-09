@@ -6,12 +6,14 @@ modules and the job registry held on app.state.
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import subprocess
 import sys
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Literal
 
@@ -613,13 +615,31 @@ _FORMATS = {
 }
 
 
-def _render(merged: MergedOutput, fmt: str, opts: ExportOptions) -> tuple[Response, str]:
+def _render(merged: MergedOutput, fmt: str, opts: ExportOptions) -> tuple[str, str, str]:
+    """One format -> (body, media type, extension)."""
     if fmt not in _FORMATS:
         raise HTTPException(400, f"unsupported format {fmt}")
     fn, media_type, ext = _FORMATS[fmt]
     merged = pad_segments(merged, opts.pad_seconds)  # all formats carry padded timecodes
-    body = fn(merged, opts) if fmt in ("srt", "txt") else fn(merged)
-    return Response(content=body, media_type=media_type), ext
+    return (fn(merged, opts) if fmt in ("srt", "txt") else fn(merged)), media_type, ext
+
+
+def _export(merged: MergedOutput, formats: str, filename: str, opts: ExportOptions) -> Response:
+    """`formats` is one format or several, comma-separated. One downloads as that file; several as
+    `<filename>.zip` holding `<filename>.<ext>` for each."""
+    fmts = list(dict.fromkeys(f.strip() for f in formats.split(",") if f.strip())) or ["srt"]
+    files = [_render(merged, f, opts) for f in fmts]
+    if len(files) == 1:
+        body, media_type, ext = files[0]
+        name, content = f"{filename}.{ext}", body
+    else:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for body, _, ext in files:
+                z.writestr(f"{filename}.{ext}", body)
+        media_type, name, content = "application/zip", f"{filename}.zip", buf.getvalue()
+    return Response(content=content, media_type=media_type,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.post("/export/{job_id}")
@@ -628,17 +648,14 @@ def export_job(request: Request, job_id: str, format: str = "srt",
     job = request.app.state.jobs.get(job_id)
     if job is None or job.result is None:
         raise HTTPException(404, "no result for job")
-    resp, ext = _render(job.result, format, (options or ExportOptionsIn()).to_options())
-    resp.headers["Content-Disposition"] = f'attachment; filename="{filename}.{ext}"'
-    return resp
+    return _export(job.result, format, filename, (options or ExportOptionsIn()).to_options())
 
 
 @router.post("/export")
 def export_inline(body: ExportRequest, format: str = "srt") -> Response:
-    """Export an edited transcript posted from the Edit Transcript tab."""
-    resp, ext = _render(body.merged, format, body.options.to_options())
-    resp.headers["Content-Disposition"] = f'attachment; filename="{body.filename}.{ext}"'
-    return resp
+    """Export a transcript posted from the editor (Transcribe & Merge or Edit Transcript).
+    `format` may list several, comma-separated, for one zip."""
+    return _export(body.merged, format, body.filename, body.options.to_options())
 
 
 # --- batch / studio (Method 1 + 2) -----------------------------------------------------

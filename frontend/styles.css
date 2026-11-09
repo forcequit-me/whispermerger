@@ -139,7 +139,17 @@ label.opt { display: inline-flex; gap: 6px; align-items: center; margin-right: 1
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field span { font-size: 11px; color: var(--muted); }
 .field input, .field select { width: 120px; }
+.field .fmt-set { gap: 10px; min-height: 34px; }
+.field .fmt-set input { width: auto; }
 
+/* Export summary (Transcribe & Merge, Edit Transcript) */
+dialog.export-summary { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  border-radius: 10px; padding: 18px 20px; width: min(480px, calc(100vw - 32px)); }
+dialog.export-summary::backdrop { background: rgba(0, 0, 0, .55); }
+dialog.export-summary h2 { margin: 0 0 12px; }
+dialog.export-summary dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0 0 16px; font-size: 13px; }
+dialog.export-summary dt { color: var(--muted); }
+dialog.export-summary dd { margin: 0; }
 .progress-wrap { display: none; }
 .progress-wrap.show { display: block; }
 /* Transcribe & Merge: one compact line under the run button; collapses to the message when done. */

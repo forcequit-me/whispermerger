@@ -94,6 +94,20 @@ def test_export_inline_srt(client):
     assert r.headers["content-disposition"] == 'attachment; filename="mycut.srt"'
 
 
+def test_export_several_formats_as_one_zip(client):
+    import io, zipfile
+    merged = {"version": "1.0", "sources": [], "segments": [
+        {"speaker": "Max", "start": 0.0, "end": 1.0, "text": "hello",
+         "words": [{"word": "hello", "start": 0.0, "end": 1.0}], "flags": []}]}
+    r = client.post("/api/export?format=srt,json", json={"merged": merged, "filename": "mycut"})
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert r.headers["content-disposition"] == 'attachment; filename="mycut.zip"'
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    assert sorted(z.namelist()) == ["mycut.json", "mycut.srt"]
+    assert "Max: hello" in z.read("mycut.srt").decode()
+    assert client.post("/api/export?format=srt,docx", json={"merged": merged}).status_code == 400
+
+
 def test_transcribe_flow(client, two_stream_file, monkeypatch):
     monkeypatch.setattr(routes.api, "transcribe_track", _stub_transcribe)
     file_id = _add(client, two_stream_file)[0]["file_id"]

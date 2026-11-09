@@ -515,9 +515,12 @@ function longSpeakerNames(names, x) {
   return [...new Set(names)].filter((n) => n && n.length + 2 > x.chars_per_line / 2);
 }
 
+const EDITED_TIMING = [["align", "keep word timing"], ["even", "spread evenly"], ["whole", "one subtitle per line"]];
+
 function buildExportPanel(container, merged) {
-  const format = el("select");
-  ["srt", "txt", "csv", "json"].forEach((f) => format.append(el("option", { value: f, textContent: f.toUpperCase() })));
+  // One format downloads as that file; several as one zip.
+  const fmtBoxes = ["srt", "txt", "csv", "json"].map((f) => el("input", { type: "checkbox", value: f, checked: f === "srt" }));
+  const formats = () => fmtBoxes.filter((c) => c.checked).map((c) => c.value);
   const filename = el("input", { value: transcriptName(exportBase(merged)), size: 36 });
   const applyLimits = el("input", { type: "checkbox", checked: true });
   const cpl = el("input", { type: "number", value: 42 });
@@ -534,8 +537,7 @@ function buildExportPanel(container, merged) {
   };
   // How SRT times a line whose text you changed (its word timings no longer match the words).
   const editedTiming = el("select", { title: "SRT timing for lines whose text you edited", style: "min-width:180px" });
-  [["align", "keep word timing"], ["even", "spread evenly"], ["whole", "one subtitle per line"]]
-    .forEach(([v, t]) => editedTiming.append(el("option", { value: v, textContent: t })));
+  EDITED_TIMING.forEach(([v, t]) => editedTiming.append(el("option", { value: v, textContent: t })));
 
   // Subtitle limits only apply to SRT; toggling off disables (and ignores) the limit fields.
   const syncLimits = () => [cpl, maxLines, minDur].forEach((n) => { n.disabled = !applyLimits.checked; });
@@ -552,15 +554,22 @@ function buildExportPanel(container, merged) {
       min_duration: +minDur.value, show_speakers: showSpk.checked,
       pad_seconds: +pad.value, edited_timing: editedTiming.value, label_on_change: onChange.checked,
     };
+    const fmts = formats();
+    if (!fmts.length) { alert("Tick at least one format."); return; }
     // Drop toggled-off speakers (all formats) — the backend just renders what we send.
     const segs = merged.segments.filter((s) => !container._disabled.has(s.speaker));
     if (!segs.length) { alert("All speakers are toggled off — nothing to export."); return; }
-    await downloadExport({ ...merged, segments: segs }, format.value, filename.value || "transcript", options);
+    const hidden = distinctSpeakers(merged).filter((s) => container._disabled.has(s));
+    const edited = segs.filter((s) => (s.flags || []).includes("edited")).length;
+    if (!(await confirmExport({ fmts, options, hidden, edited, lines: segs.length }))) return;
+    await downloadExport({ ...merged, segments: segs }, fmts.join(","), filename.value || "transcript", options);
   };
 
   const field = (label, node) => el("label", { className: "field" }, el("span", { textContent: label }), node);
   return el("div", { className: "row", style: "margin:14px 0; padding-top:14px; border-top:1px solid var(--line)" },
-    field("Format", format), field("Filename", filename),
+    field("Formats", el("div", { className: "row fmt-set" },
+      ...fmtBoxes.map((c) => el("label", { className: "opt" }, c, c.value.toUpperCase())))),
+    field("Filename", filename),
     el("label", { className: "opt" }, applyLimits, "Subtitle limits"),
     field("Chars/line", cpl), field("Max lines", maxLines), field("Min dur (s)", minDur),
     field("Pad (s)", pad), field("Edited lines", editedTiming),
@@ -569,6 +578,43 @@ function buildExportPanel(container, merged) {
     el("div", { className: "spacer" }), btn, warn);
 }
 
+// What will shape the export, shown before writing it. "Don't show again" is remembered in this
+// browser only.
+function confirmExport({ fmts, options: o, hidden, edited, lines }) {
+  try { if (localStorage.getItem("wm-skip-export-summary") === "1") return Promise.resolve(true); } catch {}
+  const srt = fmts.includes("srt");
+  const rows = [
+    ["Formats", fmts.map((f) => f.toUpperCase()).join(", ") + (fmts.length > 1 ? " (one zip)" : "")],
+    ["Lines", String(lines)],
+    ["Subtitle limits", !srt ? "SRT only (not exported)" : o.apply_limits
+      ? `on · ${o.chars_per_line} chars/line · ${o.max_lines} lines max · ${o.min_duration} s min` : "off"],
+    ["Padding", o.pad_seconds ? `${o.pad_seconds} s added to each line's start and end` : "none"],
+    ["Edited lines (SRT)", !srt ? "SRT only (not exported)" : EDITED_TIMING.find(([v]) => v === o.edited_timing)[1]],
+    ["Speaker names", !o.show_speakers ? "off" : srt && o.label_on_change ? "on, in SRT only when the speaker changes" : "on every line"],
+    ["Hidden speakers", hidden.length ? `${hidden.join(", ")} (left out)` : "none"],
+    ["Lines marked edited", String(edited)],
+  ];
+  const skip = el("input", { type: "checkbox" });
+  const dlg = el("dialog", { className: "export-summary" },
+    el("h2", { textContent: "Export" }),
+    el("dl", {}, ...rows.flatMap(([k, v]) => [el("dt", { textContent: k }), el("dd", { textContent: v })])),
+    el("form", { method: "dialog", className: "row" },
+      el("label", { className: "opt" }, skip, "Don't show again"), el("div", { className: "spacer" }),
+      el("button", { className: "ghost", value: "back", textContent: "Back" }),
+      el("button", { className: "primary", value: "export", textContent: "Export" })));
+  document.body.append(dlg);
+  return new Promise((resolve) => {
+    dlg.onclose = () => {
+      const go = dlg.returnValue === "export";
+      if (go && skip.checked) { try { localStorage.setItem("wm-skip-export-summary", "1"); } catch {} }
+      dlg.remove();
+      resolve(go);
+    };
+    dlg.showModal();
+  });
+}
+
+// `format` is one format or several, comma-separated (the server zips several).
 async function downloadExport(merged, format, filename, options) {
   const res = await fetch(`/api/export?format=${format}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -576,7 +622,7 @@ async function downloadExport(merged, format, filename, options) {
   });
   if (!res.ok) { alert("Export failed: " + (await res.text())); return; }
   const blob = await res.blob();
-  const a = el("a", { href: URL.createObjectURL(blob), download: `${filename}.${format}` });
+  const a = el("a", { href: URL.createObjectURL(blob), download: `${filename}.${format.includes(",") ? "zip" : format}` });
   document.body.append(a); a.click(); a.remove();
 }
 
