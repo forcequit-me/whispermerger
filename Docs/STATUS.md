@@ -556,12 +556,18 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
   The small spill left after this (0.1–0.7 GB at batch 16) was the batch-size margin, now 0.9 GB
   (see #37 above).
 - **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
-  CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
+  CC_ and _Strip Silence_ are **not applicable** (decided 2026-11-09): they came from Transcript
+  Merger, which worked on DaVinci Resolve transcripts. There, "transcription" is dialogue, "CC" is
+  closed-caption sound labels (a door slam), and long gaps are written as "silence" entries.
+  Whisper's output has neither sound labels nor silence entries (its voice detection drops silence
+  first), and Resolve compatibility is no longer a goal. Add them back only if Resolve transcripts
+  are imported again.
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line
   starts at the previous line's end), not the full CC-placement logic.
-- **FR-UI-7 keyboard:** Escape (revert) and Ctrl+↑/↓ (move between rows) done. Enter now inserts
-  a line break inside a text cell (text cells became auto-growing textareas), so it no longer
-  advances rows; Ctrl+Enter and bare arrow-up/down not bound.
+- **FR-UI-7 keyboard:** done (2026-11-09). In a text cell: Enter inserts a line break; Ctrl+Enter
+  goes to the next line; Escape reverts the line; Ctrl+↑/↓ jump rows; plain ↑/↓ move the caret
+  through the text and, from its very start/end, on to the row above/below (landing at the end of
+  the text going up, the start going down, so every line of a multi-line cell is visited).
 - **FR-UI-6:** per-file framerate / timecode handling (for Edit mode) not implemented.
 - **FR-UI-9:** per-tab settings preservation not implemented.
 - **FR-MD-2 import:** Edit tab now loads **all of our export formats** — JSON / SRT / TXT / CSV

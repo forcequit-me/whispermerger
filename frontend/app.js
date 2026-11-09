@@ -418,11 +418,19 @@ function buildRow(container, merged, seg, i, preview) {
       tr.closest("table.editor")?.classList.add("has-notes");   // reveal the Notes column now
     }
   };
-  // Enter inserts a line break (natural textarea behavior). Escape reverts; Ctrl+↑/↓ moves rows.
+  // Enter inserts a line break (natural textarea behavior). Escape reverts; Ctrl+Enter goes to the
+  // next line; Ctrl+↑/↓ moves rows. Plain ↑/↓ move the caret, and from the very start/end of the
+  // text move to the row above/below (on the first/last line the browser takes the caret there first).
   txt.onkeydown = (e) => {
+    const dir = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+    const edge = dir > 0 ? txt.value.length : 0;
     if (e.key === "Escape") { Object.assign(seg, JSON.parse(snapshot)); renderEditor(container, merged); }
-    else if (e.key === "ArrowDown" && e.ctrlKey) { e.preventDefault(); focusSibling(tr, 1); }
-    else if (e.key === "ArrowUp" && e.ctrlKey) { e.preventDefault(); focusSibling(tr, -1); }
+    else if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); focusSibling(tr, 1); }
+    else if (dir && e.ctrlKey) { e.preventDefault(); focusSibling(tr, dir); }
+    else if (dir && !e.shiftKey && !e.altKey && !e.metaKey &&
+             txt.selectionStart === edge && txt.selectionEnd === edge) {
+      e.preventDefault(); focusSibling(tr, dir);
+    }
   };
   requestAnimationFrame(() => autoGrow(txt));   // size to initial content once in the DOM
 
@@ -461,10 +469,15 @@ function renderFlags(cell, seg) {
   for (const f of seg.flags || []) cell.append(el("span", { className: `chip ${f}`, textContent: f }));
 }
 
-// Move focus to the adjacent rendered row's text (skips hidden/filtered rows automatically).
+// Move focus to the adjacent rendered row's text (skips hidden/filtered rows automatically), caret
+// at its start going down and its end going up, so ↑/↓ walk through every line of text.
 function focusSibling(tr, dir) {
   const next = dir > 0 ? tr.nextElementSibling : tr.previousElementSibling;
-  if (next && next._textInput) next._textInput.focus();
+  const t = next && next._textInput;
+  if (!t) return;
+  t.focus();
+  const at = dir > 0 ? 0 : t.value.length;
+  t.setSelectionRange(at, at);
 }
 
 // Grow a text cell's textarea to fit its content (top stays put, bottom extends).
