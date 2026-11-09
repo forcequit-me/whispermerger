@@ -200,6 +200,44 @@ split also prints to the server console as a scrollback record (`[timing] <file>
   transcription speed, and how much of a sentence read by a Windows voice it got right (English,
   plus European Portuguese when CAMÕES is downloaded and a pt-PT voice is installed).
 
+## From a terminal or an AI (CLI + MCP)
+
+Everything the app does is also a command (`whispermerger.bat`) and an MCP tool, built from one
+list of actions (`backend/actions.py`) so the two always match. Both start the server if it
+isn't running and leave it running, so the speech model stays loaded. Files are read in place.
+
+```bat
+whispermerger transcribe "D:\rec\ep1.mov" --names "Host,Guest" --language en --out D:\subs --formats srt,json
+whispermerger transcript <job id>                       :: numbered lines with speakers and times
+whispermerger edit-lines <job id> --rename "Guest,Ana"   :: or --line 12 --text "..." / --delete
+whispermerger export <job id or transcript.json> --format srt --max-chars 42
+whispermerger run-batch D:\rec --out D:\subs --formats srt,txt --wait
+whispermerger models                                    :: also download-model, use-model
+whispermerger --help                                    :: every command; add --json for machine-readable output
+```
+
+Paths go after the command; lists are comma-separated (`--names "Host,Guest"`). Progress prints to
+stderr.
+
+**MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
+Tools: `add_files`, `transcribe`, `get_progress`, `get_transcript`, `edit_lines`, `export`,
+`run_batch`, `get_batch`, `list_models`, `download_model`, `use_model`, `cache_stats`,
+`clear_cache` and `shutdown` (both marked destructive), `status`.
+
+- Claude Code:
+  ```bat
+  claude mcp add whispermerger -- C:\path\to\whispermerger\.venv\Scripts\python.exe C:\path\to\whispermerger\backend\mcp_server.py
+  ```
+- Claude Desktop (`claude_desktop_config.json`):
+  ```json
+  { "mcpServers": { "whispermerger": {
+      "command": "C:\\path\\to\\whispermerger\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\path\\to\\whispermerger\\backend\\mcp_server.py"] } } }
+  ```
+
+The server only listens on this machine (127.0.0.1). A transcription returns a job id at once;
+`get_progress` follows it (or pass `wait`).
+
 ## Architecture
 
 ```
@@ -219,6 +257,9 @@ backend/app/
   diarize.py    # v2: silero-VAD + per-speaker region transcription + timeline remap
   main.py       # FastAPI app + static frontend mount
   routes/api.py # HTTP API
+backend/actions.py    # the action list the CLI and MCP server are built from (HTTP client + autostart)
+backend/cli.py        # whispermerger.bat: one command per action
+backend/mcp_server.py # the same actions as MCP tools (stdio)
 frontend/       # vanilla HTML/JS/CSS: Batch, Transcribe & Merge, Label Track, Edit Transcript
   labeltrack.js #   v2 waveform labeling (ESM); vendor/ holds WaveSurfer
 backend/tests/  # pytest suite (GPU-independent: stubbed transcribe + real ffmpeg)

@@ -229,6 +229,10 @@ class AddPathRequest(BaseModel):
     paths: list[str]
 
 
+class AddFolderRequest(BaseModel):
+    path: str                                # a folder to scan, instead of the native picker
+
+
 # Audio/video extensions the batch "Folder" picker ingests (recursively).
 _MEDIA_EXTS = {
     ".mkv", ".mov", ".mp4", ".m4v", ".avi", ".webm", ".flv", ".ts", ".m2ts", ".mpg", ".mpeg",
@@ -313,12 +317,12 @@ def browse_folder() -> dict:
 
 
 @router.post("/add-folder", response_model=list[UploadItem])
-def add_folder(request: Request) -> list[UploadItem]:
-    """Native folder picker → register every audio/video file under it (recursively), in
-    place. The 'Folder' counterpart to /browse for a batch project's add button. Display
-    name is the path relative to the chosen folder so nested files stay distinguishable;
-    unreadable / audio-less files are skipped rather than failing the whole scan."""
-    folder = _native_pick_dir()
+def add_folder(request: Request, body: AddFolderRequest | None = None) -> list[UploadItem]:
+    """Native folder picker (or `path`, for the CLI / MCP) → register every audio/video file under
+    it (recursively), in place. The 'Folder' counterpart to /browse for a batch project's add
+    button. Display name is the path relative to the chosen folder so nested files stay
+    distinguishable; unreadable / audio-less files are skipped rather than failing the whole scan."""
+    folder = body.path if body else _native_pick_dir()
     if not folder:
         return []
     root = Path(folder)
@@ -571,6 +575,19 @@ def result(request: Request, job_id: str) -> MergedOutput:
     if job.result is None:
         raise HTTPException(409, f"job not done (status={job.status.value})")
     return job.result
+
+
+@router.put("/result/{job_id}", response_model=MergedOutput)
+def save_result(request: Request, job_id: str, body: MergedOutput) -> MergedOutput:
+    """Replace a finished job's transcript with an edited one (the CLI / MCP `edit_lines`), so
+    later reads and exports of the job use the edits."""
+    job = request.app.state.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    if job.result is None:
+        raise HTTPException(409, f"job not done (status={job.status.value})")
+    job.result = body
+    return body
 
 
 @router.post("/cancel/{job_id}")

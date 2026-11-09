@@ -420,6 +420,23 @@ exactly what hides the next extraction).
 - **#35 Models tab:** Speech / Word-timing sub-tabs with counts, grouped one-line speech rows, a
   word-timing grid by language. 3308 px of scrolling → about 1100 px per tab.
 
+## CLI + MCP server (2026-11-09, #36)
+
+- **One action list** (`backend/actions.py`): plain functions over the HTTP API (stdlib
+  `urllib`), whose signatures and docstrings define both interfaces. They start the server if it
+  isn't running (detached, log in `backend/tmp/server.log`) and leave it up so models stay loaded.
+- **CLI** (`backend/cli.py`, `whispermerger.bat`): one argparse command per action, built from the
+  signature (paths positional, lists comma-separated, `--no-x` for on-by-default flags); progress to
+  stderr, `--json` for machine-readable output, UTF-8 output even through a pipe.
+- **MCP server** (`backend/mcp_server.py`, stdio, `mcp==2.3.0`, where FastMCP is now `MCPServer`):
+  the same actions as tools, read-only/destructive annotations, and refusals passed to the model as
+  `ToolError` (the SDK hides any other exception's message).
+- **Server additions:** `PUT /api/result/{job_id}` stores an edited transcript (`edit_lines`);
+  `/api/add-folder` takes an optional `path` (the UI still opens the picker).
+- Tested end to end: CLI autostart → transcribe two tracks with names → rename / edit a line →
+  export SRT/TXT; folder batch with a subfolder; the same flow over a real MCP stdio client.
+  `tests/test_actions.py` runs the actions and CLI against the app in-process.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
