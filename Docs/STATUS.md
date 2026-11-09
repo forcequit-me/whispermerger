@@ -405,6 +405,13 @@ exactly what hides the next extraction).
   CAMÕES 0% word errors / 1 punctuation mark, large-v3 2.9% (Brazilian *econômico*) / 5, merge
   0% / 5. Needs thorough testing on real recordings before it's trusted or turned on by default;
   the checklist is on issue #23. Tool: `backend/compare_pt.py`.
+  First real test (2026-11-09): RTPSpeech, two RTP newsreaders, ~7 min each, clips joined so
+  alignment runs across many 30 s windows. Word errors (ignoring accents) CAMÕES 18.5% / 25.0%,
+  large-v3 12.8% / 16.7%, merge = CAMÕES. CAMÕES drops whole phrases more often and writes
+  numbers as words; on this clean broadcast speech it does not hear better than large-v3. The
+  merge works as designed (sentence ends found 89–94% vs CAMÕES's 47–55%) but can't restore missed
+  words. Stays off by default. Caveats: two speakers, clean studio speech, transcripts slightly out of
+  step with the audio. Timing not measured cleanly (another app held 6.5 GB of VRAM).
 - **FR-UI-5 output toggles:** only _Show Speakers_ is implemented. _Show Transcription_, _Show
   CC_, _Strip Silence_ are not (Strip Silence is a no-op on the audio path per the PRD anyway).
 - **FR-UI-3:** add/remove lines works; "smart closed-caption placement" is basic (new line

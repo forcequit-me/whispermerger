@@ -5,10 +5,12 @@
 Runs each model once (the merge reuses both outputs), then prints word errors against the
 reference (when given), twice: counting accents (so Brazilian "econômico" for European
 "económico" is an error) and ignoring them (hearing only). Hyphenated words count as their
-parts, so "quinta feira" vs "quinta-feira" isn't an error. Also punctuation counts and time. --cpu runs int8 on the CPU (slow; for
+parts, so "quinta feira" vs "quinta-feira" isn't an error. Also punctuation counts, whether sentence
+ends and commas land where the reference has them, and time. --cpu runs int8 on the CPU (slow; for
 machines without CUDA).
 """
 
+import difflib
 import re
 import sys
 import time
@@ -32,6 +34,37 @@ def word_errors(hyp: str, ref: str, accents: bool = False) -> float:
         for j, hw in enumerate(h, 1):
             prev, d[j] = d[j], min(d[j] + 1, d[j - 1] + 1, prev + (rw != hw))
     return d[len(h)] / max(len(r), 1)
+
+
+_MARK = {".": "end", "!": "end", "?": "end", ",": "comma", ";": "comma", ":": "comma"}
+
+
+def punct_placement(hyp: str, ref: str) -> dict[str, tuple[float, float]]:
+    """Does punctuation land where the reference has it? For words both texts share (aligned like
+    the merge, ignoring case and accents), compare the mark after each word: sentence end (.!?) or
+    comma (,;:). Returns {class: (precision, recall)}: precision = share of the marks written that
+    are right, recall = share of the reference's marks found."""
+    def marks(text):
+        out = []
+        for tok in text.split():
+            k = _key(tok)
+            if k:
+                m = re.search(r"[.!?,;:]+$", tok)
+                out.append((k, _MARK.get(m.group(0)[-1]) if m else None))
+        return out
+    h, r = marks(hyp), marks(ref)
+    tp, fp, fn = ({"end": 0, "comma": 0} for _ in range(3))
+    sm = difflib.SequenceMatcher(a=[k for k, _ in h], b=[k for k, _ in r], autojunk=False)
+    for a, b, n in sm.get_matching_blocks():
+        for (_, hm), (_, rm) in zip(h[a:a + n], r[b:b + n]):
+            if hm and hm == rm:
+                tp[hm] += 1
+                continue
+            if hm:
+                fp[hm] += 1
+            if rm:
+                fn[rm] += 1
+    return {c: (tp[c] / max(tp[c] + fp[c], 1), tp[c] / max(tp[c] + fn[c], 1)) for c in tp}
 
 
 def main(argv: list[str]) -> None:
@@ -63,7 +96,9 @@ def main(argv: list[str]) -> None:
         wer = (f"{word_errors(text, ref, accents=True):.1%} counting accents, "
                f"{word_errors(text, ref):.1%} ignoring accents") if ref else "n/a (no reference)"
         punct = len(re.findall(r"[.,;:!?]", text))
-        print(f"## {label}\n- time: {secs:.1f} s\n- word errors: {wer}\n- punctuation marks: {punct}\n\n{text}\n")
+        place = "".join(f"\n- {c} marks in the right place: {p:.0%} of those written, {r:.0%} of the reference's"
+                        for c, (p, r) in punct_placement(text, ref).items()) if ref else ""
+        print(f"## {label}\n- time: {secs:.1f} s\n- word errors: {wer}\n- punctuation marks: {punct}{place}\n\n{text}\n")
 
 
 if __name__ == "__main__":
