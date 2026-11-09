@@ -1629,23 +1629,39 @@ function buildBatchItem(p, i, id, btn, ended) {
   return card;
 }
 
-// Update a project card in place: refresh the (non-scrolling) head / bar / detail, but keep the
-// scrollable file-list node alive and update its rows in place — that's what stops the scroll freeze.
+// Update a project card in place: the head's fields are changed, and its buttons kept (a button
+// replaced every poll lost clicks that landed between press and release); the bar and detail line
+// are rebuilt. The scrollable file list stays alive and its rows update in place too.
 function updateBatchItem(card, p, i, id, btn, ended) {
   if (!card) return;
   const meta = BATCH_STATE[p.status] || { label: p.status, cls: "queued" };
   const pct = Math.round((p.progress || 0) * 100);
   card.className = `batch-item state-${meta.cls}`;
 
+  const head = card.querySelector(".batch-item-head");
+  const chip = head.querySelector(".chip-status");
+  chip.className = `chip-status ${meta.cls}`;
+  chip.textContent = meta.label;
+  head.querySelector(".bi-elapsed").textContent = fmtElapsed(p.elapsed);
+  const wantOpen = p.status === "done" && !(p.files && p.files.length);
+  const open = head.querySelector(".bi-open");
+  if (wantOpen && !open) head.insertBefore(openResultBtn(`/api/batch/${id}/project/${i}/result`), head.querySelector(".bi-act"));
+  else if (!wantOpen && open) open.remove();
+  const act = head.querySelector(".bi-act");
+  const wantKind = (p.status === "running" || p.status === "queued") ? "cancel" : "restart";
+  if (!act || act.dataset.kind !== wantKind) {             // only swap when active↔finished flips
+    const fresh = projectActionBtn(p, i, id, btn, ended);
+    if (act) act.replaceWith(fresh); else head.append(fresh);
+  }
+
   const files = card.querySelector(".batch-files");        // the scroll container — must survive
-  [...card.children].forEach((c) => { if (c !== files) c.remove(); });
+  card.querySelectorAll(":scope > .bi-bar, :scope > .bi-msg").forEach((c) => c.remove());
   const frag = document.createDocumentFragment();
-  frag.append(projectHead(p, i, id, btn, ended, meta));
   if (p.status === "running" || (pct > 0 && pct < 100)) {
     frag.append(el("div", { className: "bar bi-bar" }, el("div", { style: `width:${pct}%` })));
   }
   frag.append(projectDetail(p, meta, pct));
-  if (files) card.insertBefore(frag, files); else card.append(frag);
+  head.after(frag);
 
   if (files && p.files) {
     p.files.forEach((f, fi) =>

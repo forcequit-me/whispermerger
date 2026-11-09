@@ -417,6 +417,9 @@ exactly what hides the next extraction).
 - **#34 Batch → editor:** finished files/projects keep their transcript and source path
   (`FileStatus.result`, `ProjectStatus.result`; in memory until restart). "Open in editor" loads it
   into Edit Transcript with playback per track. Routes `/api/batch/{id}/project/{p}[/file/{f}]/result`.
+  Follow-up: a project row's buttons (Cancel / Restart / Open in editor) were rebuilt on every
+  0.8 s poll, so a click whose press and release straddled a poll was lost. The project head now
+  updates in place like file rows do; a button is swapped only when its job changes.
 - **#35 Models tab:** Speech / Word-timing sub-tabs with counts, grouped one-line speech rows, a
   word-timing grid by language. 3308 px of scrolling → about 1100 px per tab.
 
