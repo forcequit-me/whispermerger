@@ -394,6 +394,31 @@ exactly what hides the next extraction).
 - Tests: `test_batch.py` gains a prefetch case — a hidden file must still record real extraction, not
   ~0. **104 GPU-independent tests pass.** Assets `?v=26` (js).
 
+## Second-pass easy wins (2026-11-09, #27–#35)
+
+- **#27 Speaker column** sizes to the longest name (96–260 px, `--spk-ch` on the table); longer
+  names show in full on hover.
+- **#28 Per-line playback** on multi-track files: a switch by the waveform plays this speaker's
+  track or all tracks mixed (`/api/clip` without `track`). Kept for the browser session.
+- **#29 Clear cache** shows "N · size" from `GET /api/cache/stats` (`Cache.stats()`); greyed out
+  when empty; refreshed on load, after clearing, on run/batch finish and tab switch.
+- **#30 Transcribe & Merge progress** is one compact line under the run button; collapses to
+  "Done in 4m 12s · 2 tracks". Canceled/failed runs stay expanded.
+- **#31 Input list rename after a run** renames the speaker in the transcript like Rename
+  globally, plus `merged.sources`, the Include toggle and the speaker→track map.
+- **#32 Export** takes several formats at once (comma list → one zip, standard `zipfile`) and shows
+  a summary dialog first (formats, limits, padding, edited-line timing, hidden speakers, edited
+  count) with "Don't show again".
+- **#33 Per-chunk progress:** `transcribe._transcribe_counted` wraps the WhisperX pipeline
+  instance's `__call__` for one call and reports chunks done through `chunk_progress` (per
+  thread). The bar moves within a track (transcription 90% of its weight, word timing the rest);
+  updates arrive per batch of up to 16 chunks. Per-file batch projects don't use it yet.
+- **#34 Batch → editor:** finished files/projects keep their transcript and source path
+  (`FileStatus.result`, `ProjectStatus.result`; in memory until restart). "Open in editor" loads it
+  into Edit Transcript with playback per track. Routes `/api/batch/{id}/project/{p}[/file/{f}]/result`.
+- **#35 Models tab:** Speech / Word-timing sub-tabs with counts, grouped one-line speech rows, a
+  word-timing grid by language. 3308 px of scrolling → about 1100 px per tab.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
