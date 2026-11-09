@@ -327,6 +327,11 @@ def _process_project(
                 fs.message = f"track {j + 1}/{total_tracks} · {speaker}"
                 _recalc_project(ps)
 
+            def on_chunk(i: int, j: int, total_tracks: int, frac: float) -> None:
+                # Moves the row within a track; transcription is 90% of it, word timing the rest.
+                files[i].progress = (j + 0.9 * frac) / max(total_tracks, 1)
+                _recalc_project(ps)
+
             def on_done(i: int, src: PreparedSource, merged, seen=seen) -> None:
                 fs = files[i]
                 dest = Path(src.path).parent if output_mode == "source" else out_dir
@@ -372,7 +377,7 @@ def _process_project(
                 project.prepared, transcribe_fn, pending, options=options, is_cancelled=is_cancelled,
                 on_start=on_start, on_track=on_track, on_done=on_done, on_error=on_error,
                 on_skip=on_skip, is_file_cancelled=lambda i: files[i].cancel_requested,
-                on_wait=on_wait)
+                on_wait=on_wait, on_chunk=on_chunk)
             if is_cancelled():
                 raise Cancelled()
             ps.output_dir = str(parent if output_mode == "source" else out_dir)

@@ -130,6 +130,7 @@ def run_per_file_pipeline(
     on_skip: Callable[[int, "PreparedSource"], None],
     is_file_cancelled: Callable[[int], bool],
     on_wait: Optional[Callable[[int, "PreparedSource"], None]] = None,
+    on_chunk: Optional[Callable[[int, int, int, float], None]] = None,
 ) -> None:
     """Transcribe the given file positions (one transcript each) with depth-1 prefetch: while one
     file transcribes, the next extracts in the background. Per-file lifecycle is reported through
@@ -183,7 +184,10 @@ def run_per_file_pipeline(
                         completed = False
                         break
                     on_track(i, j, len(selected), track.speaker)
-                    outputs.append(transcribe_fn(str(wavs[track.track_index])))
+                    # on_chunk(i, j, tracks, share of this track's chunks done) while it transcribes
+                    report_chunk = (lambda f, i=i, j=j, n=len(selected): on_chunk(i, j, n, f)) if on_chunk else None
+                    with chunk_progress(report_chunk):
+                        outputs.append(transcribe_fn(str(wavs[track.track_index])))
                     if detect:
                         profiles.append(loudness_profile(wavs[track.track_index]))
                     wavs[track.track_index].unlink(missing_ok=True)

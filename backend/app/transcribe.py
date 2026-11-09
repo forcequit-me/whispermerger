@@ -108,8 +108,8 @@ _chunk = threading.local()
 
 
 @contextmanager
-def chunk_progress(fn: Callable[[float], None]):
-    """Report this thread's transcription progress (0..1, per VAD chunk) to `fn` while inside."""
+def chunk_progress(fn: Optional[Callable[[float], None]]):
+    """Report this thread's transcription progress (0..1, per VAD chunk) to `fn` while inside (None: off)."""
     prev = getattr(_chunk, "fn", None)
     _chunk.fn = fn
     try:

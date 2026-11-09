@@ -132,3 +132,25 @@ def test_pipeline_progress_moves_during_a_track(tmp_path):
     run_merge_pipeline([PreparedSource(input=src, path=str(wav))], stub,
                        progress_cb=lambda f, m: seen.append((round(f, 2), m)))
     assert (0.45, "Transcribing track 1/1 · S1 · 50%") in seen   # 90% of the track is transcription
+
+
+def test_per_file_pipeline_reports_chunks_per_track(tmp_path):
+    """Batch file rows move within a track too: on_chunk(file, track, tracks, share done)."""
+    import numpy as np, soundfile as sf
+    from app.models import InputSource, Track
+    from app.pipeline import PreparedSource, run_per_file_pipeline
+    from app.transcribe import _chunk
+
+    def stub(path):
+        _chunk.fn(0.5)
+        return {"segments": []}
+
+    wav = tmp_path / "a.wav"
+    sf.write(wav, np.zeros(16000, dtype=np.float32), 16000)
+    src = InputSource(filename="a.wav", duration=1.0,
+                      tracks=[Track(track_index=0, speaker="S1"), Track(track_index=0, speaker="S2")])
+    chunks, noop = [], (lambda *a: None)
+    run_per_file_pipeline([PreparedSource(input=src, path=str(wav))], stub, [0],
+                          on_start=noop, on_track=noop, on_done=noop, on_error=noop, on_skip=noop,
+                          is_file_cancelled=lambda i: False, on_chunk=lambda *a: chunks.append(a))
+    assert chunks == [(0, 0, 2, 0.5), (0, 1, 2, 0.5)]

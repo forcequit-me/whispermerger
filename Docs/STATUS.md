@@ -412,7 +412,8 @@ exactly what hides the next extraction).
 - **#33 Per-chunk progress:** `transcribe._transcribe_counted` wraps the WhisperX pipeline
   instance's `__call__` for one call and reports chunks done through `chunk_progress` (per
   thread). The bar moves within a track (transcription 90% of its weight, word timing the rest);
-  updates arrive per batch of up to 16 chunks. Per-file batch projects don't use it yet.
+  updates arrive per batch of up to 16 chunks. Per-file batch rows move the same way
+  (`run_per_file_pipeline(on_chunk=...)`).
 - **#34 Batch → editor:** finished files/projects keep their transcript and source path
   (`FileStatus.result`, `ProjectStatus.result`; in memory until restart). "Open in editor" loads it
   into Edit Transcript with playback per track. Routes `/api/batch/{id}/project/{p}[/file/{f}]/result`.
