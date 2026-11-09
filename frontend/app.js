@@ -641,6 +641,34 @@ function auditionBtn(fileId, trackIndex) {
   return btn;
 }
 
+// A track's speaker name box. Before a run it just sets the name; after a run, changing it also
+// renames that speaker in the transcript below (like Rename globally).
+function speakerInput(t) {
+  const spk = el("input", { value: t.speaker });
+  spk.oninput = () => { t.speaker = spk.value; };
+  spk.onfocus = () => { spk._was = t.speaker; };
+  spk.onchange = () => renameSpeakerInResult(spk._was, t.speaker.trim());
+  return spk;
+}
+
+// Rename a speaker in the finished Transcribe & Merge result: every line, the Include toggles and
+// the speaker dropdown (via re-render), merged.sources (exports), and the speaker -> track map that
+// per-line playback stamps new lines from. Lines already stamped keep their track (segTrack).
+function renameSpeakerInResult(oldName, newName) {
+  const box = $("#editor-transcribe"), merged = box._merged;
+  if (!merged || !newName || oldName === newName) return;
+  let hit = false;
+  merged.segments.forEach((s) => { if (s.speaker === oldName) { s.speaker = newName; hit = true; } });
+  if (!hit) return;
+  (merged.sources || []).forEach((src) => (src.tracks || []).forEach((t) => {
+    if (t.speaker === oldName) t.speaker = newName;
+  }));
+  if (box._disabled.delete(oldName)) box._disabled.add(newName);
+  const trackOf = box._preview && box._preview.trackOf;
+  if (trackOf && oldName in trackOf) { trackOf[newName] = trackOf[oldName]; delete trackOf[oldName]; }
+  renderEditor(box, merged);
+}
+
 function renderSources() {
   const root = $("#sources");
   root.innerHTML = "";
@@ -667,19 +695,15 @@ function renderSources() {
       it.source.tracks.forEach((t) => {
         const sel = el("input", { type: "checkbox", checked: t.selected });
         sel.onchange = () => { t.selected = sel.checked; };
-        const spk = el("input", { value: t.speaker });
-        spk.oninput = () => { t.speaker = spk.value; };
         box.append(el("div", { className: "track-row" },
           sel, el("span", { className: "ti", textContent: `track ${t.track_index + 1}` }),
-          spk, auditionBtn(it.file_id, t.track_index)));
+          speakerInput(t), auditionBtn(it.file_id, t.track_index)));
       });
     } else {
       const t = it.source.tracks[0];
-      const spk = el("input", { value: t.speaker });
-      spk.oninput = () => { t.speaker = spk.value; };
       box.append(el("div", { className: "track-row" },
         el("span", { className: "ti", textContent: "speaker" }),
-        spk, auditionBtn(it.file_id, t.track_index)));
+        speakerInput(t), auditionBtn(it.file_id, t.track_index)));
     }
 
     // sequence order (UC2) — only shown with multiple files
