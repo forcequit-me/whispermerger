@@ -11,6 +11,18 @@ const el = (tag, props = {}, ...kids) => {
   for (const k of kids) n.append(k);
   return n;
 };
+// The busy line above the waveform: busy("Detecting speech") slides; busy("Loading", 40) shows 40%;
+// busy(null) hides it.
+function busy(msg, pct) {
+  const b = $("#label-busy");
+  if (msg == null) { b.style.display = "none"; return; }
+  b.style.display = "";
+  b.querySelector("span").textContent = pct == null ? `${msg}…` : `${msg} · ${Math.round(pct)}%`;
+  const fill = b.querySelector(".bar > div");
+  fill.classList.toggle("indeterminate", pct == null);
+  fill.style.width = pct == null ? "" : `${pct}%`;
+}
+
 // Swap the Label play/pause button glyph (uses app.js's shared SVG icon set).
 function setPlayIcon(name) {
   const b = $("#label-play");
@@ -162,19 +174,20 @@ function showCombined(id) {
 
 async function rebuild() {
   const token = ++buildToken;
-  if (!files.length) { showCombined(null); if (ws) { ws.destroy(); ws = null; } return; }
+  if (!files.length) { showCombined(null); busy(null); if (ws) { ws.destroy(); ws = null; } return; }
 
   let fid, track, dur, bounds;
   if (files.length === 1) {
     ({ file_id: fid, track_index: track, duration: dur } = files[0]);
     bounds = [0];
   } else {
-    $("#label-status").textContent = "combining files…";
+    $("#label-status").textContent = "";
+    busy("Combining files");
     const res = await fetch("/api/combine", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ files: files.map((f) => ({ file_id: f.file_id, track_index: f.track_index })) }),
     });
-    if (!res.ok) { $("#label-err").textContent = "Combine failed: " + (await res.text()); return; }
+    if (!res.ok) { busy(null); $("#label-err").textContent = "Combine failed: " + (await res.text()); return; }
     const r = await res.json();
     if (token !== buildToken) return;  // a newer change superseded this build
     fid = r.file_id; track = 0; dur = r.duration; bounds = r.boundaries;
@@ -204,6 +217,12 @@ function initWave(fid, track) {
   });
   regions = ws.registerPlugin(RegionsPlugin.create());
   ws.on("decode", () => { regions.enableDragSelection({ color: UNASSIGNED }); captureDecoded(); });
+  // The server extracts the whole track before the first byte arrives (slow on big files), then
+  // the browser downloads and decodes it.
+  busy("Reading the track's audio");
+  ws.on("loading", (pct) => busy("Loading the waveform", pct));
+  ws.on("decode", () => busy("Drawing the waveform"));
+  ws.on("error", (e) => { busy(null); $("#label-err").textContent = "Couldn't load the audio: " + (e && e.message || e); });
   ws.on("ready", () => { captureDecoded(); applyZoom(); runVad(); });   // fit whole file, then auto-detect speech
   ws.on("scroll", (_s, _e, left) => { $("#label-stack").scrollLeft = left; });   // stacked tracks follow
   // Spacebar transport + button glyph both reflect the real play state.
@@ -448,17 +467,19 @@ function setLabelBar(frac, msg) {
 }
 
 async function runVad() {
-  $("#label-status").textContent = "detecting speech…";
+  $("#label-status").textContent = "";
+  busy("Detecting speech");
   const fid = activeFileId, track = activeTrack;
   let res;
   try { res = await fetch(`/api/vad/${fid}/${track}`, { method: "POST" }); }
-  catch (e) { $("#label-status").textContent = "couldn't reach the server."; return; }
+  catch (e) { busy(null); $("#label-status").textContent = "couldn't reach the server."; return; }
+  if (fid !== activeFileId || track !== activeTrack) return;   // user moved to another track meanwhile
+  busy(null);
   if (!res.ok) {
     $("#label-status").textContent = "Speech detection failed: " + (await res.text()) + " · Detect again to retry";
     return;
   }
   const spans = await res.json();
-  if (fid !== activeFileId || track !== activeTrack) return;   // user moved to another track meanwhile
   lastSpans = spans;
   applySpans(spans);
 }

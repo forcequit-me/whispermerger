@@ -321,6 +321,12 @@ table.models td.act { text-align: right; white-space: nowrap; }
 .models .ok { color: var(--ok); }
 /* Models tab: Speech / Word-timing sub-tabs, compact grouped speech rows, word-timing grid. */
 .subtabs { display: flex; gap: 6px; margin-bottom: 10px; }
+/* Label Track busy line: a real percent when known, otherwise a sliding bar. */
+.busy { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.busy .bar { flex: 1; height: 6px; max-width: 420px; position: relative; }
+.busy .bar > div.indeterminate { position: absolute; width: 30% !important; animation: busy-slide 1.2s ease-in-out infinite; }
+@keyframes busy-slide { from { left: -30%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .busy .bar > div.indeterminate { animation: none; left: 0; width: 100% !important; opacity: .5; } }
 /* Label Track: the file's other tracks, stacked under the waveform and scrolled with it. */
 #label-stack { overflow: hidden; margin-top: 4px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
 #label-stack .stack-row { display: flex; border-top: 1px solid var(--line); }

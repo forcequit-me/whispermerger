@@ -285,6 +285,8 @@
               title="vertical (amplitude) zoom for quiet audio" /></label>
           <span class="muted">click a region (shift-click a run, ctrl-click multi-pick) then a speaker/number · drag to create · drag edges to resize · for talk-over, duplicate a region and assign the copy to the other speaker</span>
         </div>
+        <!-- What Label Track is busy with: reading the track, loading the waveform, detecting speech. -->
+        <div id="label-busy" class="busy" style="display:none"><div class="bar"><div></div></div><span class="muted"></span></div>
         <div id="waveform" style="background:var(--panel-2); border:1px solid var(--line); border-radius:8px"></div>
         <div id="label-stack" style="display:none"></div>
         <div id="label-lanes" style="display:none; margin-top:10px"></div>
@@ -405,6 +407,6 @@
   </main>
 
   <script src="app.js?v=45"></script>
-  <script type="module" src="labeltrack.js?v=11"></script>
+  <script type="module" src="labeltrack.js?v=12"></script>
 </body>
 </html>
