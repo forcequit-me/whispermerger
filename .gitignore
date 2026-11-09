@@ -10,3 +10,8 @@ backend/tmp/
 # Note: model caches live outside the repo
 #   ~/.cache/huggingface  (faster-whisper large-v3, wav2vec2 align)
 #   ~/.cache/torch
+
+# Local-only: Claude Code settings + preview config (machine paths), personal notes and screenshots
+.claude/
+Transcription App/
+stat screenshots/
