@@ -31,10 +31,24 @@ let decoded = null;          // { data: Float32Array, sr } — for drawing split
 const selection = new Set();   // region ids currently selected (bulk-assignable)
 let activeFileId = null, activeTrack = 0, activeDuration = 0, boundaries = [0];
 let buildToken = 0;
+let lastSpans = null;        // the last speech detection, so a Region pad change can re-pad it
+let stackView = false;       // show the file's other tracks under the waveform
+const stackPeaks = new Map(); // "file_id:track" -> peaks
 
 $("#label-choose").onclick = addFiles;
 $("#label-choose-more").onclick = addFiles;
-$("#label-vad").onclick = runVad;
+// Detection runs by itself when a recording loads; the button is the fallback to start over.
+$("#label-vad").onclick = () => {
+  if (assign.size && !confirm("Detect speech again? This replaces the current regions and their speaker labels.")) return;
+  runVad();
+};
+// Region pad applies straight away while nothing is labeled yet (no need to detect again).
+$("#label-pad").onchange = () => { if (lastSpans && !assign.size) applySpans(lastSpans); };
+$("#label-stack-btn").onclick = () => {
+  stackView = !stackView;
+  $("#label-stack-btn").textContent = stackView ? "One track" : "All tracks";
+  renderStack();
+};
 $("#label-play").onclick = () => ws && ws.playPause();
 $("#label-run").onclick = runTranscribe;
 $("#label-view").onclick = () => {
@@ -52,11 +66,13 @@ function fitPxPerSec() {
 function applyZoom() {
   if (ws) try { ws.zoom(fitPxPerSec() * (+$("#label-zoom").value || 1)); } catch (_) {}
   renderLanes();   // lanes scale with the same zoom factor
+  renderStack();
 }
 $("#label-zoom").oninput = applyZoom;
 $("#label-vzoom").oninput = () => {
   if (ws) try { ws.setOptions({ barHeight: +$("#label-vzoom").value }); } catch (_) {}
   renderLanes();   // mini-waveforms use the same amplitude gain
+  renderStack();
 };
 
 // Duplicate the selected region(s) as new unassigned regions on the same span — for talk-over,
@@ -128,6 +144,7 @@ function renderFiles() {
     root.append(row);
   });
   $("#label-work").style.display = files.length ? "" : "none";
+  renderStack();
 }
 
 // --- build / load the (combined) waveform ----------------------------------------------
@@ -172,6 +189,7 @@ async function rebuild() {
 
 function initWave(fid, track) {
   if (ws) { ws.destroy(); ws = null; }
+  lastSpans = null;
   assign.clear();
   boundaryIds.clear();
   selection.clear();
@@ -187,6 +205,7 @@ function initWave(fid, track) {
   regions = ws.registerPlugin(RegionsPlugin.create());
   ws.on("decode", () => { regions.enableDragSelection({ color: UNASSIGNED }); captureDecoded(); });
   ws.on("ready", () => { captureDecoded(); applyZoom(); runVad(); });   // fit whole file, then auto-detect speech
+  ws.on("scroll", (_s, _e, left) => { $("#label-stack").scrollLeft = left; });   // stacked tracks follow
   // Spacebar transport + button glyph both reflect the real play state.
   ws.on("play", () => {
     setPlayIcon("pause");
@@ -318,6 +337,51 @@ function renderLanes() {
   requestAnimationFrame(() => pending.forEach(drawRegionWave));   // size+draw after layout
 }
 
+// "All tracks": the file's other tracks as read-only waveforms under the main one, same width
+// (fit width x zoom) and scroll, so you can see who's talking when. One multi-track file only;
+// several files are combined into one track.
+let stackToken = 0;
+async function renderStack() {
+  const root = $("#label-stack");
+  const f = files.length === 1 && files[0].tracks.length > 1 ? files[0] : null;
+  $("#label-stack-btn").style.display = f ? "" : "none";
+  const token = ++stackToken;
+  root.innerHTML = "";
+  if (!stackView || !f || !ws) { root.style.display = "none"; return; }
+  root.style.display = "";
+  const w = Math.round(($("#waveform").clientWidth || 600) * (+$("#label-zoom").value || 1));
+  const gain = +$("#label-vzoom").value || 1;
+  const inner = el("div", { style: `width:${w}px` });
+  root.append(inner);
+  for (const t of f.tracks) {
+    if (t.track_index === activeTrack) continue;           // that one is the main waveform
+    // ponytail: one canvas per track, capped at 16384 px (browser limit); very deep zoom stretches it
+    const canvas = el("canvas", { width: Math.min(w, 16384), height: 44, style: `display:block; width:${w}px; height:44px` });
+    inner.append(el("div", { className: "stack-row" },
+      el("span", { className: "stack-label", textContent: `track ${t.track_index + 1} · ${t.speaker}` }), canvas));
+    const key = `${f.file_id}:${t.track_index}`;
+    if (!stackPeaks.has(key)) {
+      try {
+        stackPeaks.set(key, (await (await fetch(`/api/peaks/${f.file_id}?track=${t.track_index}&buckets=4000`)).json()).peaks);
+      } catch { continue; }
+      if (token !== stackToken) return;                      // re-rendered meanwhile
+    }
+    drawPeaks(canvas, stackPeaks.get(key), gain);
+  }
+  root.scrollLeft = ws.getScroll();
+}
+
+function drawPeaks(canvas, peaks, gain) {
+  const ctx = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
+  const bw = w / (peaks.length || 1);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#566";
+  peaks.forEach((p, i) => {
+    const ph = Math.min(h, Math.max(1, p * h * 0.9 * gain));
+    ctx.fillRect(i * bw, (h - ph) / 2, Math.max(1, bw - 0.3), ph);
+  });
+}
+
 // DAW-style time ruler aligned to the lane tracks: ticks + mm:ss labels at a readable spacing.
 function buildRuler(dur, labelW, trackW) {
   const ruler = el("div", { className: "lane-ruler" });
@@ -389,9 +453,18 @@ async function runVad() {
   let res;
   try { res = await fetch(`/api/vad/${fid}/${track}`, { method: "POST" }); }
   catch (e) { $("#label-status").textContent = "couldn't reach the server."; return; }
-  if (!res.ok) { $("#label-status").textContent = "VAD failed: " + (await res.text()); return; }
+  if (!res.ok) {
+    $("#label-status").textContent = "Speech detection failed: " + (await res.text()) + " · Detect again to retry";
+    return;
+  }
   const spans = await res.json();
   if (fid !== activeFileId || track !== activeTrack) return;   // user moved to another track meanwhile
+  lastSpans = spans;
+  applySpans(spans);
+}
+
+// Speech regions from a detection, padded by Region pad, replacing what's on the waveform.
+function applySpans(spans) {
   regions.clearRegions();
   assign.clear();
   boundaryIds.clear();

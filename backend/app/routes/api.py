@@ -391,12 +391,19 @@ def _prune_oldest(folder: Path, keep: int) -> None:
 
 
 @router.get("/peaks/{file_id}")
-def peaks(request: Request, file_id: str, buckets: int = 2000) -> dict:
+def peaks(request: Request, file_id: str, buckets: int = 2000, track: int | None = None) -> dict:
     """Downsampled waveform peaks for the editor (downmix of all streams, matching /clip).
-    Browser draws these instead of downloading audio — scales to huge files. Cached per file."""
+    Browser draws these instead of downloading audio — scales to huge files. Cached per file.
+    `track`: one stream only (Label Track's stacked view), from the same full-track wav Label
+    Track already extracts, so it's freed with the file (/release)."""
     entry = request.app.state.uploads.get(file_id)
     if entry is None:
         raise HTTPException(404, f"unknown file_id {file_id}")
+    if track is not None:
+        cache = entry.setdefault("track_peaks", {})
+        if (track, buckets) not in cache:
+            cache[(track, buckets)] = compute_peaks(_track_wav(request.app.state, file_id, track), buckets)
+        return {"duration": entry["source"].duration, "peaks": cache[(track, buckets)]}
     cached = entry.get("peaks")
     if cached and cached["buckets"] == buckets:
         return {"duration": entry["source"].duration, "peaks": cached["peaks"]}

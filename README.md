@@ -72,8 +72,11 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   region onto another speaker for talk-over), then transcribe per speaker. Add several files to
   sequence them into one combined waveform. Single-track and split-lane (one row per speaker)
   views. **Horizontal zoom** (out = whole track in view) + **vertical/amplitude zoom** (for quiet
-  audio) + optional **region padding** (widen detected speech a touch so words aren't clipped).
-  Overlapping speech is supported and flagged.
+  audio) + optional **region padding** (widen detected speech a touch so words aren't clipped;
+  applies straight away until you start labeling). Speech is detected when a recording loads;
+  **Detect again** starts over (it asks first once regions are labeled). On a multi-track file,
+  **All tracks** shows the other tracks under the waveform, zoomed and scrolled with it, to see
+  who's talking when. Overlapping speech is supported and flagged.
 - **Editor** — inline edit speaker/text/timing (text cells **wrap and auto-grow** so long lines
   stay fully visible instead of running off the edge), global speaker rename, **per-speaker
   show/hide toggle** (hides a speaker's lines from the table _and_ from every export, non-

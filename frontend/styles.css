@@ -321,6 +321,12 @@ table.models td.act { text-align: right; white-space: nowrap; }
 .models .ok { color: var(--ok); }
 /* Models tab: Speech / Word-timing sub-tabs, compact grouped speech rows, word-timing grid. */
 .subtabs { display: flex; gap: 6px; margin-bottom: 10px; }
+/* Label Track: the file's other tracks, stacked under the waveform and scrolled with it. */
+#label-stack { overflow: hidden; margin-top: 4px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+#label-stack .stack-row { display: flex; border-top: 1px solid var(--line); }
+#label-stack .stack-row:first-child { border-top: none; }
+#label-stack .stack-label { position: sticky; left: 0; width: 0; overflow: visible; white-space: nowrap; z-index: 1;
+  font-size: 11px; color: var(--muted); padding: 2px 6px; pointer-events: none; }
 .subtab { background: transparent; border: 1px solid var(--line); color: var(--muted); }
 .subtab.active { background: var(--panel-2); color: var(--text); border-color: var(--accent); }
 table.models tr.grp td { padding: 14px 8px 4px; color: var(--muted); font-size: 11px; text-transform: uppercase;

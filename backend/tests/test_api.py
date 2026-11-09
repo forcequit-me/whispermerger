@@ -165,6 +165,18 @@ def test_peaks_drops_its_temp_wav(client, two_stream_file):
     assert not list((client.app.state.upload_dir / "peaks").glob("*.wav"))
 
 
+def test_peaks_for_one_track(client, two_stream_file):
+    """Label Track's stacked view: peaks of each stream on its own (440 Hz vs 880 Hz sines)."""
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    a = client.get(f"/api/peaks/{file_id}?track=0&buckets=20").json()
+    b = client.get(f"/api/peaks/{file_id}?track=1&buckets=20").json()
+    assert len(a["peaks"]) == len(b["peaks"]) == 20 and a["duration"] > 0
+    assert client.get(f"/api/peaks/{file_id}?track=1&buckets=20").json() == b      # cached
+    assert list((client.app.state.upload_dir / "diar").glob(f"{file_id}_t1.wav"))  # freed by /release
+    client.post(f"/api/release/{file_id}")
+    assert not list((client.app.state.upload_dir / "diar").glob(f"{file_id}_t*.wav"))
+
+
 def test_track_audio_serves_wav(client, two_stream_file):
     file_id = _add(client, two_stream_file)[0]["file_id"]
     r = client.get(f"/api/track-audio/{file_id}/0")

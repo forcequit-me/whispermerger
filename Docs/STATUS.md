@@ -550,6 +550,13 @@ For recordings with no stems (one mixed track, multiple speakers). All phases do
 - **No orphan downloads** — `app.fetch` exits when its stdin (held by the server) closes, so
   Shutdown or a crash no longer leaves a download running to fight a restarted server's.
 
+- **Feedback from #25 (2026-11-09).** *All tracks* toggle (multi-track file only): the other tracks
+  as read-only waveforms under the main one, same width (fit width × zoom) and scroll (WaveSurfer's
+  `scroll` event), amplitude from the Amp slider; peaks from `/api/peaks/{id}?track=N`, which reuses
+  the full-track wav Label Track extracts (freed by `/release`). Speech detection already ran on
+  load; the button is now *Detect again* at the end of the row, asks before replacing labeled
+  regions, and Region pad re-pads the last detection straight away while nothing is labeled.
+
 ## Not started / deferred
 
 - **Tauri packaging** (PRD §16): wrap FastAPI + browser into a `.exe`. Future.

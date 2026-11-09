@@ -265,12 +265,15 @@
         <h2>Speakers</h2>
         <div class="row" id="label-speakers" style="margin-bottom:10px"></div>
         <div class="row" style="margin-bottom:10px">
-          <button id="label-vad" class="ghost">Re-detect speech</button>
           <button id="label-play" class="ghost icon-only" title="Play / pause">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
           </button>
           <button id="label-view" class="ghost">Split lanes</button>
+          <button id="label-stack-btn" class="ghost" style="display:none"
+            title="Show this file's other tracks under the waveform, to see who's talking when">All tracks</button>
           <button id="label-dup" class="ghost">Duplicate region</button>
+          <button id="label-vad" class="ghost"
+            title="Speech is detected when a recording loads. Run it again to start over from fresh regions.">Detect again</button>
           <label class="field"><span>Region pad (s)</span>
             <input id="label-pad" type="number" value="0" step="0.1" min="0" style="width:70px"
               title="expand each detected speech region by N seconds on both ends" /></label>
@@ -283,6 +286,7 @@
           <span class="muted">click a region (shift-click a run, ctrl-click multi-pick) then a speaker/number · drag to create · drag edges to resize · for talk-over, duplicate a region and assign the copy to the other speaker</span>
         </div>
         <div id="waveform" style="background:var(--panel-2); border:1px solid var(--line); border-radius:8px"></div>
+        <div id="label-stack" style="display:none"></div>
         <div id="label-lanes" style="display:none; margin-top:10px"></div>
         <div class="row" style="margin-top:12px">
           <button id="label-run" class="primary">Transcribe labeled regions</button>
@@ -401,6 +405,6 @@
   </main>
 
   <script src="app.js?v=45"></script>
-  <script type="module" src="labeltrack.js?v=10"></script>
+  <script type="module" src="labeltrack.js?v=11"></script>
 </body>
 </html>
