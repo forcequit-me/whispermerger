@@ -111,6 +111,7 @@ class ProgressResponse(BaseModel):
     error: str | None = None
     paused: bool = False                     # pause requested
     gpu_freed: bool = False                  # the GPU has actually been released (worker parked)
+    reused: bool = False                     # done, and every track came from the cache
 
 
 class ExportOptionsIn(BaseModel):
@@ -578,7 +579,7 @@ def progress(request: Request, job_id: str) -> ProgressResponse:
         raise HTTPException(404, "unknown job")
     return ProgressResponse(status=job.status.value, progress=job.progress,
                             message=job.message, elapsed=job.elapsed, error=job.error,
-                            paused=job.paused, gpu_freed=job.gpu_freed)
+                            paused=job.paused, gpu_freed=job.gpu_freed, reused=job.reused)
 
 
 @router.get("/result/{job_id}", response_model=MergedOutput)
@@ -861,8 +862,10 @@ def list_models() -> dict:
     out = []
     for e in modelstore.entries():
         d = modelstore.downloads.downloads.get(e.id)
+        installed = modelstore.is_installed(e)
         out.append({"id": e.id, "kind": e.kind, "name": e.name, "size_mb": e.size_mb, "info": e.info,
-                    "installed": modelstore.is_installed(e),
+                    "installed": installed,
+                    "partial": not installed and modelstore.has_partial(e),   # Resume / Remove
                     "download": d.to_dict() if d else None})
     return {"active": f"whisper:{modelstore.active_whisper()}", "models": out,
             "auto_portuguese": modelstore.pt_default(),
@@ -917,6 +920,7 @@ def remove_model(model_id: str) -> dict:
     if d and d.active:
         raise HTTPException(409, "cancel the download first")
     modelstore.remove(e)
+    modelstore.downloads.downloads.pop(model_id, None)   # its "canceled" / "done" note went with the files
     return {"removed": True}
 
 

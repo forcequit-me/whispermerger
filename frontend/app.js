@@ -549,7 +549,9 @@ function buildExportPanel(container, merged) {
   const fmtBoxes = ["srt", "txt", "csv", "json"].map((f) => el("input", { type: "checkbox", value: f,
     checked: was.formats ? was.formats.includes(f) : f === "srt" }));
   const formats = () => fmtBoxes.filter((c) => c.checked).map((c) => c.value);
-  const filename = el("input", { value: transcriptName(exportBase(merged)), size: 36 });
+  const name = transcriptName(exportBase(merged));
+  // Wide enough to read the whole name (the 120px field width cut it off).
+  const filename = el("input", { value: name, size: Math.max(36, name.length), style: "width:auto" });
   const applyLimits = el("input", { type: "checkbox", checked: was.apply_limits ?? true });
   const cpl = el("input", { type: "number", value: was.chars_per_line ?? 42 });
   const maxLines = el("input", { type: "number", value: was.max_lines ?? 2 });
@@ -899,7 +901,8 @@ function pollJob(jobId, runBtn) {
         renderEditor($("#editor-transcribe"), merged, preview);
         // Collapse to one line: "Done in 4m 12s · 2 tracks".
         const tracks = uploaded.reduce((n, it) => n + it.source.tracks.filter((t) => t.selected !== false).length, 0);
-        setProgress(1, `Done in ${fmtElapsed(p.elapsed)} · ${tracks} track${tracks === 1 ? "" : "s"}`);
+        // Every track came from the cache: say so, where "Done in 0s" would read as if nothing ran.
+        setProgress(1, `${p.reused ? "Reused saved result" : `Done in ${fmtElapsed(p.elapsed)}`} · ${tracks} track${tracks === 1 ? "" : "s"}`);
         $("#progress-wrap").classList.add("finished");
       } catch (e) { setProgress(1, "done — but couldn't load the result: " + e.message); }
       finish();
@@ -1893,12 +1896,15 @@ function modelAction(m, active) {
     if (use.tagName === "BUTTON") use.onclick = () => call("/use");
     return el("span", { className: "dl" }, el("span", { className: "ok", textContent: inUse ? "In use" : "Downloaded" }), use, rm);
   }
-  const partial = d && d.done > 0;
-  const get = el("button", { className: "ghost", textContent: partial ? "Resume download" : "Download" });
+  // A download that stopped part-way leaves its files on disk: Resume continues it, Remove deletes them.
+  const get = el("button", { className: "ghost", textContent: m.partial ? "Resume" : "Download",
+    title: m.partial ? "continue the download where it stopped" : "" });
   get.onclick = () => call("/download");
+  const rm = m.partial ? el("button", { className: "ghost", textContent: "Remove", title: "delete the partial download from disk" }) : "";
+  if (rm) rm.onclick = () => call("", "DELETE");
   const note = d && d.status === "error" ? el("span", { className: "err", textContent: d.error })
-    : d && d.status === "canceled" ? el("span", { className: "meta", textContent: "canceled — partial download kept" }) : "";
-  return el("span", { className: "dl" }, note, get);
+    : d && d.status === "canceled" ? el("span", { className: "meta", textContent: "canceled" }) : "";
+  return el("span", { className: "dl" }, note, get, rm);
 }
 
 // One row per section: Download all (what isn't on disk), Cancel all, and progress across the queue.

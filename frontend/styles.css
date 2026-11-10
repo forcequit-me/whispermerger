@@ -139,7 +139,13 @@ label.opt { display: inline-flex; gap: 6px; align-items: center; margin-right: 1
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field span { font-size: 11px; color: var(--muted); }
 .field input, .field select { width: 120px; }
-#opt-language, #batch-language, #label-language { width: auto; }   /* fit "Portuguese (Portugal)" */
+#opt-language, #batch-language, #label-language, #auto-portuguese { width: auto; }   /* fit "Portuguese (Portugal)" */
+/* A field is a caption stacked on a box: line a row's buttons and checkboxes up with the box, not the pair. */
+.row:has(> .field) > :is(button, .opt) { align-self: flex-end; }
+.row:has(> .field) > .opt { min-height: 35px; }
+/* A note beside a field's box (a dropdown's help or status text) centers on the box too. */
+.row > .field-note { align-self: flex-end; display: inline-flex; align-items: center; min-height: 35px; }
+button.ghost[aria-pressed="true"] { color: var(--text); border-color: var(--accent); }
 .field .fmt-set { gap: 10px; min-height: 34px; }
 .field .fmt-set input { width: auto; }
 

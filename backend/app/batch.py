@@ -23,6 +23,7 @@ from .export import ExportOptions, export_all, pad_segments
 from .merge import MergeOptions
 from .models import MergedOutput
 from .pipeline import WAITING, PreparedSource, run_merge_pipeline, run_per_file_pipeline
+from .transcribe import cache_tally, reused_since
 
 TranscribeFn = Callable[[str], dict]
 
@@ -277,6 +278,7 @@ def _process_project(
     ps.status = Status.RUNNING
     options = project.options or options
     ex = project.export or ExportOptions()
+    tally = cache_tally()                        # to tell a reused result from a fresh run
 
     def write(merged, dest, name) -> None:
         # Same as the editor's Export: padding applies to every format's timecodes.
@@ -294,6 +296,7 @@ def _process_project(
             # processed, so a single-file restart (which re-queues one file) re-runs just it.
             files = ps.files
             seen: dict[tuple[str, str], int] = {}
+            tally_at: dict[int, tuple[int, int]] = {}   # the cache tally when each file started
 
             def on_wait(i: int, src: PreparedSource) -> None:
                 # This file is now the active work; its audio is being read/extracted. The GPU clock
@@ -318,6 +321,7 @@ def _process_project(
                 # Real read + ffmpeg time for this file, measured around the extraction itself, so it
                 # holds even when the work was prefetched behind the previous file's GPU run.
                 fs.extract_seconds = extract_s
+                tally_at[i] = cache_tally()
                 _recalc_project(ps)
 
             def on_track(i: int, j: int, total_tracks: int, speaker: str) -> None:
@@ -348,7 +352,8 @@ def _process_project(
                 fs.progress = 1.0
                 fs.finished_at = time.time()
                 fs.output_dir = str(dest)
-                fs.message = f"done in {fs.elapsed:.0f}s"
+                reused = i in tally_at and reused_since(tally_at[i])
+                fs.message = "reused saved result" if reused else f"done in {fs.elapsed:.0f}s"
                 # Per-file timing split (also shown per-row in the UI): real read + ffmpeg time
                 # (everything before the GPU) vs the GPU transcription itself, so a run reveals read-
                 # vs GPU-bound files. Still printed to the console as a scrollback record.
@@ -402,7 +407,8 @@ def _process_project(
             ps.source_path = project.prepared[0].path if len(project.prepared) == 1 else None
         ps.finished_at = time.time()
         ps.progress = 1.0
-        ps.message = _file_summary(ps) if ps.files else f"done in {ps.elapsed:.0f}s"
+        ps.message = (_file_summary(ps) if ps.files else "reused saved result" if reused_since(tally)
+                      else f"done in {ps.elapsed:.0f}s")
         ps.status = Status.DONE
     except Cancelled:
         ps.finished_at = time.time()

@@ -69,12 +69,14 @@ def test_cancel_keeps_partial_and_restart_resumes(entry):
     part = entry.dest.with_name(entry.dest.name + ".part")
     kept = part.stat().st_size
     assert 0 < kept < len(PAYLOAD) and not ms.is_installed(entry)
+    assert ms.has_partial(entry)                          # what the Models tab offers Resume / Remove on
 
     d2 = mgr.start(entry)
     _wait(lambda: d2.done > 0)
     assert d2.done >= kept                                # picked up the partial, didn't restart
     _wait(lambda: d2.status == "done")
     assert entry.dest.read_bytes() == PAYLOAD and not part.exists()
+    assert not ms.has_partial(entry)
 
 
 def test_ensure_reports_progress_and_cancel_stops_the_download(entry, monkeypatch):

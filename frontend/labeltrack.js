@@ -58,14 +58,14 @@ $("#label-vad").onclick = () => {
 $("#label-pad").onchange = () => { if (lastSpans && !assign.size) applySpans(lastSpans); };
 $("#label-stack-btn").onclick = () => {
   stackView = !stackView;
-  $("#label-stack-btn").textContent = stackView ? "One track" : "All tracks";
+  $("#label-stack-btn").setAttribute("aria-pressed", stackView);   // the name stays; it lights up when on
   renderStack();
 };
 $("#label-play").onclick = () => ws && ws.playPause();
 $("#label-run").onclick = runTranscribe;
 $("#label-view").onclick = () => {
   splitView = !splitView;
-  $("#label-view").textContent = splitView ? "Single track" : "Split lanes";
+  $("#label-view").setAttribute("aria-pressed", splitView);
   renderLanes();
 };
 $("#label-dup").onclick = duplicateSelection;

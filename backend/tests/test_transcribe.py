@@ -171,7 +171,9 @@ def test_runs_take_turns_on_the_shared_model(monkeypatch, tmp_path):
     class Hit:                                         # a cached result returns while the GPU is busy
         def get(self, key): return {"cached": True}
     monkeypatch.setattr(transcribe, "cache_key", lambda *a: "k")
+    before = transcribe.cache_tally()
     assert transcribe.transcribe_track(tmp_path / "y.wav", language="is", cache=Hit()) == {"cached": True}
+    assert transcribe.reused_since(before)             # a run says "reused saved result" from this
 
     release.set()
     for r in runs:

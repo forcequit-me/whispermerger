@@ -27,6 +27,20 @@ def test_successful_job_sets_result_and_progress():
     assert job.result.segments[0].text == "hi"
 
 
+def test_job_says_when_every_track_was_reused():
+    from app import transcribe
+    reg = JobRegistry()
+    job = reg.create()
+
+    def work(progress):                                # what transcribe_track does on a cache hit
+        transcribe._chunk.hits = transcribe.cache_tally()[0] + 1
+        return MergedOutput(segments=[])
+
+    reg.run(job, work)
+    _wait(job)
+    assert job.reused and job.message == "reused saved result"
+
+
 def test_failed_job_captures_error():
     reg = JobRegistry()
     job = reg.create()

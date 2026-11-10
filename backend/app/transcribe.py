@@ -241,6 +241,18 @@ def chunk_progress(fn: Optional[Callable[..., None]]):
         _chunk.fn = prev
 
 
+def cache_tally() -> tuple[int, int]:
+    """(saved results reused, tracks transcribed fresh) by transcribe_track on this thread so far."""
+    return getattr(_chunk, "hits", 0), getattr(_chunk, "fresh", 0)
+
+
+def reused_since(tally: tuple[int, int]) -> bool:
+    """Whether everything transcribe_track did on this thread since `tally` came from the cache,
+    so a run can say "reused saved result" where "done in 0s" would read as if nothing happened."""
+    hits, fresh = cache_tally()
+    return hits > tally[0] and fresh == tally[1]
+
+
 def _transcribe_counted(pipe, audio, lo: float = 0.0, hi: float = 1.0, **kw) -> dict:
     """pipe.transcribe(audio, **kw), reporting chunk progress scaled into [lo, hi]. WhisperX's loop
     calls `self.__call__(chunks)`, so a wrapper set on the instance sees each chunk as it finishes,
@@ -326,7 +338,9 @@ def transcribe_track(
         model_name = modelstore.portugal_model()
     key = cache_key(audio_path, model_name, tag, key_lang) if cache else None
     if cache and (hit := cache.get(key)) is not None:
+        _chunk.hits = cache_tally()[0] + 1
         return hit
+    _chunk.fresh = cache_tally()[1] + 1
 
     # One run at a time on the shared models (GPU_TURN); counted as a GPU user meanwhile so
     # another thread can't unload them under it. While another run has the GPU, say so.

@@ -250,6 +250,15 @@ def _repo_dir(repo: str) -> Path:
     return Path(HF_HUB_CACHE) / f"models--{repo.replace('/', '--')}"
 
 
+def has_partial(e: ModelEntry) -> bool:
+    """Whether a download of `e` left files on disk (a canceled one keeps them, to resume).
+    Only meaningful for a model that isn't installed."""
+    if e.url:
+        return e.dest.with_name(e.dest.name + ".part").exists()
+    blobs = _repo_dir(e.repo) / "blobs"
+    return blobs.is_dir() and any(blobs.iterdir())
+
+
 def remove(e: ModelEntry) -> None:
     """Delete a model's files, including any partial download."""
     if e.url:

@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Callable, Optional
 
 from . import modelstore
+from .transcribe import cache_tally, reused_since
 from .models import MergedOutput
 
 
@@ -42,6 +43,7 @@ class Job:
     message: str = ""
     result: Optional[MergedOutput] = None
     error: Optional[str] = None
+    reused: bool = False                          # every track came from the cache
     started_at: float = 0.0
     finished_at: float = 0.0
     paused: bool = False
@@ -121,6 +123,7 @@ class JobRegistry:
         def _target() -> None:
             job.started_at = time.time()
             job.status = JobStatus.RUNNING
+            tally = cache_tally()
             try:
                 # A model download inside the work reports on the job's progress line; that same
                 # call is the pause/cancel checkpoint, so Cancel also stops the download.
@@ -128,7 +131,8 @@ class JobRegistry:
                     job.result = work(job._set_progress)
                 job.finished_at = time.time()
                 job.progress = 1.0
-                job.message = f"done in {job.elapsed:.0f}s"
+                job.reused = reused_since(tally)
+                job.message = "reused saved result" if job.reused else f"done in {job.elapsed:.0f}s"
                 job.status = JobStatus.DONE
             except JobCancelled:  # cooperative cancel at a stage boundary
                 job.finished_at = time.time()

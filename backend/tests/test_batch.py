@@ -248,6 +248,24 @@ def test_per_file_tracks_each_file_status(two_stream_file, tmp_path):
     assert all(f.output_dir for f in files)
 
 
+def test_per_file_says_when_a_saved_result_was_reused(two_stream_file, tmp_path):
+    from app import transcribe
+
+    def cached(wav):                                   # what transcribe_track does on a cache hit
+        transcribe._chunk.hits = transcribe.cache_tally()[0] + 1
+        return _stub(wav)
+
+    proj = _perfile_project(two_stream_file)
+    batch = BatchRegistry().create([proj])
+    run_batch(batch, [proj], cached, output_mode="folder", output_folder=str(tmp_path))
+    assert [f.message for f in batch.projects[0].files] == ["reused saved result"] * 2
+
+    merged = ProjectInput("Merged", [_prepared(two_stream_file, "a.mkv", 2.0)])   # one transcript
+    batch = BatchRegistry().create([merged])
+    run_batch(batch, [merged], cached, output_mode="folder", output_folder=str(tmp_path))
+    assert batch.projects[0].message == "reused saved result"
+
+
 def test_per_file_cancel_one_file_continues_rest(two_stream_file, tmp_path):
     reg = BatchRegistry()
     proj = _perfile_project(two_stream_file)
