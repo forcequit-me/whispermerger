@@ -581,6 +581,16 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
   (`words:[]`). Generic third-party SRT loads too (the parser isn't WhisperMerger-specific);
   proprietary formats (Descript JSON, Premiere/Resolve XML) are still unsupported.
 
+- **Text-only TXT can't be reopened in Edit Transcript (2026-11-11):** Export has a *Timestamps in
+  TXT* option (on by default). With it off, and *Show speakers* off too, TXT is the text alone, one
+  transcript line per line. Edit Transcript's TXT import (`parseTxt` in `frontend/app.js`) only reads
+  lines that start with `[start --> end]`, so a TXT exported without timestamps fails with "No
+  transcript lines found in this file". To come back to: either load such a file as untimed lines
+  (times left at 0 and marked, so an SRT made from it isn't trusted), or keep refusing it but say
+  why and point to JSON. Until then, also export JSON (or a timestamped TXT) for anything that may
+  need editing later. Related gaps: the CLI and MCP `export` have no switch for this option yet, and
+  the text stays one line per transcript line (no flowing-paragraph mode).
+
 ## Validation — real-world stress test ✅
 
 - **SM-1 / SM-2 / NFR-1 — validated** on a real 56 GB / 1h51m / 4-track OBS recording (cold):

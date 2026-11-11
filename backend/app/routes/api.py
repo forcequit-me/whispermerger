@@ -123,6 +123,7 @@ class ExportOptionsIn(BaseModel):
     pad_seconds: float = 0.0
     edited_timing: Literal["align", "even", "whole"] = "align"   # SRT timing for edited lines
     label_on_change: bool = False            # SRT: name the speaker only when the speaker changes
+    txt_timestamps: bool = True              # TXT: "[start --> end]" before each line
 
     def to_options(self) -> ExportOptions:
         return ExportOptions(**self.model_dump())

@@ -49,6 +49,8 @@ def test_to_txt_has_start_end_and_speaker_toggle():
     m = _merged(Segment(speaker="Max", start=0, end=1, text="hello there"))
     assert to_txt(m) == "[00:00:00,000 --> 00:00:01,000] Max: hello there"
     assert to_txt(m, ExportOptions(show_speakers=False)) == "[00:00:00,000 --> 00:00:01,000] hello there"
+    assert to_txt(m, ExportOptions(txt_timestamps=False)) == "Max: hello there"
+    assert to_txt(m, ExportOptions(txt_timestamps=False, show_speakers=False)) == "hello there"   # the text alone
 
 
 def test_to_csv_has_header_and_rows():

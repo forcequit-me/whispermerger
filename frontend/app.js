@@ -560,6 +560,8 @@ function buildExportPanel(container, merged) {
   const showSpk = el("input", { type: "checkbox", checked: was.show_speakers ?? true });
   const onChange = el("input", { type: "checkbox", checked: was.label_on_change ?? false,
     title: "SRT: name the speaker on the first subtitle after a speaker change only" });
+  const txtTimes = el("input", { type: "checkbox", checked: was.txt_timestamps ?? true,
+    title: "TXT: start each line with its start and end time. Off, with Show speakers off too, gives the text alone." });
   const warn = el("div", { className: "warn", style: "flex-basis:100%" });
   const checkNames = () => {
     const names = merged.segments.filter((s) => !container._disabled.has(s.speaker)).map((s) => s.speaker);
@@ -583,6 +585,7 @@ function buildExportPanel(container, merged) {
     chars_per_line: +cpl.value, max_lines: +maxLines.value,
     min_duration: +minDur.value, show_speakers: showSpk.checked,
     pad_seconds: +pad.value, edited_timing: editedTiming.value, label_on_change: onChange.checked,
+    txt_timestamps: txtTimes.checked,
   });
   const btn = el("button", { className: "primary", textContent: "Export" });
   btn.onclick = async () => {
@@ -600,7 +603,9 @@ function buildExportPanel(container, merged) {
 
   const field = (label, node) => el("label", { className: "field" }, el("span", { textContent: label }), node);
   const panel = el("div", { className: "row", style: "margin:14px 0; padding-top:14px; border-top:1px solid var(--line)" },
-    field("Formats", el("div", { className: "row fmt-set" },
+    // A div, not field()'s <label>: a label around four boxes takes the first (SRT) as its own, so
+    // SRT lit up when another format was hovered or pressed, and a click between them toggled it.
+    el("div", { className: "field" }, el("span", { textContent: "Formats" }), el("div", { className: "row fmt-set" },
       ...fmtBoxes.map((c) => el("label", { className: "opt" }, c, c.value.toUpperCase())))),
     field("Filename", filename),
     el("label", { className: "opt" }, applyLimits, "Subtitle limits"),
@@ -608,6 +613,7 @@ function buildExportPanel(container, merged) {
     field("Pad (s)", pad), field("Edited lines", editedTiming),
     el("label", { className: "opt" }, showSpk, "Show speakers"),
     el("label", { className: "opt" }, onChange, "Name only on speaker change"),
+    el("label", { className: "opt" }, txtTimes, "Timestamps in TXT"),
     el("div", { className: "spacer" }), btn, warn);
   panel.addEventListener("change", () => {
     (SAVED.export ||= {})[tabId] = { formats: formats(), ...exportOptions() };
@@ -629,6 +635,7 @@ function confirmExport({ fmts, options: o, hidden, edited, lines }) {
     ["Padding", o.pad_seconds ? `${o.pad_seconds} s added to each line's start and end` : "none"],
     ["Edited lines (SRT)", !srt ? "SRT only (not exported)" : EDITED_TIMING.find(([v]) => v === o.edited_timing)[1]],
     ["Speaker names", !o.show_speakers ? "off" : srt && o.label_on_change ? "on, in SRT only when the speaker changes" : "on every line"],
+    ["Timestamps in TXT", !fmts.includes("txt") ? "TXT only (not exported)" : o.txt_timestamps ? "on" : "off"],
     ["Hidden speakers", hidden.length ? `${hidden.join(", ")} (left out)` : "none"],
     ["Lines marked edited", String(edited)],
   ];
@@ -1121,7 +1128,7 @@ const DEFAULT_BATCH_SETTINGS = {
   options: { detect_conflicts: true, backchannel_render: "parenthetical", backchannel_max_words: 4,
              overlap_min_seconds: 2, bleed_window_seconds: 1, bleed_similarity: 0.7, bleed_prefer_ratio: 2 },
   export: { apply_limits: true, chars_per_line: 42, max_lines: 2, min_duration: 1, pad_seconds: 0,
-            show_speakers: true, edited_timing: "align", label_on_change: false },
+            show_speakers: true, edited_timing: "align", label_on_change: false, txt_timestamps: true },
 };
 const batchSettings = structuredClone(DEFAULT_BATCH_SETTINGS);
 if (SAVED.batch) for (const k of ["options", "export"]) Object.assign(batchSettings[k], SAVED.batch[k]);
@@ -1173,7 +1180,8 @@ function buildSettingsBlock(s) {
       field("Min dur (s)", limits[2]),
       field("Pad (s)", num(x, "pad_seconds", { step: 0.1, min: 0 }), "extend each segment start/end by N seconds (video-edit breathing room)"),
       field("Edited lines", edited), check(x, "show_speakers", "Show speakers"),
-      check(x, "label_on_change", "Name only on speaker change")));
+      check(x, "label_on_change", "Name only on speaker change"),
+      check(x, "txt_timestamps", "Timestamps in TXT")));
 }
 
 function addProject() {

@@ -33,6 +33,8 @@ class ExportOptions:
     # SRT: name the speaker only on the first subtitle after a speaker change, as subtitlers do,
     # instead of on every subtitle (TXT/CSV always name every line).
     label_on_change: bool = False
+    # TXT: start each line with "[start --> end]". Off, with show_speakers off too, leaves the text alone.
+    txt_timestamps: bool = True
 
 
 def pad_segments(merged: MergedOutput, pad: float) -> MergedOutput:
@@ -58,7 +60,7 @@ def to_txt(merged: MergedOutput, opts: ExportOptions | None = None) -> str:
     for seg in merged.segments:
         body = f"{seg.speaker}: {seg.text}" if opts.show_speakers else seg.text
         # start + end timing in the transcript
-        lines.append(f"[{_timecode(seg.start)} --> {_timecode(seg.end)}] {body}")
+        lines.append(f"[{_timecode(seg.start)} --> {_timecode(seg.end)}] {body}" if opts.txt_timestamps else body)
     return "\n".join(lines)
 
 
