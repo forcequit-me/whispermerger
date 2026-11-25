@@ -235,8 +235,8 @@ def entries() -> list[ModelEntry]:
 
 def get(model_id: str) -> Optional[ModelEntry]:
     kind, _, key = model_id.partition(":")
-    if kind == "whisper":
-        return whisper_entry(key)
+    if kind == "whisper":       # only the catalog: an id names files to download or delete
+        return whisper_entry(key) if key in WHISPER_MODELS else None
     if kind == "align":
         return align_entry(key)
     return None

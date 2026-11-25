@@ -484,6 +484,8 @@ def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
     """Models: which are downloaded, which speech model runs (active), and download progress.
     Also the settings: "my_languages" ("Languages I use", see set_my_languages; empty = not set),
     "auto_portuguese" (see set_auto_portuguese) and "pt_punctuation" (see set_pt_punctuation).
+    "disk_free_mb" is the free space on the drive models download to. A model with "partial" has
+    a stopped download on disk: download_model resumes it, remove_model deletes it.
 
     kind: "speech" (speech-to-text, default), "word-timing" (one per language, for word-level
     timing; about 40, mostly not downloaded) or "all".
@@ -495,9 +497,11 @@ def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
     models = [m for m in d["models"] if want[kind] in (None, m["kind"]) and (m["installed"] or not installed_only)]
     return {"active": d["active"], "my_languages": d["my_languages"],
             "auto_portuguese": d["auto_portuguese"], "pt_punctuation": d["pt_punctuation"],
+            "disk_free_mb": round(d["disk_free"] / 1e6),
             "downloaded": f"{sum(m['installed'] for m in d['models'] if want[kind] in (None, m['kind']))} "
                           f"of {sum(1 for m in d['models'] if want[kind] in (None, m['kind']))}",
             "models": [{"id": m["id"], "name": m["name"], "size_mb": m["size_mb"], "installed": m["installed"],
+                        "partial": m["partial"],
                         "download": (m["download"] or {}).get("text") if (m["download"] or {}).get("active") else None}
                        for m in models]}
 
@@ -510,6 +514,41 @@ def download_model(model_id: str) -> dict:
 def use_model(model_id: str) -> dict:
     """Make a downloaded speech model (e.g. "whisper:large-v3") the one every run uses."""
     return _api("POST", f"/api/models/{urllib.parse.quote(model_id, safe='')}/use")
+
+
+def cancel_download(model_id: str) -> dict:
+    """Stop a model download that is queued or running. What was downloaded stays on disk, so
+    download_model carries on from there; remove_model deletes it."""
+    return _api("POST", f"/api/models/{urllib.parse.quote(model_id, safe='')}/cancel")
+
+
+def remove_model(model_id: str) -> dict:
+    """DESTRUCTIVE: delete a model's files from disk, a partial download included. Refused for the
+    speech model in use (choose another with use_model first) and for a model that is downloading
+    (cancel_download first)."""
+    return _api("DELETE", f"/api/models/{urllib.parse.quote(model_id, safe='')}")
+
+
+def run_benchmark(wait: bool = False) -> dict:
+    """Time every downloaded speech model on this machine: each loads from cold and transcribes a
+    test sentence spoken by a Windows voice (a European Portuguese one too, when a model and a
+    voice for it are installed). It uses the GPU, so it waits for a running transcription first.
+
+    wait: wait until it's done and return the results.
+    Returns {job_id} at once otherwise; follow it with get_progress, then read get_benchmark."""
+    job_id = _api("POST", "/api/benchmark")["job_id"]
+    if not wait:
+        return {"job_id": job_id}
+    _wait_job(job_id)
+    return get_benchmark(job_id)
+
+
+def get_benchmark(job_id: str) -> dict:
+    """Results of a benchmark started with run_benchmark, complete once "status" is done. For each
+    test sentence and model: load_s (seconds to load the model), transcribe_s, speed_x (times
+    faster than real time), match (0 to 1, how much of the sentence it got right) and heard (the
+    text it wrote). "expected" is what was said."""
+    return _api("GET", f"/api/benchmark/{job_id}")
 
 
 def set_my_languages(languages: list[str] = []) -> dict:
@@ -563,6 +602,7 @@ def shutdown() -> dict:
 
 # The one list. Destructive ones are marked for MCP clients.
 ACTIONS = [add_files, transcribe, get_progress, answer, get_transcript, edit_lines, export, run_batch,
-           get_batch, list_models, download_model, use_model, set_my_languages, set_auto_portuguese,
-           set_pt_punctuation, cache_stats, clear_cache, status, shutdown]
-DESTRUCTIVE = {clear_cache, shutdown}
+           get_batch, list_models, download_model, cancel_download, remove_model, use_model,
+           run_benchmark, get_benchmark, set_my_languages, set_auto_portuguese, set_pt_punctuation,
+           cache_stats, clear_cache, status, shutdown]
+DESTRUCTIVE = {remove_model, clear_cache, shutdown}

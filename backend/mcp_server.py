@@ -19,7 +19,7 @@ from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 from mcp.types import ToolAnnotations  # noqa: E402
 
 READ_ONLY = {actions.add_files, actions.get_progress, actions.get_transcript, actions.get_batch,
-             actions.list_models, actions.cache_stats, actions.status}
+             actions.list_models, actions.get_benchmark, actions.cache_stats, actions.status}
 
 server = MCPServer(
     "whispermerger",

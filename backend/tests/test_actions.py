@@ -209,6 +209,73 @@ def test_portuguese_settings_are_read_and_set(api, monkeypatch, tmp_path, capsys
     assert cli.main(["set-pt-punctuation"]) == 0 and actions.list_models()["pt_punctuation"] is False
 
 
+def test_model_downloads_are_cancelled_and_models_removed(api, monkeypatch, tmp_path):
+    from app import modelstore
+    monkeypatch.setattr(modelstore, "SETTINGS_FILE", tmp_path / "settings.json")   # speech model in use: large-v3
+    monkeypatch.setattr(modelstore, "is_installed", lambda e: e.id == "whisper:large-v3")
+    monkeypatch.setattr(modelstore, "has_partial", lambda e: e.id == "align:nl")
+    monkeypatch.setattr(modelstore, "disk_free", lambda: 5_000_000_000)
+    removed = []
+    monkeypatch.setattr(modelstore, "remove", removed.append)                      # nothing leaves the disk here
+    d = modelstore.Download("align:nl", status="downloading")
+    monkeypatch.setitem(modelstore.downloads.downloads, "align:nl", d)
+
+    m = actions.list_models(kind="all")
+    assert m["disk_free_mb"] == 5000 and m["downloaded"].startswith("1 of ")
+    assert [x["id"] for x in m["models"] if x["partial"]] == ["align:nl"]
+    assert not any(x["partial"] for x in actions.list_models(installed_only=True)["models"])
+
+    with pytest.raises(actions.ActionError, match="409: cancel the download first"):
+        actions.remove_model("align:nl")
+    assert actions.cancel_download("align:nl") == {"canceling": True} and d._cancel.is_set()
+    d.status = "canceled"                                         # what the download thread does next
+    assert actions.cancel_download("align:nl") == {"canceling": False}             # nothing running any more
+    assert actions.remove_model("align:nl") == {"removed": True} and [e.id for e in removed] == ["align:nl"]
+    with pytest.raises(actions.ActionError, match="409: that's the speech model in use"):
+        actions.remove_model("whisper:large-v3")
+    # an id outside the catalog names nothing to delete, whatever it looks like
+    for bad in ("whisper:nope", "whisper:..", "align:zz", "nope"):
+        for fn in (actions.cancel_download, actions.remove_model):
+            with pytest.raises(actions.ActionError, match="404: unknown model"):
+                fn(bad)
+    assert len(removed) == 1
+    assert cli.main(["remove-model", "align:nl"]) == 0 and len(removed) == 2
+    assert cli.main(["cancel-download", "align:nl"]) == 0
+
+
+def test_benchmark_runs_and_reports(api, monkeypatch, capsys):
+    from app import modelstore
+    row = {"test": "English", "model": "small", "load_s": 1.2, "transcribe_s": 0.5, "audio_s": 11.0,
+           "speed_x": 22.0, "match": 1.0, "heard": "Let's move the quarterly review"}
+    monkeypatch.setattr(routes.api.benchmark, "run", lambda progress: [row])       # no GPU, no voice
+    monkeypatch.setattr(modelstore, "is_installed", lambda e: False)
+    with pytest.raises(actions.ActionError, match="409: download a speech model first"):
+        actions.run_benchmark()
+    monkeypatch.setattr(modelstore, "is_installed", lambda e: True)
+
+    done = actions.run_benchmark(wait=True)
+    assert done["status"] == "done" and done["results"] == [row] and "quarterly review" in done["expected"]["English"]
+    job_id = actions.run_benchmark()["job_id"]                    # not waiting: follow it, then read it
+    deadline = time.time() + 5
+    while actions.get_progress(job_id)["status"] != "done" and time.time() < deadline:
+        pass
+    assert actions.get_benchmark(job_id)["results"] == [row]
+    with pytest.raises(actions.ActionError, match="404: unknown job"):
+        actions.get_benchmark("nope")
+    assert cli.main(["--json", "run-benchmark", "--wait"]) == 0
+    assert json.loads(capsys.readouterr().out)["results"][0]["speed_x"] == 22.0
+
+
+def test_mcp_tools_match_the_actions_and_their_marks():
+    import asyncio
+    import mcp_server
+    tools = {t.name: t.annotations for t in asyncio.run(mcp_server.server.list_tools())}
+    assert set(tools) == {fn.__name__ for fn in actions.ACTIONS}
+    assert {n for n, a in tools.items() if a.destructive_hint} == {"remove_model", "clear_cache", "shutdown"}
+    assert tools["get_benchmark"].read_only_hint and not tools["run_benchmark"].read_only_hint
+    assert not tools["cancel_download"].read_only_hint and not tools["set_auto_portuguese"].read_only_hint
+
+
 def test_save_result_needs_a_finished_job(api):
     assert api.put("/api/result/unknown", json={"segments": []}).status_code == 404
 
