@@ -565,7 +565,8 @@ that opens with 45 s of tones and noise: first-30-s guess `en` at 0.29 (a coin t
 default; part of the cache key). `transcribe.choose_language`: a guess in the list is accepted; a
 guess outside it needs 0.5 (`OUTSIDE_LIST_MIN`), else the best-scoring language of the list is
 used. A Portuguese default (`auto_portuguese`) counts as using Portuguese. Empty list: the top
-guess stands, as before.
+guess stands, as before. CLI / MCP: `list_models` shows the list, `set_my_languages` replaces it
+(no languages = empty); unknown codes are refused by the same route the app uses.
 
 **Ask before a big download.** Auto-detect, language not in the list, word-timing model over 1.5 GB
 (`ASK_OVER_MB`) and not on disk: `transcribe_track` asks through a per-thread hook

@@ -242,7 +242,7 @@ def get_progress(job_id: str) -> dict:
 def answer(run_id: str, choice: str, language: Optional[str] = None) -> dict:
     """Answer the question a job or batch stopped to ask (get_progress / get_batch show it under
     "question"). Auto-detect asks before a big word-timing download for a language that isn't in
-    "Languages I use" (Models tab).
+    "Languages I use" (Models tab, or set_my_languages).
 
     run_id: the job id or batch id that is waiting.
     choice: "download" (get the model and continue), "skip" (continue without word timing for this file: line timings only) or "language" (use a different language instead).
@@ -394,6 +394,7 @@ def get_batch(batch_id: str) -> dict:
 
 def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
     """Models: which are downloaded, which speech model runs (active), and download progress.
+    Also "my_languages": the "Languages I use" setting (see set_my_languages; empty = not set).
 
     kind: "speech" (speech-to-text, default), "word-timing" (one per language, for word-level
     timing; about 40, mostly not downloaded) or "all".
@@ -403,7 +404,7 @@ def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
         raise ActionError('kind is "speech", "word-timing" or "all"')
     d = _api("GET", "/api/models", timeout=120)
     models = [m for m in d["models"] if want[kind] in (None, m["kind"]) and (m["installed"] or not installed_only)]
-    return {"active": d["active"],
+    return {"active": d["active"], "my_languages": d["my_languages"],
             "downloaded": f"{sum(m['installed'] for m in d['models'] if want[kind] in (None, m['kind']))} "
                           f"of {sum(1 for m in d['models'] if want[kind] in (None, m['kind']))}",
             "models": [{"id": m["id"], "name": m["name"], "size_mb": m["size_mb"], "installed": m["installed"],
@@ -419,6 +420,15 @@ def download_model(model_id: str) -> dict:
 def use_model(model_id: str) -> dict:
     """Make a downloaded speech model (e.g. "whisper:large-v3") the one every run uses."""
     return _api("POST", f"/api/models/{urllib.parse.quote(model_id, safe='')}/use")
+
+
+def set_my_languages(languages: list[str] = []) -> dict:
+    """Set "Languages I use": the languages your recordings are in (list_models shows the current
+    list). Auto-detect accepts a guess among them; a guess outside them must be at least 50% sure,
+    and a word-timing download over 1.5 GB for a language outside them makes the run stop and ask.
+
+    languages: language codes such as en,pt; this replaces the whole list, and leaving it out empties it (no restriction)."""
+    return _api("POST", "/api/settings/my-languages", {"value": languages})
 
 
 def cache_stats() -> dict:
@@ -446,5 +456,6 @@ def shutdown() -> dict:
 
 # The one list. Destructive ones are marked for MCP clients.
 ACTIONS = [add_files, transcribe, get_progress, answer, get_transcript, edit_lines, export, run_batch,
-           get_batch, list_models, download_model, use_model, cache_stats, clear_cache, status, shutdown]
+           get_batch, list_models, download_model, use_model, set_my_languages, cache_stats, clear_cache,
+           status, shutdown]
 DESTRUCTIVE = {clear_cache, shutdown}

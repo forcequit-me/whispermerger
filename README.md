@@ -239,6 +239,7 @@ whispermerger export <job id or transcript.json> --format txt --no-txt-timestamp
 whispermerger run-batch D:\rec --out D:\subs --formats srt,txt --wait
 whispermerger answer <job or batch id> skip             :: when a run stops to ask: download | skip | language --language en
 whispermerger models                                    :: also download-model, use-model
+whispermerger set-my-languages --languages en,pt        :: "Languages I use" (models shows it); no --languages empties it
 whispermerger --help                                    :: every command; add --json for machine-readable output
 ```
 
@@ -250,8 +251,8 @@ run carry on.
 
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
 Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `get_transcript`, `edit_lines`, `export`,
-`run_batch`, `get_batch`, `list_models`, `download_model`, `use_model`, `cache_stats`,
-`clear_cache` and `shutdown` (both marked destructive), `status`.
+`run_batch`, `get_batch`, `list_models`, `download_model`, `use_model`, `set_my_languages`,
+`cache_stats`, `clear_cache` and `shutdown` (both marked destructive), `status`.
 
 - Claude Code:
   ```bat

@@ -94,6 +94,27 @@ def test_cli_has_a_command_per_action_and_parses_lists(api, two_stream_file, cap
     assert cli.main(["edit-lines", "nope"]) == 1                     # refused: nothing to change
 
 
+def test_languages_i_use_is_read_and_set(api, monkeypatch, tmp_path, capsys):
+    from app import modelstore
+    monkeypatch.setattr(modelstore, "SETTINGS_FILE", tmp_path / "settings.json")
+    assert actions.list_models()["my_languages"] == []                        # default: not set
+    assert actions.set_my_languages(["pt", "en"]) == {"my_languages": ["en", "pt"]}
+    assert actions.list_models()["my_languages"] == ["en", "pt"]
+    with pytest.raises(actions.ActionError, match="unknown language code xx"):
+        actions.set_my_languages(["en", "xx"])
+    assert actions.list_models()["my_languages"] == ["en", "pt"]              # a refused list changes nothing
+    assert actions.set_my_languages([]) == {"my_languages": []}               # empty: no restriction
+
+    parser = cli.build_parser()
+    assert parser.parse_args(["set-my-languages", "--languages", "en, pt"]).languages == ["en", "pt"]
+    assert parser.parse_args(["set-my-languages"]).languages == []
+    assert cli.main(["--json", "set-my-languages", "--languages", "nl"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"my_languages": ["nl"]}
+    assert cli.main(["set-my-languages", "--languages", "xx"]) == 1           # refused, with the reason
+    assert "unknown language code xx" in capsys.readouterr().err
+    assert cli.main(["set-my-languages"]) == 0 and actions.list_models()["my_languages"] == []
+
+
 def test_save_result_needs_a_finished_job(api):
     assert api.put("/api/result/unknown", json={"segments": []}).status_code == 404
 
