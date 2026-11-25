@@ -224,14 +224,14 @@ def test_speech_windows_come_from_across_the_file_and_skip_what_has_no_speech(mo
 
     monkeypatch.setattr(diarize, "speech_spans", fake_spans)
     audio = np.ones(600 * SR, dtype=np.float32)
-    audio[:100 * SR] = 0                               # opens with 100 s of no speech
+    audio[:80 * SR] = 0                                # opens with 80 s of no speech
     audio[330 * SR:420 * SR] = 0                       # and a silent stretch later on
-    audio[100 * SR:120 * SR] = 0.25                    # each spot's speech is told apart by its level
+    audio[80 * SR:120 * SR] = 0.25                     # each spot's speech is told apart by its level
     audio[180 * SR:270 * SR] = 0.5
     wins = transcribe.speech_windows(audio)
-    # 4 spots of 90 s in the middle of each quarter: 30-120 s (20 s of speech), 180-270 s, the silent
-    # 330-420 s (no vote), 480-570 s
-    assert [(len(w) // SR, float(w[0])) for w in wins] == [(20, 0.25), (30, 0.5), (30, 1.0)]
+    # 4 spots of 45 s in the middle of each quarter: 52.5-97.5 s (17.5 s of speech), 202.5-247.5 s,
+    # the silent 352.5-397.5 s (no vote), 502.5-547.5 s
+    assert [(len(w) // SR, float(w[0])) for w in wins] == [(17, 0.25), (30, 0.5), (30, 1.0)]
 
     assert transcribe.speech_windows(np.zeros(600 * SR, dtype=np.float32)) == []      # no speech anywhere
     short = transcribe.speech_windows(np.ones(60 * SR, dtype=np.float32))             # a short file: one window

@@ -311,7 +311,8 @@ def _gpu_turn():
 # recording that opens with music or silence got a random guess: an English 2-hour stream came out
 # as Nynorsk at 0.36, which pulled a 3.9 GB word-timing model mid-job (#38).
 DETECT_WINDOWS = 4                 # spots spread over the file, up to 30 s of speech from each
-DETECT_PROBE_S = 90                # audio searched for speech at each spot (the VAD stays cheap on long files)
+DETECT_PROBE_S = 45                # audio searched for speech at each spot: the VAD costs ~0.5 s per spot,
+                                   # whatever the file's length (2 s in all for a 2-hour file, 3080 Ti PC)
 DETECT_MIN_SPEECH_S = 5            # a spot with less speech than this doesn't vote
 # A guess outside the languages the user says they use (Models tab) must be at least this sure;
 # under it, the best-scoring language of theirs is used instead.

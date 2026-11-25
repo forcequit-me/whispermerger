@@ -520,6 +520,83 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
 - Waiting runs don't count as GPU users, so the Portugal two-pass can still fully unload a model.
 - Verified: a 2-project batch and a CLI job started together, twice; all finished, no errors.
 
+## Language detection across the file, ask before a big download, word-timing model left the GPU full (2026-11-25, #38)
+
+Reported: an English 2-hour stream that opens with music was guessed as Nynorsk (`nn`, 0.36) from
+its first 30 s. That downloaded the 3.9 GB Nynorsk word-timing model mid-job, the GPU then sat at
+11.7 of 12 GB, and every later file crawled until the server was restarted.
+
+**Why the GPU stayed full (two causes, both measured).**
+
+- *A leftover stack frame held the model.* `nltk` (imported by WhisperX's alignment module) keeps
+  the error of an optional import that failed, and with it the whole call stack that first imported
+  it. On a server started by the CLI / MCP with no browser open, that first import happens inside
+  the first `transcribe_track` call, so that call's frame lived on with its locals: the run's audio
+  and its word-timing model. `_load_align.cache_clear()` dropped the cache's reference, the frame
+  kept its own, and the model stayed on the GPU until restart. (With the app open, the Models list
+  imports it first, which is why this showed up through the CLI / MCP.) Fix: `transcribe_track`
+  clears those locals in a `finally`.
+- *A big model sat through the next file's batch.* The batch size leaves 1.3 GB for a word-timing
+  model (`ALIGN_MODEL_GB`); the Norwegian ones are 3.9 GB, and the model stays loaded until the
+  next file's alignment replaces it, which is after that file's transcription. Fix: a model
+  bigger than that room is unloaded right after use (`_drop_align`).
+
+Measured on the 3080 Ti (12 GB), 8 min English clip, large-v3, batch 14, nothing else on the card
+(0.5 GB idle). The Nynorsk model was stood in for by the same architecture built from its config
+with random weights (963 M parameters, same size on the GPU, no 3.9 GB download). First run in a
+fresh process is the "Nynorsk" one, then the same English clip three times:
+
+| | GPU used after the Nynorsk file | Next English files | Spill into system memory | GPU used after them |
+|---|---|---|---|---|
+| Before | 9.5 GB (4.0 GB of it the model) | 50.0 / 57.2 / 60.7 s | 1.5–1.9 GB each | 9.9 GB, never drops |
+| After | 5.5 GB (model gone) | 15.3 / 14.3 / 14.3 s | none | 5.9 GB |
+
+Not covered: with another app holding several GB, the speech model plus a 3.9 GB word-timing
+model may not fit together, and that one file's alignment would spill (the files after it don't).
+
+**Detection.** `transcribe.language_probs`: up to 4 spots spread over the file (the middle of each
+quarter), 45 s searched at each with the silero VAD (`diarize.speech_spans`), up to 30 s of the
+speech found goes to Whisper's language head, probabilities averaged. A spot with under 5 s of
+speech doesn't vote; with no speech anywhere it falls back to the first 30 s. Cost is the same
+whatever the length: about 2 s of VAD per file plus 4 encoder passes (0.5 s). On a clip
+that opens with 45 s of tones and noise: first-30-s guess `en` at 0.29 (a coin toss), new `en` at 1.00.
+
+**Languages I use** (`modelstore.my_languages`, Models tab, saved in `settings.json`, empty by
+default; part of the cache key). `transcribe.choose_language`: a guess in the list is accepted; a
+guess outside it needs 0.5 (`OUTSIDE_LIST_MIN`), else the best-scoring language of the list is
+used. A Portuguese default (`auto_portuguese`) counts as using Portuguese. Empty list: the top
+guess stands, as before.
+
+**Ask before a big download.** Auto-detect, language not in the list, word-timing model over 1 GB
+(`ASK_OVER_MB`) and not on disk: `transcribe_track` asks through a per-thread hook
+(`transcribe.asking`) instead of downloading. Answers: download it, continue without word timing
+for this file, or use a different language. A language picked in a dropdown, or one in the list,
+downloads as before. No hook (a script calling `transcribe_track` directly): no download, line
+timings only.
+
+- The wait reuses the pause machinery: `Job._park` / `batch._park` (the body of the old pause
+  block), so the GPU is freed and the timers freeze; Cancel ends it (batch, project or the one
+  file). The GPU turn isn't held while waiting, so other runs go ahead.
+- One answer covers the rest of that file (a job, a batch file or a merged project); the next
+  file asks again.
+- App: a box under the progress line in Transcribe & Merge, Batch and Label Track (`showQuestion`).
+  API: `question` in `/api/progress/{id}` and `/api/batch/{id}`, `POST /api/answer/{job}` and
+  `/api/batch/{id}/answer`. CLI / MCP: new `answer` action; `get_progress` / `get_batch` carry the
+  question and its choices and say "waiting for your answer"; a `--wait` returns with the question
+  instead of hanging.
+
+**Shown.** The progress line gets the choice once detection has run (`track 1/1 · Speaker 1 ·
+English 97%`), the finished line too (`done in 18s · English 97%`), and results carry it per track
+(`MergedOutput.languages`, in the JSON export).
+
+Verified on the real GPU and a real server (its own port): the numbers above; detection on the
+music-first clip and a 2 h 11 min file; and, with the detection result faked to `nn` 0.36 for
+marked clips, the whole question flow from the CLI and in the app (a job and a batch): asked, GPU
+released and clock stopped while waiting, a wrong language code refused, each answer except
+"download" carried out, cancel while waiting. Not run for real: the 3.9 GB download itself (the
+"download" answer goes through the same `ensure()` every other model download uses), and Label
+Track's question box (same function as the other two tabs).
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
