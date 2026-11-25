@@ -97,9 +97,12 @@ def run_merge_pipeline(
                 report(done_weight / total_weight, label)
 
                 # ponytail: chunks fill 90% of the track's share; word timing (no progress hook) the rest
-                def on_chunk(f: float, waiting=False, w=p.input.duration, d=done_weight, label=label) -> None:
+                def on_chunk(f: float, waiting=False, detected=None, w=p.input.duration, d=done_weight,
+                             label=[label]) -> None:
+                    if detected:                   # what Auto-detect chose stays on this track's line
+                        label[0] += f" · {detected}"
                     report((d + 0.9 * f * w) / total_weight,
-                           f"{label} · {WAITING if waiting else f'{int(f * 100)}%'}")
+                           f"{label[0]} · {WAITING if waiting else f'{int(f * 100)}%'}")
 
                 with chunk_progress(on_chunk):     # moves the bar while this track transcribes
                     outputs.append(transcribe_fn(str(wavs[track.track_index])))
@@ -133,7 +136,7 @@ def run_per_file_pipeline(
     on_skip: Callable[[int, "PreparedSource"], None],
     is_file_cancelled: Callable[[int], bool],
     on_wait: Optional[Callable[[int, "PreparedSource"], None]] = None,
-    on_chunk: Optional[Callable[[int, int, int, float, bool], None]] = None,
+    on_chunk: Optional[Callable[..., None]] = None,
 ) -> None:
     """Transcribe the given file positions (one transcript each) with depth-1 prefetch: while one
     file transcribes, the next extracts in the background. Per-file lifecycle is reported through
@@ -188,8 +191,8 @@ def run_per_file_pipeline(
                         break
                     on_track(i, j, len(selected), track.speaker)
                     # on_chunk(i, j, tracks, share of this track's chunks done) while it transcribes
-                    report_chunk = (lambda f, waiting=False, i=i, j=j, n=len(selected):
-                                    on_chunk(i, j, n, f, waiting)) if on_chunk else None
+                    report_chunk = (lambda f, waiting=False, detected=None, i=i, j=j, n=len(selected):
+                                    on_chunk(i, j, n, f, waiting, detected)) if on_chunk else None
                     with chunk_progress(report_chunk):
                         outputs.append(transcribe_fn(str(wavs[track.track_index])))
                     if detect:
@@ -205,6 +208,9 @@ def run_per_file_pipeline(
             except Exception as exc:                 # per-file isolation — keep the rest going
                 if cancelled():                      # e.g. a model download stopped by Cancel
                     raise
-                on_error(i, p, exc)
+                if is_file_cancelled(i):             # canceled while it waited for the user's answer
+                    on_skip(i, p)
+                else:
+                    on_error(i, p, exc)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

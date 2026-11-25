@@ -123,3 +123,43 @@ def test_cancel_while_paused_unwinds():
     job.cancel()                         # cancel while paused -> wakes and unwinds
     _wait(job)
     assert job.status is JobStatus.CANCELLED
+
+
+def test_job_waits_for_an_answer_like_a_pause():
+    from app.transcribe import _asker
+    reg = JobRegistry()
+    job = reg.create()
+    freed, got = [], []
+
+    def work(progress):
+        progress(0.1, "track 1")
+        got.append(_asker.fn({"language": "nn", "text": "big download?"}))    # what transcribe_track does
+        got.append(_asker.fn({"language": "nn", "text": "big download?"}))    # next track, same language
+        return MergedOutput()
+
+    assert job.answer("skip") is False                 # nothing asked yet
+    reg.run(job, work, on_pause=lambda: freed.append(True))
+    _wait_freed(job)
+    assert job.question["text"] == "big download?" and job.message == "waiting for your answer: big download?"
+    assert freed == [True]                             # GPU released while it waits
+    e1 = job.elapsed
+    time.sleep(0.2)
+    assert job.elapsed - e1 < 0.1                      # clock frozen, as when paused
+
+    assert job.answer("language", "en") is True
+    _wait(job)
+    assert job.status is JobStatus.DONE and job.question is None
+    assert got == [("language", "en")] * 2             # asked once: the answer covers the rest of the job
+    assert job.paused_total >= 0.15
+
+
+def test_cancel_while_waiting_for_an_answer():
+    from app.transcribe import _asker
+    reg = JobRegistry()
+    job = reg.create()
+    reg.run(job, lambda progress: _asker.fn({"language": "nn", "text": "q"}))
+    _wait_freed(job)
+    assert job.question is not None
+    job.cancel()
+    _wait(job)
+    assert job.status is JobStatus.CANCELLED and job.question is None

@@ -96,3 +96,40 @@ def test_cli_has_a_command_per_action_and_parses_lists(api, two_stream_file, cap
 
 def test_save_result_needs_a_finished_job(api):
     assert api.put("/api/result/unknown", json={"segments": []}).status_code == 404
+
+
+def test_a_waiting_job_says_so_and_takes_an_answer(api, two_stream_file, monkeypatch, tmp_path):
+    """A run that stops to ask doesn't hang a waiting CLI / MCP call: it returns the question and
+    how to answer; `answer` lets it carry on."""
+    from app.transcribe import ASK_CHOICES, _asker
+
+    def asking_stub(_wav, **_kw):
+        _asker.fn({"language": "nn", "text": "big download?", "choices": ASK_CHOICES})
+        return _stub_transcribe(_wav)
+
+    monkeypatch.setattr(routes.api, "transcribe_track", asking_stub)
+    monkeypatch.setattr(routes.api, "unload_models", lambda: None)
+    job = actions.transcribe([str(two_stream_file)], tracks=[1], wait=True)
+    assert job["status"] == "waiting for your answer" and job["question"]["text"] == "big download?"
+    assert set(job["question"]["choices"]) == {"download", "skip", "language"} and "answer" in job["next"]
+    p = actions.get_progress(job["job_id"])
+    assert p["status"] == "running" and p["question"] and p["message"].startswith("waiting for your answer")
+
+    with pytest.raises(actions.ActionError, match="unknown language code"):
+        actions.answer(job["job_id"], "language", "xx")
+    assert actions.answer(job["job_id"], "skip") == {"answered": True}
+    deadline = time.time() + 5
+    while actions.get_progress(job["job_id"])["status"] != "done" and time.time() < deadline:
+        pass
+    assert "question" not in actions.get_progress(job["job_id"])
+
+    # a batch: the same, through the same action
+    b = actions.run_batch([str(two_stream_file)], out=str(tmp_path / "out"), formats=["txt"], wait=True)
+    assert b["status"] == "running" and b["question"]["item"] == two_stream_file.name
+    batch_id = next(iter(api.app.state.batches._batches))
+    assert actions.answer(batch_id, "download") == {"answered": True}
+    deadline = time.time() + 5
+    while actions.get_batch(batch_id)["status"] != "done" and time.time() < deadline:
+        pass
+    assert actions.get_batch(batch_id)["done"] == 1
+    assert "answer" in {a.__name__ for a in actions.ACTIONS}

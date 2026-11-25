@@ -32,10 +32,13 @@ def test_language_without_align_model_keeps_line_timings(monkeypatch, tmp_path):
         raise AssertionError("alignment must be skipped for a language without a model")
 
     monkeypatch.setattr(transcribe, "_load_align", no_align)
-    for language in ("is", None):                    # forced, and auto-detected as Icelandic
-        out = transcribe.transcribe_track(tmp_path / "x.wav", language=language)
-        assert out == {"language": "is",
-                       "segments": [{"start": 0.5, "end": 2.0, "text": " halló heimur", "words": []}]}
+    monkeypatch.setattr(transcribe, "language_probs", lambda pipe, audio: {"is": 0.9, "en": 0.1})
+    monkeypatch.setattr(transcribe.modelstore, "SETTINGS_FILE", tmp_path / "settings.json")
+    segments = [{"start": 0.5, "end": 2.0, "text": " halló heimur", "words": []}]
+    assert transcribe.transcribe_track(tmp_path / "x.wav", language="is") == {"language": "is", "segments": segments}
+    # auto-detected as Icelandic: the same, plus how sure the guess was
+    assert transcribe.transcribe_track(tmp_path / "x.wav") == {
+        "language": "is", "segments": segments, "language_probability": 0.9}
 
 
 def test_swedish_loads_the_extra_align_model(monkeypatch):
@@ -73,9 +76,6 @@ class _DetectingModel(_FakeModel):
         super().__init__(lang)
         self.calls = calls
 
-    def detect_language(self, audio):
-        return self.lang
-
     def transcribe(self, audio, batch_size, language):
         self.calls.append(language)
         return {"language": language or self.lang, "segments": [{"start": 0.0, "end": 1.0, "text": " olá"}]}
@@ -95,6 +95,7 @@ def test_portuguese_variants_route_model_language_and_label(monkeypatch, tmp_pat
         return _DetectingModel(detect, sent)
 
     monkeypatch.setattr(transcribe, "_load_model", load)
+    monkeypatch.setattr(transcribe, "language_probs", lambda pipe, audio: {detect: 0.9})
     detect = "pt"
 
     assert transcribe.transcribe_track(tmp_path / "x.wav", language="pt-PT")["language"] == "pt-PT"
@@ -108,7 +109,7 @@ def test_portuguese_variants_route_model_language_and_label(monkeypatch, tmp_pat
     assert loaded[-2:] == ["large-v3", "camoes-int8"]               # detect with chosen, transcribe with CAMOES
     detect = "es"                                                    # not Portuguese: default doesn't apply
     assert transcribe.transcribe_track(tmp_path / "x.wav")["language"] == "es"
-    assert loaded[-1] == "large-v3" and sent[-1] is None
+    assert loaded[-1] == "large-v3" and sent[-1] == "es"
 
 
 class _PunctModel:
@@ -209,3 +210,135 @@ def test_a_waiting_run_says_so(monkeypatch, tmp_path):
     th.join(5)
     assert waiting_seen == [(0.0, True)]
     assert seen[:2] == [(0.0, True), (0.0, False)]
+
+
+# --- Auto-detect: speech across the file, the user's languages, asking before a big download (#38) ---
+
+def test_speech_windows_come_from_across_the_file_and_skip_what_has_no_speech(monkeypatch):
+    from app import diarize
+    SR = diarize.SR
+
+    def fake_spans(chunk):                             # "speech" = the non-zero samples
+        on = np.flatnonzero(chunk.numpy())
+        return [(on[0] / SR, (on[-1] + 1) / SR)] if len(on) else []
+
+    monkeypatch.setattr(diarize, "speech_spans", fake_spans)
+    audio = np.ones(600 * SR, dtype=np.float32)
+    audio[:80 * SR] = 0                                # opens with 80 s of no speech
+    audio[330 * SR:420 * SR] = 0                       # and a silent stretch later on
+    audio[80 * SR:120 * SR] = 0.25                     # each spot's speech is told apart by its level
+    audio[180 * SR:270 * SR] = 0.5
+    wins = transcribe.speech_windows(audio)
+    # 4 spots of 45 s in the middle of each quarter: 52.5-97.5 s (17.5 s of speech), 202.5-247.5 s,
+    # the silent 352.5-397.5 s (no vote), 502.5-547.5 s
+    assert [(len(w) // SR, float(w[0])) for w in wins] == [(17, 0.25), (30, 0.5), (30, 1.0)]
+
+    assert transcribe.speech_windows(np.zeros(600 * SR, dtype=np.float32)) == []      # no speech anywhere
+    short = transcribe.speech_windows(np.ones(60 * SR, dtype=np.float32))             # a short file: one window
+    assert [len(w) // SR for w in short] == [30]
+
+
+def test_language_probs_average_the_windows(monkeypatch):
+    votes = iter([[("<|nn|>", 0.6), ("<|en|>", 0.4)], [("<|en|>", 0.9), ("<|nn|>", 0.1)]])
+
+    class Pipe:
+        class model:
+            feat_kwargs = {"feature_size": 80}
+            encode = staticmethod(lambda mel: next(votes))
+            class model:
+                detect_language = staticmethod(lambda encoded: [encoded])
+
+    monkeypatch.setattr(transcribe, "speech_windows", lambda audio: [np.zeros(16000, dtype=np.float32)] * 2)
+    probs = transcribe.language_probs(Pipe, np.zeros(16000, dtype=np.float32))
+    assert probs == pytest.approx({"nn": 0.35, "en": 0.65})          # one odd window is outvoted
+
+
+def test_choose_language_trusts_the_users_languages():
+    guess = {"nn": 0.36, "en": 0.30, "pt": 0.05}
+    assert transcribe.choose_language(guess, []) == "nn"              # no list: the top guess stands
+    assert transcribe.choose_language(guess, ["en", "pt"]) == "en"    # outside the list and unsure: best of theirs
+    assert transcribe.choose_language(guess, ["nn"]) == "nn"          # in the list: accepted, however unsure
+    assert transcribe.choose_language({"ja": 0.97, "en": 0.01}, ["en", "pt"]) == "ja"   # outside but sure
+
+
+def _auto_detect(monkeypatch, tmp_path, probs, installed=()):
+    """transcribe_track with every model stubbed; returns what was downloaded, aligned, dropped."""
+    ms = transcribe.modelstore
+    monkeypatch.setattr(ms, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(whisperx, "load_audio", lambda p: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(transcribe, "_load_model", lambda *a: _FakeModel("?"))
+    monkeypatch.setattr(transcribe, "language_probs", lambda pipe, audio: probs)
+    monkeypatch.setattr(ms, "is_installed", lambda e: e.id in installed or e.kind == "whisper")
+    seen = {"downloaded": [], "aligned": [], "dropped": []}
+    monkeypatch.setattr(ms, "ensure", lambda e: seen["downloaded"].append(e.id))
+    monkeypatch.setattr(transcribe, "_load_align", lambda lang, device: (seen["aligned"].append(lang), {}))
+    monkeypatch.setattr(transcribe, "_drop_align", lambda: seen["dropped"].append(seen["aligned"][-1]))
+    monkeypatch.setattr(whisperx, "align", lambda segs, *a, **k: {"segments": [{**s, "words": ["w"]} for s in segs]})
+    import torch
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    return seen
+
+
+def test_auto_detect_asks_before_a_big_download(monkeypatch, tmp_path):
+    seen = _auto_detect(monkeypatch, tmp_path, {"nn": 0.36, "en": 0.30})
+    asked, reply = [], [("download", None)]
+
+    def ask(question):
+        asked.append(question)
+        return reply[0]
+
+    # nobody to ask (a script): no download, line timings only
+    out = transcribe.transcribe_track(tmp_path / "x.wav")
+    assert out["language"] == "nn" and out["language_probability"] == 0.36
+    assert out["segments"][0]["words"] == [] and "align:nn" not in seen["downloaded"]
+
+    with transcribe.asking(ask):
+        out = transcribe.transcribe_track(tmp_path / "x.wav")           # "download": fetch it, align
+        q = asked[0]
+        assert "Norwegian Nynorsk (36% sure)" in q["text"] and "3.9 GB" in q["text"]
+        assert q["language"] == "nn" and q["size_mb"] == 3850 and set(q["choices"]) == {"download", "skip", "language"}
+        assert q["others"] == [{"language": "en", "confidence": 0.3}]
+        assert seen["downloaded"][-1] == "align:nn" and out["segments"][0]["words"] == ["w"]
+        assert seen["dropped"] == ["nn"]                                # a 3.9 GB model doesn't stay on the GPU
+
+        reply[0] = ("skip", None)                                       # go without word timing
+        seen["downloaded"].clear()
+        out = transcribe.transcribe_track(tmp_path / "x.wav")
+        assert out["language"] == "nn" and out["segments"][0]["words"] == []
+        assert "align:nn" not in seen["downloaded"]
+
+        reply[0] = ("language", "en")                                   # use another language instead
+        out = transcribe.transcribe_track(tmp_path / "x.wav")
+        assert out["language"] == "en" and "language_probability" not in out
+        assert seen["downloaded"][-1] == "align:en" and seen["aligned"][-1] == "en"
+        assert seen["dropped"] == ["nn"]                                # a small model stays loaded
+        assert len(asked) == 3
+
+        # no question when the language was picked, is one the user uses, or its model is small
+        transcribe.transcribe_track(tmp_path / "x.wav", language="nn")
+        assert seen["downloaded"][-1] == "align:nn"
+        transcribe.modelstore.set_my_languages(["nn"])
+        transcribe.transcribe_track(tmp_path / "x.wav")
+        assert seen["downloaded"][-1] == "align:nn"
+        transcribe.modelstore.set_my_languages(["en", "pt"])            # nn at 0.36 isn't trusted: English
+        assert transcribe.transcribe_track(tmp_path / "x.wav")["language"] == "en"
+        assert len(asked) == 3
+
+
+def test_auto_detect_does_not_ask_when_the_model_is_on_disk(monkeypatch, tmp_path):
+    seen = _auto_detect(monkeypatch, tmp_path, {"nl": 0.9}, installed={"align:nl"})
+    with transcribe.asking(lambda q: (_ for _ in ()).throw(AssertionError("asked"))):
+        assert transcribe.transcribe_track(tmp_path / "x.wav")["language"] == "nl"
+    assert seen["aligned"] == ["nl"] and seen["dropped"] == []
+
+
+def test_a_finished_run_lets_go_of_its_audio_and_models(monkeypatch, tmp_path):
+    """A frame of transcribe_track can outlive the call (a library holding on to a traceback), and
+    kept the run's word-timing model on the GPU until the server restarted. Its locals are cleared."""
+    import sys
+    _auto_detect(monkeypatch, tmp_path, {"en": 0.9})
+    frames = []
+    monkeypatch.setattr(whisperx, "align", lambda segs, *a, **k: (frames.append(sys._getframe(1)), {"segments": []})[1])
+    transcribe.transcribe_track(tmp_path / "x.wav")
+    held = frames[0].f_locals
+    assert held["audio"] is None and held["model"] is None and held["align_model"] is None and held["metadata"] is None

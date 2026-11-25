@@ -32,9 +32,19 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   split** — the real ffmpeg read time beside the GPU transcription time, so a cache-hit re-run
   (instant on the GPU) still shows the real read work — and Cancel/Restart. The file list **keeps its scroll position** as it refreshes, so a long queue
   doesn't snap back to the top every second. No babysitting.
-- **Language** — transcription **auto-detects per file** by default; a **Language** dropdown (in
-  Batch, Transcribe & Merge and Label Track) can force a specific language, which skips detection and avoids the
-  first-use download of that language's wav2vec2 alignment model. Swedish uses KBLab's wav2vec2
+- **Language** — transcription **auto-detects per file** by default, from speech taken at several
+  spots across the file (not its first 30 s, so music or silence at the start doesn't decide it).
+  The progress line and the finished line show what it chose and how sure it was (`English 97%`),
+  and the JSON export keeps it per track (`languages`). A **Language** dropdown (in
+  Batch, Transcribe & Merge and Label Track) can force a specific language, which skips detection.
+  **Languages I use** (Models tab, empty by default) is the list of languages your recordings are
+  in: a guess among them is accepted, and a guess outside them has to be at least 50% sure,
+  otherwise the closest of yours is used. Auto-detect never starts a big download on its own: when
+  it lands on a language outside that list whose word-timing model is over 1 GB and not on disk,
+  the run **stops and asks** — download it and continue, continue without word timing for that
+  file, or use a different language instead. The clock stops while it waits, as with Pause, and
+  Cancel still works. A language picked in a dropdown, or one in your list, downloads its model as
+  a visible step without asking. Swedish uses KBLab's wav2vec2
   model. A language with no alignment model still transcribes, keeping Whisper's line timings
   without word-level timing (SRT splits inside a long line are then estimated).
   **Portuguese** comes in two: *Portugal* runs on CAMÕES (INESC-ID's large-v3 fine-tune on 425 h
@@ -203,6 +213,8 @@ split also prints to the server console as a scrollback record (`[timing] <file>
   left. Each shows whether it's connecting, downloading or retrying (and why); errors no retry can fix
   (missing file, no access, disk full) fail at once with the reason. A run that needs a missing model
   downloads it as a visible step, ahead of the queue; Pause and Cancel work during it. Language dropdowns note which languages still need a download.
+  **Languages I use** (under the speech models) tells Auto-detect which languages to expect, and
+  which ones may download a big word-timing model without asking first (see Language above).
   **Use** picks the speech model every run uses (large-v3 by default; also large-v2, turbo,
   medium, small, base, tiny, and English-only distil-large-v3.5 / distil-large-v3 / medium.en /
   distil-medium.en / small.en / distil-small.en / base.en / tiny.en), saved across restarts.
@@ -224,15 +236,19 @@ whispermerger edit-lines <job id> --rename-from Guest --rename-to Ana   :: or --
 whispermerger export <job id or transcript.json> --format srt --max-chars 42
 whispermerger export <job id or transcript.json> --format txt --no-txt-timestamps --no-show-speakers   :: the text alone
 whispermerger run-batch D:\rec --out D:\subs --formats srt,txt --wait
+whispermerger answer <job or batch id> skip             :: when a run stops to ask: download | skip | language --language en
 whispermerger models                                    :: also download-model, use-model
 whispermerger --help                                    :: every command; add --json for machine-readable output
 ```
 
 Paths go after the command; lists are comma-separated (`--names "Host,Guest"`). Progress prints to
-stderr.
+stderr. With no `--language`, a run can stop to ask before a big word-timing download (see
+Language above): `get-progress` / `get-batch` then say "waiting for your answer" and carry the
+question and its choices, a `--wait` returns with them instead of hanging, and `answer` lets the
+run carry on.
 
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
-Tools: `add_files`, `transcribe`, `get_progress`, `get_transcript`, `edit_lines`, `export`,
+Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `get_transcript`, `edit_lines`, `export`,
 `run_batch`, `get_batch`, `list_models`, `download_model`, `use_model`, `cache_stats`,
 `clear_cache` and `shutdown` (both marked destructive), `status`.
 

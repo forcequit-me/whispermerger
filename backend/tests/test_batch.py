@@ -444,3 +444,65 @@ def test_same_name_merge_projects_do_not_overwrite(two_stream_file, tmp_path):
     _run(projects, output_mode="folder", output_folder=str(tmp_path))
     assert _find(tmp_path / "Dup", "Dup", "txt")
     assert _find(tmp_path / "Dup", "Dup_2", "txt")
+
+
+def _asking_stub(_wav):
+    """A transcribe stub that stops to ask, as transcribe_track does before a big download."""
+    from app.transcribe import _asker
+    choice, language = _asker.fn({"language": "nn", "text": "big download?"})
+    return {"language": language or "nn", "segments": []}
+
+
+def _start_asking(tmp_path, proj):
+    import time as _t
+    reg = BatchRegistry()
+    batch = reg.create([proj])
+    reg.set_spec(batch.id, _RunSpec([proj], _asking_stub, "folder", str(tmp_path), None))
+    reg.run(batch, lambda: run_batch(batch, [proj], _asking_stub,
+            output_mode="folder", output_folder=str(tmp_path)))
+    deadline = _t.time() + 3
+    while batch.question is None and _t.time() < deadline:
+        _t.sleep(0.01)
+    return reg, batch
+
+
+def test_batch_waits_for_an_answer_like_a_pause(two_stream_file, tmp_path):
+    import time as _t
+    proj = ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0), _prepared(two_stream_file, "b.mkv", 2.0)],
+                        per_file=True)
+    reg, batch = _start_asking(tmp_path, proj)
+    a = batch.projects[0].files[0]
+    assert batch.question["item"] == "a.mkv" and batch.question["text"] == "big download?"
+    assert a.message == "waiting for your answer: big download?"       # on the file's row
+    assert batch.projects[0].message == "a.mkv · waiting for your answer: big download?"
+    assert batch.gpu_freed
+    e1 = (batch.elapsed, a.elapsed)
+    _t.sleep(0.2)
+    assert batch.elapsed - e1[0] < 0.1 and a.elapsed - e1[1] < 0.1    # clocks frozen, as when paused
+
+    assert reg.answer(batch.id, "language", "en")
+    deadline = _t.time() + 3
+    while (batch.question or {}).get("item") != "b.mkv" and _t.time() < deadline:
+        _t.sleep(0.01)
+    assert batch.question["item"] == "b.mkv"           # an answer is for one file: the next one asks again
+    assert reg.answer(batch.id, "skip")
+    _wait_status(batch)
+    assert batch.status is Status.DONE and batch.question is None
+    assert [f.result.languages[0].language for f in batch.projects[0].files] == ["en", "nn"]
+    assert reg.answer(batch.id, "skip") is False       # nothing is waiting any more
+
+
+def test_cancel_while_batch_waits_for_an_answer(two_stream_file, tmp_path):
+    proj = ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0), _prepared(two_stream_file, "b.mkv", 2.0)],
+                        per_file=True)
+    reg, batch = _start_asking(tmp_path, proj)
+    reg.cancel_file(batch.id, 0, 0)                    # cancel just the file that is asking
+    import time as _t
+    deadline = _t.time() + 3
+    while (batch.question or {}).get("item") != "b.mkv" and _t.time() < deadline:
+        _t.sleep(0.01)
+    assert batch.projects[0].files[0].status is Status.CANCELED       # skipped, not failed
+    assert batch.question["item"] == "b.mkv"           # the queue moved on to the next file
+    reg.cancel(batch.id)                               # cancel the whole batch while it waits
+    _wait_status(batch)
+    assert batch.status is Status.CANCELED and batch.question is None

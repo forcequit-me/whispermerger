@@ -153,7 +153,8 @@ def test_per_file_pipeline_reports_chunks_per_track(tmp_path):
     run_per_file_pipeline([PreparedSource(input=src, path=str(wav))], stub, [0],
                           on_start=noop, on_track=noop, on_done=noop, on_error=noop, on_skip=noop,
                           is_file_cancelled=lambda i: False, on_chunk=lambda *a: chunks.append(a))
-    assert chunks == [(0, 0, 2, 0.5, False), (0, 1, 2, 0.5, False)]   # last: waiting for the GPU
+    # last two: waiting for the GPU, what Auto-detect chose
+    assert chunks == [(0, 0, 2, 0.5, False, None), (0, 1, 2, 0.5, False, None)]
 
 
 def test_models_unload_for_real_unless_another_thread_is_transcribing():
@@ -240,3 +241,24 @@ def test_model_loads_never_overlap_and_a_meta_load_is_retried(monkeypatch):
     assert overlaps and not any(overlaps)
     assert t._load_align("ko", "cpu") == ("model", "ko") and calls.count("ko") == 2   # retried once
     t._load_align.cache_clear()
+
+
+def test_detected_language_stays_on_the_track_line(tmp_path):
+    """Auto-detect's choice is reported through the chunk hook and stays on that track's line."""
+    from app.transcribe import _chunk
+    seen = []
+
+    def stub(path):
+        _chunk.fn(0.0, detected="English 97%")
+        _chunk.fn(0.5)
+        return {"language": "en", "language_probability": 0.97, "segments": []}
+
+    import numpy as np, soundfile as sf
+    wav = tmp_path / "a.wav"
+    sf.write(wav, np.zeros(16000, dtype=np.float32), 16000)
+    src = InputSource(filename="a.wav", duration=1.0, tracks=[Track(track_index=0, speaker="S1")])
+    out = run_merge_pipeline([PreparedSource(input=src, path=str(wav))], stub,
+                             progress_cb=lambda f, m: seen.append(m))
+    assert "Transcribing track 1/1 · S1 · English 97% · 50%" in seen
+    assert out.languages[0].model_dump() == {"speaker": "S1", "language": "en", "confidence": 0.97}
+    assert out.language_note() == "English 97%"        # the done line and the result carry it

@@ -396,6 +396,12 @@
           <label class="opt" title="CAMÕES writes lowercase with almost no punctuation. This also runs large-v3 and copies its capitals and punctuation onto CAMÕES's words. About 2× slower for Portugal runs.">
             <input type="checkbox" id="pt-punctuation"> Portugal: add punctuation from large-v3 (about 2× slower)</label>
         </div>
+        <div class="row" style="margin-top:12px">
+          <label class="field" title="The languages your recordings are in. Leave empty for no preference."><span>Languages I use</span>
+            <select id="my-languages-add" style="min-width:170px"></select></label>
+          <div id="my-languages" class="my-langs"></div>
+        </div>
+        <div class="muted" style="margin-top:6px">Auto-detect listens to speech from across the file. With languages chosen here, a guess outside them has to be a confident one, or the closest of yours is used. For a language outside them, a run asks before a word-timing download over 1 GB.</div>
       </div>
       <div class="panel" id="models-alignp" style="display:none">
         <h2>Word-timing models</h2>

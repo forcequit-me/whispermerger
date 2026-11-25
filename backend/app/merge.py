@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional, Sequence
 
-from .models import InputSource, MergedOutput, Segment, Word
+from .models import InputSource, MergedOutput, Segment, TrackLanguage, Word
 
 # Optional hook: given (track index into `outputs`, start, end) return the RMS loudness of that
 # track's audio in that window, in the track's own time (offset removed). Used only to pick the
@@ -211,4 +211,7 @@ def merge(
         version="1.0",
         sources=list(sources) if sources is not None else [],
         segments=segments,
+        languages=[TrackLanguage(speaker=label, language=o["language"],
+                                 confidence=o.get("language_probability"))
+                   for o, label in zip(outputs, labels) if o.get("language")],
     )
