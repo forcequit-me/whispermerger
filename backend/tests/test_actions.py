@@ -2,6 +2,7 @@
 
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -37,6 +38,26 @@ def api(monkeypatch):
     monkeypatch.setattr(actions, "ensure_server", lambda: None)
     monkeypatch.setattr(actions.time, "sleep", lambda s: None)
     return client
+
+
+def _held(monkeypatch) -> threading.Event:
+    """Transcription waits until the test sets this, so a run can be controlled while it is running."""
+    gate = threading.Event()
+
+    def stub(_wav, **_kw):
+        gate.wait(5)
+        return _stub_transcribe(_wav)
+
+    monkeypatch.setattr(routes.api, "transcribe_track", stub)
+    monkeypatch.setattr(routes.api, "unload_models", lambda: None)
+    return gate
+
+
+def _until(check, seconds: float = 5) -> None:
+    deadline = time.time() + seconds
+    while not check() and time.time() < deadline:
+        pass
+    assert check()
 
 
 def test_transcribe_edit_export(api, two_stream_file, tmp_path):
@@ -154,3 +175,72 @@ def test_a_waiting_job_says_so_and_takes_an_answer(api, two_stream_file, monkeyp
         pass
     assert actions.get_batch(batch_id)["done"] == 1
     assert "answer" in {a.__name__ for a in actions.ACTIONS}
+
+
+def test_a_job_pauses_resumes_and_cancels(api, two_stream_file, monkeypatch):
+    gate = _held(monkeypatch)
+    job_id = actions.transcribe([str(two_stream_file)], tracks=[1])["job_id"]
+    assert actions.pause(job_id) == {"pausing": True}
+    assert actions.get_progress(job_id)["paused"]                    # "pausing: ..." then "GPU released"
+    assert actions.resume(job_id) == {"resuming": True}
+    assert "paused" not in actions.get_progress(job_id)
+    assert actions.cancel(job_id) == {"canceling": True}
+    gate.set()
+    _until(lambda: actions.get_progress(job_id)["status"] == "cancelled")
+    for act in (actions.pause, actions.resume, actions.cancel):
+        with pytest.raises(actions.ActionError, match="404"):
+            act("nope")
+
+
+def test_a_batch_is_controlled_by_project_and_file_number(api, two_stream_file, monkeypatch, tmp_path):
+    gate, f = _held(monkeypatch), str(two_stream_file)
+    done = lambda bid, status="done": _until(lambda: actions.get_batch(bid)["status"] == status)
+    rows = lambda bid: [(i["project"], i.get("file"), i["status"]) for i in actions.get_batch(bid)["items"]]
+
+    # one project, a transcript per file: cancel file 2 while file 1 runs, pause and resume the batch
+    bid = actions.run_batch([f, f], out=str(tmp_path / "a"), formats=["txt"])["batch_id"]
+    assert actions.get_batch(bid)["batch_id"] == bid
+    assert actions.cancel(bid, file=2) == {"canceling": True}
+    assert actions.pause(bid) == {"pausing": True} and actions.get_batch(bid)["paused"]
+    assert actions.resume(bid) == {"resuming": True} and "paused" not in actions.get_batch(bid)
+    gate.set()
+    done(bid)
+    assert rows(bid) == [(1, 1, "done"), (1, 2, "canceled")]
+
+    # that file again, then the whole (finished) project; with nothing failed, a plain retry is refused
+    assert actions.retry_batch(bid, file=2)["batch_id"] == bid
+    done(bid)
+    assert rows(bid) == [(1, 1, "done"), (1, 2, "done")]
+    with pytest.raises(actions.ActionError, match="no failed or canceled projects"):
+        actions.retry_batch(bid)
+    with pytest.raises(actions.ActionError, match="file goes with one project"):
+        actions.retry_batch(bid, projects=[1, 2], file=1)
+    with pytest.raises(actions.ActionError, match="404"):
+        actions.cancel(bid, project=9)
+    actions.retry_batch(bid, projects=[1])
+    done(bid)
+
+    # one merged project: cancel it alone (the batch itself still ends "done"), retry what was canceled
+    gate.clear()
+    bid = actions.run_batch([f], out=str(tmp_path / "b"), formats=["txt"], per_file=False)["batch_id"]
+    assert actions.cancel(bid, project=1) == {"canceling": True}
+    gate.set()
+    done(bid)
+    assert rows(bid) == [(1, None, "canceled")]
+    actions.retry_batch(bid)
+    done(bid)
+    assert rows(bid) == [(1, None, "done")]
+
+    # the whole batch
+    gate.clear()
+    bid = actions.run_batch([f], out=str(tmp_path / "c"), formats=["txt"])["batch_id"]
+    assert actions.cancel(bid) == {"canceling": True}
+    gate.set()
+    done(bid, "canceled")
+
+    parser = cli.build_parser()
+    a = parser.parse_args(["cancel", "x", "--project", "2", "--file", "3"])
+    assert (a.run_id, a.project, a.file) == ("x", 2, 3)
+    a = parser.parse_args(["retry-batch", "x", "--projects", "1,2"])
+    assert (a.batch_id, a.projects, a.file) == ("x", [1, 2], None)
+    assert parser.parse_args(["pause", "x"]).run_id == parser.parse_args(["resume", "x"]).run_id == "x"
