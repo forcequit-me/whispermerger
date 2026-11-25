@@ -203,6 +203,9 @@ def _export_options(max_chars: int, max_lines: int, pad: float, subtitle_limits:
 
 
 _EXPORT_KEYS = tuple(inspect.signature(_export_options).parameters)
+# How the tracks are merged: the server's own names (MergeOptionsIn), so they pass straight through.
+_MERGE_KEYS = ("detect_conflicts", "backchannel_render", "backchannel_max_words", "overlap_min_seconds",
+               "bleed_window_seconds", "bleed_similarity", "bleed_prefer_ratio")
 
 
 def _fmt_time(s: float) -> str:
@@ -222,7 +225,11 @@ def add_files(paths: list[str]) -> list[dict]:
 
 def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Optional[list[int]] = None,
                language: Optional[str] = None, out: Optional[str] = None,
-               formats: list[str] = ["srt", "json"], wait: bool = False) -> dict:
+               formats: list[str] = ["srt", "json"], wait: bool = False,
+               detect_conflicts: bool = True, backchannel_render: str = "parenthetical",
+               backchannel_max_words: int = 4, overlap_min_seconds: float = 2.0,
+               bleed_window_seconds: float = 1.0, bleed_similarity: float = 0.7,
+               bleed_prefer_ratio: float = 2.0) -> dict:
     """Transcribe audio/video files into one merged, speaker-labeled transcript.
 
     paths: files to transcribe; several are joined in that order on one timeline.
@@ -232,15 +239,24 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
     out: folder to write the transcript files to; implies waiting for the result.
     formats: what to write to `out`: srt, txt, csv, json.
     wait: wait until it's done (long files take minutes) and return {job_id, status, elapsed}.
+    detect_conflicts: flag backchannels, overlaps and microphone bleed between speakers; off only orders the lines by time.
+    backchannel_render: a short reaction ("mm-hm") inside someone else's line is written "parenthetical" (its own line, in brackets), "separate" (its own line, as said) or "skip" (left out).
+    backchannel_max_words: a reaction counts as a backchannel when it has fewer words than this.
+    overlap_min_seconds: two speakers talking at once for at least this long are flagged as an overlap.
+    bleed_window_seconds: bleed is one voice picked up by two microphones; lines that start within this many seconds of each other are compared for it.
+    bleed_similarity: how alike two such lines must read to count as bleed, from 0 to 1.
+    bleed_prefer_ratio: the louder microphone's line is marked preferred only when it is at least this many times louder.
     Returns {job_id} at once otherwise (plus "files" when `out` is given); follow it with
     get_progress, then read it with get_transcript. A file transcribed before with the same model
     and language comes from the cache and is done immediately.
     With no language given, a run can stop to ask before a big word-timing download for a language
     it detected: waiting then ends early with the question (see answer), and nothing is written
     to `out` yet (export it once the job is done)."""
+    options = {k: v for k, v in locals().items() if k in _MERGE_KEYS}
     items = _register(paths)
     sources = [_selection(it, names, tracks, k) for k, it in enumerate(items)]
-    job_id = _api("POST", "/api/transcribe", {"sources": sources, "language": language})["job_id"]
+    job_id = _api("POST", "/api/transcribe",
+                  {"sources": sources, "language": language, "options": options})["job_id"]
     result = {"job_id": job_id}
     if out or wait:
         p = _wait_job(job_id)
@@ -435,7 +451,11 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
               name: str = "Batch", wait: bool = False, names: Optional[list[str]] = None,
               tracks: Optional[list[int]] = None, projects: Optional[list[dict]] = None,
               max_chars: int = 42, max_lines: int = 2, pad: float = 0.0, subtitle_limits: bool = True,
-              show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True) -> dict:
+              show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True,
+              detect_conflicts: bool = True, backchannel_render: str = "parenthetical",
+              backchannel_max_words: int = 4, overlap_min_seconds: float = 2.0,
+              bleed_window_seconds: float = 1.0, bleed_similarity: float = 0.7,
+              bleed_prefer_ratio: float = 2.0) -> dict:
     """Transcribe many files (or whole folders) in the background, writing transcripts as each finishes.
 
     paths: files or folders, which make one project called `name`; none when `projects` lists everything.
@@ -446,6 +466,8 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
     projects: more projects for the same run. Each is an object with "paths" and, where it differs from what is given here, "name" (default "Project 2", ...), "names", "tracks", "per_file", "formats" or any of the options below. On the command line: JSON text, or the path of a .json file holding the list.
     max_chars, max_lines, pad, subtitle_limits, show_speakers, name_on_change, txt_timestamps: how
     the files are written, as in export.
+    detect_conflicts, backchannel_render, backchannel_max_words, overlap_min_seconds,
+    bleed_window_seconds, bleed_similarity, bleed_prefer_ratio: how the tracks are merged, as in transcribe.
     Returns the batch id; use get_batch to follow it. With no language given, the batch can stop to
     ask before a big word-timing download (see answer); waiting then ends early with the question."""
     given = dict(locals())                     # every setting by name; a project's own values go over these
@@ -459,7 +481,8 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
         files += len(items)
         batch.append({"name": p["name"], "per_file": p["per_file"], "formats": p["formats"],
                       "sources": [_selection(it, p["names"], p["tracks"], k) for k, it in enumerate(items)],
-                      "export": _export_options(**{k: p[k] for k in _EXPORT_KEYS})})
+                      "export": _export_options(**{k: p[k] for k in _EXPORT_KEYS}),
+                      "options": {k: p[k] for k in _MERGE_KEYS}})
     if not batch:
         raise ActionError("nothing to run: give paths, or projects")
     body = {"projects": batch, "language": language,

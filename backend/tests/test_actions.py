@@ -304,3 +304,41 @@ def test_cli_takes_projects_as_json_and_numbers_for_batch_results(tmp_path):
     assert (a.source, a.project, a.file) == ("x", 2, 3)
     assert parser.parse_args(["export", "x", "--file", "3"]).file == 3
     assert parser.parse_args(["edit-lines", "x", "--project", "2", "--line", "0", "--delete"]).project == 2
+
+
+def test_merge_options_reach_a_job_and_each_batch_project(api, two_stream_file, tmp_path, monkeypatch):
+    """Both tracks say "hello" at the same moment, which the merge flags as bleed unless told otherwise."""
+    f = str(two_stream_file)
+    flags = lambda t: [ln["flags"] for ln in t["lines"]]
+    run = lambda **kw: flags(actions.get_transcript(actions.transcribe([f], wait=True, **kw)["job_id"]))
+    assert all("bleed_suspected" in fl for fl in run())
+    assert run(detect_conflicts=False) == [[], []]
+    assert run(bleed_window_seconds=-1.0) == run(bleed_similarity=1.1) == [[], ["backchannel"]]   # no bleed: a backchannel
+    assert run(bleed_similarity=1.1, backchannel_render="skip") == [[]]                           # ... left out
+    assert run(bleed_similarity=1.1, backchannel_max_words=1) == [[], []]                         # too long for one
+    assert run(bleed_similarity=1.1, backchannel_max_words=1, overlap_min_seconds=0.5) == [["overlap"], ["overlap"]]
+
+    sent = []
+    with monkeypatch.context() as m:           # its own scope: undoing the fixture's patches would reach a real server
+        m.setattr(routes.api, "run_merge_pipeline",
+                  lambda *a, options, **k: sent.append(options) or routes.api.MergedOutput(segments=[]))
+        actions.transcribe([f], wait=True, backchannel_render="skip", backchannel_max_words=2,
+                           overlap_min_seconds=3.5, bleed_prefer_ratio=4.0)
+    o = sent[0]
+    assert (o.backchannel_render.value, o.backchannel_max_words, o.overlap_min_seconds, o.bleed_prefer_ratio,
+            o.detect_conflicts, o.bleed_window_seconds, o.bleed_similarity) == ("skip", 2, 3.5, 4.0, True, 1.0, 0.7)
+    with pytest.raises(actions.ActionError, match="422"):
+        actions.transcribe([f], backchannel_render="loud")
+
+    b = actions.run_batch([f], out=str(tmp_path), formats=["json"], per_file=False, detect_conflicts=False,
+                          projects=[{"paths": [f], "per_file": False, "detect_conflicts": True}], wait=True)
+    assert flags(actions.get_transcript(b["batch_id"], project=1)) == [[], []]
+    assert all("bleed_suspected" in fl for fl in flags(actions.get_transcript(b["batch_id"], project=2)))
+
+    a = cli.build_parser().parse_args(["transcribe", "a.mov", "--no-detect-conflicts", "--backchannel-render", "skip",
+                                       "--backchannel-max-words", "2", "--overlap-min-seconds", "3",
+                                       "--bleed-window-seconds", "0.5", "--bleed-similarity", "0.9",
+                                       "--bleed-prefer-ratio", "3"])
+    assert (a.detect_conflicts, a.backchannel_render, a.backchannel_max_words, a.overlap_min_seconds,
+            a.bleed_window_seconds, a.bleed_similarity, a.bleed_prefer_ratio) == (False, "skip", 2, 3.0, 0.5, 0.9, 3.0)
+    assert cli.build_parser().parse_args(["run-batch", "d", "--backchannel-render", "separate"]).backchannel_render == "separate"
