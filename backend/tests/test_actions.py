@@ -115,6 +115,26 @@ def test_languages_i_use_is_read_and_set(api, monkeypatch, tmp_path, capsys):
     assert cli.main(["set-my-languages"]) == 0 and actions.list_models()["my_languages"] == []
 
 
+def test_portuguese_settings_are_read_and_set(api, monkeypatch, tmp_path, capsys):
+    from app import modelstore
+    monkeypatch.setattr(modelstore, "SETTINGS_FILE", tmp_path / "settings.json")
+    m = actions.list_models()
+    assert m["auto_portuguese"] is None and m["pt_punctuation"] is False       # defaults
+    assert actions.set_auto_portuguese("pt-PT") == {"auto_portuguese": "pt-PT"}
+    assert actions.set_pt_punctuation(True) == {"pt_punctuation": True}
+    m = actions.list_models()
+    assert m["auto_portuguese"] == "pt-PT" and m["pt_punctuation"] is True
+    with pytest.raises(actions.ActionError, match='variant is "pt-PT" or "pt-BR"'):
+        actions.set_auto_portuguese("pt")
+    assert actions.list_models()["auto_portuguese"] == "pt-PT"                # a refused value changes nothing
+
+    assert cli.main(["--json", "set-auto-portuguese", "--variant", "pt-BR"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"auto_portuguese": "pt-BR"}
+    assert cli.main(["set-auto-portuguese"]) == 0 and actions.list_models()["auto_portuguese"] is None
+    assert cli.main(["set-pt-punctuation", "--on"]) == 0 and actions.list_models()["pt_punctuation"] is True
+    assert cli.main(["set-pt-punctuation"]) == 0 and actions.list_models()["pt_punctuation"] is False
+
+
 def test_save_result_needs_a_finished_job(api):
     assert api.put("/api/result/unknown", json={"segments": []}).status_code == 404
 

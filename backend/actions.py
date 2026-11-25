@@ -394,7 +394,8 @@ def get_batch(batch_id: str) -> dict:
 
 def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
     """Models: which are downloaded, which speech model runs (active), and download progress.
-    Also "my_languages": the "Languages I use" setting (see set_my_languages; empty = not set).
+    Also the settings: "my_languages" ("Languages I use", see set_my_languages; empty = not set),
+    "auto_portuguese" (see set_auto_portuguese) and "pt_punctuation" (see set_pt_punctuation).
 
     kind: "speech" (speech-to-text, default), "word-timing" (one per language, for word-level
     timing; about 40, mostly not downloaded) or "all".
@@ -405,6 +406,7 @@ def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
     d = _api("GET", "/api/models", timeout=120)
     models = [m for m in d["models"] if want[kind] in (None, m["kind"]) and (m["installed"] or not installed_only)]
     return {"active": d["active"], "my_languages": d["my_languages"],
+            "auto_portuguese": d["auto_portuguese"], "pt_punctuation": d["pt_punctuation"],
             "downloaded": f"{sum(m['installed'] for m in d['models'] if want[kind] in (None, m['kind']))} "
                           f"of {sum(1 for m in d['models'] if want[kind] in (None, m['kind']))}",
             "models": [{"id": m["id"], "name": m["name"], "size_mb": m["size_mb"], "installed": m["installed"],
@@ -429,6 +431,23 @@ def set_my_languages(languages: list[str] = []) -> dict:
 
     languages: language codes such as en,pt; this replaces the whole list, and leaving it out empties it (no restriction)."""
     return _api("POST", "/api/settings/my-languages", {"value": languages})
+
+
+def set_auto_portuguese(variant: Optional[str] = None) -> dict:
+    """Set what Auto-detect treats detected Portuguese as (list_models shows the current choice).
+
+    variant: "pt-PT" (Portugal) or "pt-BR" (Brazil); leaving it out goes back to plain Portuguese with no variant."""
+    if variant not in (None, "pt-PT", "pt-BR"):
+        raise ActionError('variant is "pt-PT" or "pt-BR" (leave it out for none)')
+    return _api("POST", "/api/settings/auto-portuguese", {"value": variant})
+
+
+def set_pt_punctuation(on: bool = False) -> dict:
+    """Turn the Portugal punctuation option on or off (list_models shows it): pt-PT runs then also
+    run large-v3 and take its capitals and punctuation, at about twice the GPU time.
+
+    on: turn it on; leaving it out turns it off."""
+    return _api("POST", "/api/settings/pt-punctuation", {"value": on})
 
 
 def cache_stats() -> dict:
@@ -456,6 +475,6 @@ def shutdown() -> dict:
 
 # The one list. Destructive ones are marked for MCP clients.
 ACTIONS = [add_files, transcribe, get_progress, answer, get_transcript, edit_lines, export, run_batch,
-           get_batch, list_models, download_model, use_model, set_my_languages, cache_stats, clear_cache,
-           status, shutdown]
+           get_batch, list_models, download_model, use_model, set_my_languages, set_auto_portuguese,
+           set_pt_punctuation, cache_stats, clear_cache, status, shutdown]
 DESTRUCTIVE = {clear_cache, shutdown}
