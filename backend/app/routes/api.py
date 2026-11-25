@@ -1033,5 +1033,6 @@ def benchmark_result(request: Request, job_id: str) -> dict:
     job = request.app.state.jobs.get(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
-    return {"expected": {"English": benchmark.SENTENCE, "European Portuguese": benchmark.PT_SENTENCE},
+    return {"status": job.status,
+            "expected": {"English": benchmark.SENTENCE, "European Portuguese": benchmark.PT_SENTENCE},
             "results": job.result or []}

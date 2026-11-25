@@ -9,9 +9,12 @@ so the speech model stays loaded between calls. Files are read in place; nothing
 
 from __future__ import annotations
 
+import csv
 import inspect
+import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -25,6 +28,7 @@ BACKEND = Path(__file__).resolve().parent
 PORT = int(os.environ.get("WHISPERMERGER_PORT", "8756"))
 BASE = f"http://127.0.0.1:{PORT}"
 FORMATS = ("srt", "txt", "csv", "json")
+EDITED_TIMING = ("align", "even", "whole")
 
 # Where long-running actions report progress (the CLI prints it to stderr; MCP leaves it off,
 # since stdout carries the protocol).
@@ -168,12 +172,82 @@ def _result(run_id: str, project: Optional[int] = None, file: Optional[int] = No
     return _api("GET", path)["merged"], path
 
 
+# Reading .srt / .txt / .csv transcripts: the same rules as the Edit Transcript tab (parseSrt /
+# parseTxt / parseCsv in frontend/app.js), which mirror what backend/app/export.py writes. These
+# formats carry no word timings.
+
+def _srt_time(v: str) -> float:
+    """"HH:MM:SS,mmm" (or with ".") -> seconds; 0 when it isn't a time."""
+    m = re.search(r"(\d+):(\d\d):(\d\d)[,.](\d{1,3})", v)
+    return int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3]) + float("0." + m[4]) if m else 0.0
+
+
+def _line(start: float, end: float, body: str, flags: tuple = ()) -> dict:
+    """One transcript line; a leading "Name: " (as exports with speakers write it) is the speaker."""
+    m = re.fullmatch(r"([^:]{1,40}):\s(.*)", body)
+    return {"speaker": m[1].strip() if m else "Speaker", "start": start, "end": end,
+            "text": m[2] if m else body, "words": [], "flags": list(flags)}
+
+
+def _parse_srt(text: str) -> list[dict]:
+    segs = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = [ln for ln in block.split("\n") if ln.strip()]
+        i = 1 if lines and re.fullmatch(r"\d+", lines[0].strip()) else 0     # optional cue number
+        tc = re.search(r"(.+?)\s*-->\s*(.+)", lines[i]) if i < len(lines) else None
+        if tc:
+            segs.append(_line(_srt_time(tc[1]), _srt_time(tc[2]), " ".join(lines[i + 1:]).strip()))
+    return segs
+
+
+def _parse_txt(text: str) -> list[dict]:
+    """A line without "[start --> end]" (TXT exported with timestamps off) loads at 0, flagged no_timing."""
+    segs = []
+    for line in filter(None, map(str.strip, text.split("\n"))):
+        m = re.fullmatch(r"\[(.+?)\s*-->\s*(.+?)\]\s*(.*)", line)
+        segs.append(_line(_srt_time(m[1]), _srt_time(m[2]), m[3]) if m else _line(0.0, 0.0, line, ("no_timing",)))
+    return segs
+
+
+def _parse_csv(text: str) -> list[dict]:
+    """Columns start, end, speaker, text, flags: by name when the first row names them, else in that order."""
+    rows = [r for r in csv.reader(io.StringIO(text)) if any(r)]
+    cols = ["start", "end", "speaker", "text", "flags"]
+    head = [h.strip().lower() for h in rows[0]] if rows else []
+    if head[:2] == cols[:2]:
+        at, rows = {c: head.index(c) if c in head else -1 for c in cols}, rows[1:]
+    else:
+        at = {c: i for i, c in enumerate(cols)}
+
+    def cell(r, c):
+        return r[at[c]] if 0 <= at[c] < len(r) else ""
+
+    def num(v):
+        try:
+            return float(v)
+        except ValueError:
+            return 0.0
+
+    return [{"speaker": (cell(r, "speaker") or "Speaker").strip(), "start": num(cell(r, "start")),
+             "end": num(cell(r, "end")), "text": cell(r, "text"), "words": [],
+             "flags": [f.strip() for f in cell(r, "flags").split("|") if f.strip()]} for r in rows]
+
+
+_PARSERS = {".srt": _parse_srt, ".txt": _parse_txt, ".csv": _parse_csv}
+
+
 def _merged(source: str, project: Optional[int] = None, file: Optional[int] = None) -> tuple[dict, str]:
-    """A transcript from a job id, a batch id with a project / file number, or a WhisperMerger .json
-    file, plus a default export name."""
+    """A transcript from a job id, a batch id with a project / file number, or a transcript file (a
+    WhisperMerger .json, or an .srt, .txt or .csv), plus a default export name."""
     path = Path(source).expanduser()
-    if path.suffix.lower() == ".json" and path.is_file():
+    ext = path.suffix.lower()
+    if ext == ".json" and path.is_file():
         return json.loads(path.read_text("utf-8")), path.stem
+    if ext in _PARSERS and path.is_file():
+        segs = _PARSERS[ext](path.read_text("utf-8-sig", errors="replace"))
+        if not segs:
+            raise ActionError(f"no transcript lines found in {path.name}")
+        return {"segments": segs}, path.stem
     merged, _ = _result(source, project, file)
     name = Path(merged["sources"][0]["filename"]).stem if merged.get("sources") else "transcript"
     return merged, f"{name} Transcript"
@@ -196,10 +270,13 @@ def _write(merged: dict, out: str, filename: str, formats: list[str], options: d
 
 
 def _export_options(max_chars: int, max_lines: int, pad: float, subtitle_limits: bool,
-                    show_speakers: bool, name_on_change: bool, txt_timestamps: bool) -> dict:
+                    show_speakers: bool, name_on_change: bool, txt_timestamps: bool,
+                    min_duration: float = 1.0, edited_timing: str = "align") -> dict:
+    if edited_timing not in EDITED_TIMING:
+        raise ActionError(f"edited_timing is one of {', '.join(EDITED_TIMING)}")
     return {"apply_limits": subtitle_limits, "chars_per_line": max_chars, "max_lines": max_lines,
             "pad_seconds": pad, "show_speakers": show_speakers, "label_on_change": name_on_change,
-            "txt_timestamps": txt_timestamps}
+            "txt_timestamps": txt_timestamps, "min_duration": min_duration, "edited_timing": edited_timing}
 
 
 _EXPORT_KEYS = tuple(inspect.signature(_export_options).parameters)
@@ -348,9 +425,11 @@ def retry_batch(batch_id: str, projects: Optional[list[int]] = None, file: Optio
 
 def get_transcript(source: str, full: bool = False, project: Optional[int] = None,
                    file: Optional[int] = None) -> dict:
-    """A finished transcript, from a job id, a batch id (with project or file) or a WhisperMerger
-    .json file: lines numbered from 0 (the numbers edit_lines takes), with start and end (seconds),
-    speaker, text and flags (overlap, backchannel, edited...).
+    """A finished transcript, from a job id, a batch id (with project or file) or a transcript file
+    (a WhisperMerger .json, or an .srt, .txt or .csv): lines numbered from 0 (the numbers edit_lines
+    takes), with start and end (seconds), speaker, text and flags (overlap, backchannel, edited...).
+    Only a job, a batch result or a .json has word-level timings; a TXT line without a timestamp
+    starts at 0 with the flag no_timing.
 
     full: the complete transcript including word-level timings.
     project: with a batch id: the project's number in get_batch.
@@ -425,10 +504,12 @@ def edit_lines(job_id: str, rename_from: Optional[str] = None, rename_to: Option
 def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"], filename: Optional[str] = None,
            max_chars: int = 42, max_lines: int = 2, pad: float = 0.0, subtitle_limits: bool = True,
            show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True,
+           min_duration: float = 1.0, edited_timing: str = "align",
            project: Optional[int] = None, file: Optional[int] = None) -> dict:
-    """Write a transcript (a job id, a batch id with project or file, or a WhisperMerger .json file) to files.
+    """Write a transcript (a job id, a batch id with project or file, or a transcript file: a
+    WhisperMerger .json, or an .srt, .txt or .csv) to files. It never writes over the file it is reading.
 
-    out: folder to write to (default: the .json file's folder, or the current folder for a job or batch).
+    out: folder to write to (default: the transcript file's folder, or the current folder for a job or batch).
     project: with a batch id: the project's number in get_batch.
     file: with a batch id: the file's number in get_batch (project defaults to 1).
 
@@ -436,14 +517,20 @@ def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"],
     them on or off). pad: seconds added to each line's start and end. name_on_change: in SRT, name
     the speaker only when it changes.
     txt_timestamps: start each TXT line with its start and end time (off, and show_speakers off: text alone).
-    A TXT without timestamps opens in Edit Transcript as lines with no timing; keep a JSON to edit later."""
+    A TXT without timestamps opens in Edit Transcript as lines with no timing; keep a JSON to edit later.
+    min_duration: shortest time an SRT subtitle stays on screen, in seconds (part of the subtitle limits).
+    edited_timing: SRT timing for a line whose text was edited: "align" (keep word timing for unchanged words), "even" (spread the text evenly over the line) or "whole" (one subtitle per line)."""
     merged, name = _merged(source, project, file)
     opts = _export_options(max_chars, max_lines, pad, subtitle_limits, show_speakers, name_on_change,
-                           txt_timestamps)
+                           txt_timestamps, min_duration, edited_timing)
+    src, name = Path(source).expanduser(), filename or name
     if out is None:
-        src = Path(source).expanduser()
         out = str(src.parent) if src.is_file() else os.getcwd()
-    return {"files": _write(merged, out, filename or name, formats, opts)}
+    for dest in (Path(out).expanduser() / f"{name}.{f}" for f in formats):
+        if src.is_file() and dest.exists() and dest.samefile(src):
+            raise ActionError(f"that would write over {src.name}, the transcript being read; "
+                              "give another out folder or filename")
+    return {"files": _write(merged, out, name, formats, opts)}
 
 
 def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True,
@@ -452,6 +539,7 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
               tracks: Optional[list[int]] = None, projects: Optional[list[dict]] = None,
               max_chars: int = 42, max_lines: int = 2, pad: float = 0.0, subtitle_limits: bool = True,
               show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True,
+              min_duration: float = 1.0, edited_timing: str = "align",
               detect_conflicts: bool = True, backchannel_render: str = "parenthetical",
               backchannel_max_words: int = 4, overlap_min_seconds: float = 2.0,
               bleed_window_seconds: float = 1.0, bleed_similarity: float = 0.7,
@@ -464,8 +552,8 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
     names: speaker name for each audio track, in track order, used for every file.
     tracks: which tracks to use, numbered from 1 (default: all).
     projects: more projects for the same run. Each is an object with "paths" and, where it differs from what is given here, "name" (default "Project 2", ...), "names", "tracks", "per_file", "formats" or any of the options below. On the command line: JSON text, or the path of a .json file holding the list.
-    max_chars, max_lines, pad, subtitle_limits, show_speakers, name_on_change, txt_timestamps: how
-    the files are written, as in export.
+    max_chars, max_lines, pad, subtitle_limits, show_speakers, name_on_change, txt_timestamps,
+    min_duration, edited_timing: how the files are written, as in export.
     detect_conflicts, backchannel_render, backchannel_max_words, overlap_min_seconds,
     bleed_window_seconds, bleed_similarity, bleed_prefer_ratio: how the tracks are merged, as in transcribe.
     Returns the batch id; use get_batch to follow it. With no language given, the batch can stop to
@@ -528,7 +616,10 @@ def get_batch(batch_id: str) -> dict:
 
 def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
     """Models: which are downloaded, which speech model runs (active), and download progress.
-    Also "my_languages": the "Languages I use" setting (see set_my_languages; empty = not set).
+    Also the settings: "my_languages" ("Languages I use", see set_my_languages; empty = not set),
+    "auto_portuguese" (see set_auto_portuguese) and "pt_punctuation" (see set_pt_punctuation).
+    "disk_free_mb" is the free space on the drive models download to. A model with "partial" has
+    a stopped download on disk: download_model resumes it, remove_model deletes it.
 
     kind: "speech" (speech-to-text, default), "word-timing" (one per language, for word-level
     timing; about 40, mostly not downloaded) or "all".
@@ -539,9 +630,12 @@ def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
     d = _api("GET", "/api/models", timeout=120)
     models = [m for m in d["models"] if want[kind] in (None, m["kind"]) and (m["installed"] or not installed_only)]
     return {"active": d["active"], "my_languages": d["my_languages"],
+            "auto_portuguese": d["auto_portuguese"], "pt_punctuation": d["pt_punctuation"],
+            "disk_free_mb": round(d["disk_free"] / 1e6),
             "downloaded": f"{sum(m['installed'] for m in d['models'] if want[kind] in (None, m['kind']))} "
                           f"of {sum(1 for m in d['models'] if want[kind] in (None, m['kind']))}",
             "models": [{"id": m["id"], "name": m["name"], "size_mb": m["size_mb"], "installed": m["installed"],
+                        "partial": m["partial"],
                         "download": (m["download"] or {}).get("text") if (m["download"] or {}).get("active") else None}
                        for m in models]}
 
@@ -556,6 +650,41 @@ def use_model(model_id: str) -> dict:
     return _api("POST", f"/api/models/{urllib.parse.quote(model_id, safe='')}/use")
 
 
+def cancel_download(model_id: str) -> dict:
+    """Stop a model download that is queued or running. What was downloaded stays on disk, so
+    download_model carries on from there; remove_model deletes it."""
+    return _api("POST", f"/api/models/{urllib.parse.quote(model_id, safe='')}/cancel")
+
+
+def remove_model(model_id: str) -> dict:
+    """DESTRUCTIVE: delete a model's files from disk, a partial download included. Refused for the
+    speech model in use (choose another with use_model first) and for a model that is downloading
+    (cancel_download first)."""
+    return _api("DELETE", f"/api/models/{urllib.parse.quote(model_id, safe='')}")
+
+
+def run_benchmark(wait: bool = False) -> dict:
+    """Time every downloaded speech model on this machine: each loads from cold and transcribes a
+    test sentence spoken by a Windows voice (a European Portuguese one too, when a model and a
+    voice for it are installed). It uses the GPU, so it waits for a running transcription first.
+
+    wait: wait until it's done and return the results.
+    Returns {job_id} at once otherwise; follow it with get_progress, then read get_benchmark."""
+    job_id = _api("POST", "/api/benchmark")["job_id"]
+    if not wait:
+        return {"job_id": job_id}
+    _wait_job(job_id)
+    return get_benchmark(job_id)
+
+
+def get_benchmark(job_id: str) -> dict:
+    """Results of a benchmark started with run_benchmark, complete once "status" is done. For each
+    test sentence and model: load_s (seconds to load the model), transcribe_s, speed_x (times
+    faster than real time), match (0 to 1, how much of the sentence it got right) and heard (the
+    text it wrote). "expected" is what was said."""
+    return _api("GET", f"/api/benchmark/{job_id}")
+
+
 def set_my_languages(languages: list[str] = []) -> dict:
     """Set "Languages I use": the languages your recordings are in (list_models shows the current
     list). Auto-detect accepts a guess among them; a guess outside them must be at least 50% sure,
@@ -563,6 +692,23 @@ def set_my_languages(languages: list[str] = []) -> dict:
 
     languages: language codes such as en,pt; this replaces the whole list, and leaving it out empties it (no restriction)."""
     return _api("POST", "/api/settings/my-languages", {"value": languages})
+
+
+def set_auto_portuguese(variant: Optional[str] = None) -> dict:
+    """Set what Auto-detect treats detected Portuguese as (list_models shows the current choice).
+
+    variant: "pt-PT" (Portugal) or "pt-BR" (Brazil); leaving it out goes back to plain Portuguese with no variant."""
+    if variant not in (None, "pt-PT", "pt-BR"):
+        raise ActionError('variant is "pt-PT" or "pt-BR" (leave it out for none)')
+    return _api("POST", "/api/settings/auto-portuguese", {"value": variant})
+
+
+def set_pt_punctuation(on: bool = False) -> dict:
+    """Turn the Portugal punctuation option on or off (list_models shows it): pt-PT runs then also
+    run large-v3 and take its capitals and punctuation, at about twice the GPU time.
+
+    on: turn it on; leaving it out turns it off."""
+    return _api("POST", "/api/settings/pt-punctuation", {"value": on})
 
 
 def cache_stats() -> dict:
@@ -590,6 +736,7 @@ def shutdown() -> dict:
 
 # The one list. Destructive ones are marked for MCP clients.
 ACTIONS = [add_files, transcribe, get_progress, answer, cancel, pause, resume, get_transcript, edit_lines,
-           export, run_batch, get_batch, retry_batch, list_models, download_model, use_model, set_my_languages, cache_stats, clear_cache,
-           status, shutdown]
-DESTRUCTIVE = {clear_cache, shutdown}
+           export, run_batch, get_batch, retry_batch, list_models, download_model, cancel_download,
+           remove_model, use_model, run_benchmark, get_benchmark, set_my_languages, set_auto_portuguese,
+           set_pt_punctuation, cache_stats, clear_cache, status, shutdown]
+DESTRUCTIVE = {remove_model, clear_cache, shutdown}

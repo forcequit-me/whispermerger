@@ -19,7 +19,7 @@ from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 from mcp.types import ToolAnnotations  # noqa: E402
 
 READ_ONLY = {actions.add_files, actions.get_progress, actions.get_transcript, actions.get_batch,
-             actions.list_models, actions.cache_stats, actions.status}
+             actions.list_models, actions.get_benchmark, actions.cache_stats, actions.status}
 
 server = MCPServer(
     "whispermerger",
@@ -27,7 +27,9 @@ server = MCPServer(
         "WhisperMerger transcribes multi-track recordings locally on the GPU and merges each track "
         "into one speaker-labeled transcript with word timings. Typical flow: add_files to see a "
         "file's tracks, transcribe (returns a job id), get_progress until done, get_transcript, "
-        "edit_lines to rename speakers or fix lines, export to write SRT/TXT/CSV/JSON. Paths are "
+        "edit_lines to rename speakers or fix lines, export to write SRT/TXT/CSV/JSON. run_batch does "
+        "many files or several projects in one run (follow it with get_batch); cancel, pause and "
+        "resume take a job id or a batch id. Paths are "
         "local file paths; files are read in place. Transcription can take minutes for long files."),
 )
 

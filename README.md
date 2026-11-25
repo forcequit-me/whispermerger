@@ -236,10 +236,24 @@ whispermerger transcript <job id>                       :: numbered lines with s
 whispermerger edit-lines <job id> --rename-from Guest --rename-to Ana   :: or --line 12 --text "..." / --delete
 whispermerger export <job id or transcript.json> --format srt --max-chars 42
 whispermerger export <job id or transcript.json> --format txt --no-txt-timestamps --no-show-speakers   :: the text alone
+whispermerger export <job id or transcript.json> --min-duration 1.5 --edited-timing whole   :: edited lines: align | even | whole
+whispermerger transcript talk.srt                       :: an .srt, .txt or .csv opens too; so does export talk.srt --formats csv
+whispermerger transcribe ep1.mov --no-detect-conflicts   :: merge options: also --backchannel-render skip, --overlap-min-seconds 3, --bleed-...
 whispermerger run-batch D:\rec --out D:\subs --formats srt,txt --wait
+whispermerger run-batch D:\rec\ep1 --name "Episode 1" --names "Host,Ana" --tracks 1,2 --max-chars 37 --out D:\subs
+whispermerger run-batch --projects batch.json --out D:\subs   :: several projects in one run, see below
+whispermerger get-batch <batch id>                      :: every item with its project and file number
+whispermerger pause <job or batch id>                   :: frees the GPU; resume <id> carries on
+whispermerger cancel <job or batch id>                  :: or one part of a batch: --project 2, --file 3
+whispermerger retry-batch <batch id>                    :: failed and canceled projects; or --projects 1,3, or --file 3
+whispermerger transcript <batch id> --file 3            :: a batch result; edit-lines and export take --project / --file too
 whispermerger answer <job or batch id> skip             :: when a run stops to ask: download | skip | language --language en
-whispermerger models                                    :: also download-model, use-model
+whispermerger models                                    :: with free disk space and the settings; also download-model, use-model
+whispermerger cancel-download align:nl                  :: stop a download (it resumes later); remove-model align:nl deletes it from disk
+whispermerger run-benchmark --wait                      :: time every downloaded speech model; without --wait: get-progress, get-benchmark
 whispermerger set-my-languages --languages en,pt        :: "Languages I use" (models shows it); no --languages empties it
+whispermerger set-auto-portuguese --variant pt-PT       :: what Auto-detect treats Portuguese as: pt-PT | pt-BR; no --variant = neither
+whispermerger set-pt-punctuation --on                   :: Portugal punctuation (also run large-v3); without --on it turns off
 whispermerger --help                                    :: every command; add --json for machine-readable output
 ```
 
@@ -249,10 +263,36 @@ Language above): `get-progress` / `get-batch` then say "waiting for your answer"
 question and its choices, a `--wait` returns with them instead of hanging, and `answer` lets the
 run carry on.
 
+`get-transcript` and `export` take a job id or a transcript file: a WhisperMerger `.json`, or an
+`.srt`, `.txt` or `.csv`, read the way Edit Transcript opens them (no word timings; a TXT line
+without a timestamp gets the `no_timing` flag). `export` never writes over the file it is reading;
+give another `--out` folder or `--filename`. `edit-lines` works on a job or a batch result.
+
+**Batches.** `run-batch` makes one project from the paths you give, with `--names`, `--tracks`,
+`--per-file` (on by default; `--no-per-file` joins the files into one transcript), the export
+options of `export` and the merge options of `transcribe`. `--projects` adds more projects to the
+same run: a list of objects, each with `"paths"` and whatever differs from the command's own
+settings (`"name"`, `"names"`, `"tracks"`, `"per_file"`, `"formats"`, any export or merge option).
+Give it as JSON text or, easier on a command line, the path of a `.json` file:
+
+```json
+[ { "name": "Episode 1", "paths": ["D:\\rec\\ep1"], "names": ["Host", "Ana"] },
+  { "name": "Episode 2", "paths": ["D:\\rec\\ep2a.mov", "D:\\rec\\ep2b.mov"], "names": ["Host", "Bo"],
+    "per_file": false, "max_chars": 37, "backchannel_render": "skip" } ]
+```
+
+With `--projects` the paths after the command are optional. `get-batch` numbers every item:
+`project` and, in a one-transcript-per-file project, `file`, both from 1. Those numbers are what
+`cancel`, `retry-batch`, `get-transcript`, `edit-lines` and `export` take (`--file` alone means
+project 1). Edits to a batch result are used by later reads and exports; the files the batch
+already wrote stay as they are. `cancel`, `pause` and `resume` take a job id or a batch id.
+
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
-Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `get_transcript`, `edit_lines`, `export`,
-`run_batch`, `get_batch`, `list_models`, `download_model`, `use_model`, `set_my_languages`,
-`cache_stats`, `clear_cache` and `shutdown` (both marked destructive), `status`.
+Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `cancel`, `pause`, `resume`,
+`get_transcript`, `edit_lines`, `export`, `run_batch`, `get_batch`, `retry_batch`, `list_models`, `download_model`, `cancel_download`, `use_model`,
+`run_benchmark`, `get_benchmark`, `set_my_languages`, `set_auto_portuguese`, `set_pt_punctuation`,
+`cache_stats`, `status`, and `remove_model`, `clear_cache` and `shutdown` (all three marked
+destructive).
 
 - Claude Code:
   ```bat
