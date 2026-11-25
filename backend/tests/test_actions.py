@@ -162,6 +162,10 @@ def test_cli_has_a_command_per_action_and_parses_lists(api, two_stream_file, cap
     assert parser.parse_args(["export", "x.json", "--no-txt-timestamps"]).txt_timestamps is False
     names = {fn.__name__.replace("_", "-") for fn in actions.ACTIONS}
     assert names <= set(parser._subparsers._group_actions[0].choices)
+    # --help prints for the whole CLI and every command (a "%" in a docstring used to crash it)
+    assert "get-progress" in parser.format_help()
+    for sub in parser._subparsers._group_actions[0].choices.values():
+        sub.format_help()
 
     assert cli.main(["--json", "add-files", str(two_stream_file)]) == 0
     assert json.loads(capsys.readouterr().out)[0]["tracks"][1]["track"] == 2

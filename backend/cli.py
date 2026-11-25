@@ -25,8 +25,8 @@ ALIASES = {"list-models": ["models"], "get-transcript": ["transcript"], "get-pro
 
 
 def _param_help(fn) -> dict[str, str]:
-    """`name: text` lines in the docstring become each option's help."""
-    return {m[1]: m[2] for m in re.finditer(r"^\s*(\w+): (.+)$", inspect.getdoc(fn) or "", re.M)}
+    """`name: text` lines in the docstring become each option's help (argparse reads % as a format)."""
+    return {m[1]: m[2].replace("%", "%%") for m in re.finditer(r"^\s*(\w+): (.+)$", inspect.getdoc(fn) or "", re.M)}
 
 
 def _base(tp):
@@ -47,7 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     for fn in actions.ACTIONS:
         name = fn.__name__.replace("_", "-")
         doc = inspect.getdoc(fn) or ""
-        p = sub.add_parser(name, aliases=ALIASES.get(name, []), help=doc.split("\n\n")[0].replace("\n", " "),
+        p = sub.add_parser(name, aliases=ALIASES.get(name, []),
+                           help=doc.split("\n\n")[0].replace("\n", " ").replace("%", "%%"),
                            description=doc, formatter_class=argparse.RawDescriptionHelpFormatter)
         hints, helps = typing.get_type_hints(fn), _param_help(fn)
         for pname, prm in inspect.signature(fn).parameters.items():
