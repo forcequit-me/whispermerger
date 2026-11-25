@@ -73,6 +73,28 @@ def test_transcribe_edit_export(api, two_stream_file, tmp_path):
     assert {m["id"].split(":")[0] for m in actions.list_models()["models"]} == {"whisper"}
 
 
+def test_export_min_duration_and_edited_timing(api, tmp_path):
+    """A line whose last word was edited: the three SRT timings for it, and the shortest subtitle."""
+    words = [{"word": w, "start": s, "end": s + 1} for w, s in (("aaaa", 0), ("bbbb", 1), ("cccc", 8), ("dddd", 9))]
+    src = tmp_path / "talk.json"
+    src.write_text(json.dumps({"segments": [{"speaker": "A", "start": 0, "end": 10, "text": "aaaa bbbb cccc dddx",
+                                             "words": words, "flags": ["edited"]}]}), "utf-8")
+
+    def cues(**kw):
+        out = actions.export(str(src), formats=["srt"], max_chars=9, max_lines=1, show_speakers=False, **kw)
+        return [ln for ln in Path(out["files"][0]).read_text("utf-8").splitlines() if "-->" in ln]
+
+    assert cues() == ["00:00:00,000 --> 00:00:02,000", "00:00:08,000 --> 00:00:10,000"]    # align: the default
+    assert cues(edited_timing="even") == ["00:00:00,000 --> 00:00:05,000", "00:00:05,000 --> 00:00:10,000"]
+    assert cues(edited_timing="whole") == ["00:00:00,000 --> 00:00:10,000"]
+    assert cues(min_duration=3)[0] == "00:00:00,000 --> 00:00:03,000"
+    with pytest.raises(actions.ActionError, match="edited_timing is one of align, even, whole"):
+        cues(edited_timing="guess")
+    a = cli.build_parser().parse_args(["export", "x.json", "--min-duration", "2.5", "--edited-timing", "whole"])
+    assert a.min_duration == 2.5 and a.edited_timing == "whole"
+    assert cli.build_parser().parse_args(["export", "x.json"]).edited_timing == "align"
+
+
 def test_batch_on_a_folder(api, two_stream_file, tmp_path):
     b = actions.run_batch([str(two_stream_file.parent)], out=str(tmp_path / "out"), formats=["txt"], wait=True)
     assert b["status"] == "done" and b["done"] == b["files"] >= 1

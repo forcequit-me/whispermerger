@@ -24,6 +24,7 @@ BACKEND = Path(__file__).resolve().parent
 PORT = int(os.environ.get("WHISPERMERGER_PORT", "8756"))
 BASE = f"http://127.0.0.1:{PORT}"
 FORMATS = ("srt", "txt", "csv", "json")
+EDITED_TIMING = ("align", "even", "whole")
 
 # Where long-running actions report progress (the CLI prints it to stderr; MCP leaves it off,
 # since stdout carries the protocol).
@@ -165,10 +166,13 @@ def _write(merged: dict, out: str, filename: str, formats: list[str], options: d
 
 
 def _export_options(max_chars: int, max_lines: int, pad: float, subtitle_limits: bool,
-                    show_speakers: bool, name_on_change: bool, txt_timestamps: bool) -> dict:
+                    show_speakers: bool, name_on_change: bool, txt_timestamps: bool,
+                    min_duration: float = 1.0, edited_timing: str = "align") -> dict:
+    if edited_timing not in EDITED_TIMING:
+        raise ActionError(f"edited_timing is one of {', '.join(EDITED_TIMING)}")
     return {"apply_limits": subtitle_limits, "chars_per_line": max_chars, "max_lines": max_lines,
             "pad_seconds": pad, "show_speakers": show_speakers, "label_on_change": name_on_change,
-            "txt_timestamps": txt_timestamps}
+            "txt_timestamps": txt_timestamps, "min_duration": min_duration, "edited_timing": edited_timing}
 
 
 def _fmt_time(s: float) -> str:
@@ -325,7 +329,8 @@ def edit_lines(job_id: str, rename_from: Optional[str] = None, rename_to: Option
 
 def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"], filename: Optional[str] = None,
            max_chars: int = 42, max_lines: int = 2, pad: float = 0.0, subtitle_limits: bool = True,
-           show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True) -> dict:
+           show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True,
+           min_duration: float = 1.0, edited_timing: str = "align") -> dict:
     """Write a transcript (a job id or a WhisperMerger .json file) to files.
 
     out: folder to write to (default: the .json file's folder, or the current folder for a job).
@@ -334,10 +339,12 @@ def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"],
     them on or off). pad: seconds added to each line's start and end. name_on_change: in SRT, name
     the speaker only when it changes.
     txt_timestamps: start each TXT line with its start and end time (off, and show_speakers off: text alone).
-    A TXT without timestamps opens in Edit Transcript as lines with no timing; keep a JSON to edit later."""
+    A TXT without timestamps opens in Edit Transcript as lines with no timing; keep a JSON to edit later.
+    min_duration: shortest time an SRT subtitle stays on screen, in seconds (part of the subtitle limits).
+    edited_timing: SRT timing for a line whose text was edited: "align" (keep word timing for unchanged words), "even" (spread the text evenly over the line) or "whole" (one subtitle per line)."""
     merged, name = _merged(source)
     opts = _export_options(max_chars, max_lines, pad, subtitle_limits, show_speakers, name_on_change,
-                           txt_timestamps)
+                           txt_timestamps, min_duration, edited_timing)
     if out is None:
         src = Path(source).expanduser()
         out = str(src.parent) if src.is_file() else os.getcwd()
