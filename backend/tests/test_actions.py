@@ -244,3 +244,63 @@ def test_a_batch_is_controlled_by_project_and_file_number(api, two_stream_file, 
     a = parser.parse_args(["retry-batch", "x", "--projects", "1,2"])
     assert (a.batch_id, a.projects, a.file) == ("x", [1, 2], None)
     assert parser.parse_args(["pause", "x"]).run_id == parser.parse_args(["resume", "x"]).run_id == "x"
+
+
+def test_batch_projects_keep_their_own_settings_and_open_by_number(api, two_stream_file, tmp_path):
+    f = str(two_stream_file)
+    b = actions.run_batch(
+        [f], out=str(tmp_path), formats=["txt"], name="One", names=["Host", "Guest"], tracks=[1],
+        txt_timestamps=False, wait=True,
+        projects=[{"name": "Two", "paths": [f, f], "per_file": False, "names": ["Ana", "Bo"], "tracks": None,
+                   "formats": ["srt"], "show_speakers": False},
+                  {"paths": [f]}])
+    bid = b["batch_id"]
+    assert b["status"] == "done" and b["files"] == b["done"] == 3
+    assert [(i["project"], i.get("file"), i["name"]) for i in b["items"]] == [
+        (1, 1, two_stream_file.name), (2, None, "Two"), (3, 1, two_stream_file.name)]
+    written = lambda folder, ext: next((tmp_path / folder).glob(f"*.{ext}")).read_text("utf-8")
+    assert written("One", "txt") == "Host: hello"                   # the batch's own settings
+    assert "hello" in written("Two", "srt") and "Ana" not in written("Two", "srt")   # its own
+    assert written("Project 3", "txt") == "Host: hello"             # nothing of its own: the batch's
+
+    # read, edit and export a batch result by its numbers
+    assert actions.get_transcript(bid, file=1)["speakers"] == ["Host"]
+    assert actions.get_transcript(bid, project=2)["speakers"] == ["Ana", "Bo"]
+    with pytest.raises(actions.ActionError, match="one transcript per file"):
+        actions.get_transcript(bid, project=1)
+    with pytest.raises(actions.ActionError, match="404"):
+        actions.get_transcript(bid, project=2, file=1)
+    actions.edit_lines(bid, project=2, rename_from="Ana", rename_to="Anna")
+    actions.edit_lines(bid, file=1, line=0, text="fixed")
+    assert actions.get_transcript(bid, project=2)["speakers"] == ["Anna", "Bo"]
+    out = actions.export(bid, out=str(tmp_path / "x"), formats=["txt"], project=3, file=1)
+    assert Path(out["files"][0]).read_text("utf-8").endswith("Host: hello")
+    out = actions.export(bid, out=str(tmp_path / "x"), formats=["txt"], file=1, txt_timestamps=False, filename="cut")
+    assert Path(out["files"][0]).read_text("utf-8") == "Host: fixed"
+    assert api.put("/api/batch/nope/project/0/result", json={"segments": []}).status_code == 404
+
+    # only `projects`, and what is refused
+    b = actions.run_batch([], out=str(tmp_path / "only"), formats=["txt"], projects=[{"paths": [f]}], wait=True)
+    assert b["status"] == "done" and list((tmp_path / "only" / "Project 1").glob("*.txt"))
+    for bad in ([{"paths": [f], "nmae": "x"}], [{"name": "no files"}], ["a.mov"]):
+        with pytest.raises(actions.ActionError, match='project 2: give an object with "paths"'):
+            actions.run_batch([f], projects=bad)
+    with pytest.raises(actions.ActionError, match="nothing to run"):
+        actions.run_batch([])
+
+
+def test_cli_takes_projects_as_json_and_numbers_for_batch_results(tmp_path):
+    parser = cli.build_parser()
+    a = parser.parse_args(["run-batch", "D:\\rec", "--out", "D:\\subs", "--formats", "srt,txt", "--wait"])
+    assert a.paths == ["D:\\rec"] and a.formats == ["srt", "txt"] and a.wait and a.projects is None
+    a = parser.parse_args(["run-batch", "--projects", '[{"paths": ["a.mov"], "names": ["Host"]}]',
+                           "--names", "A,B", "--tracks", "2", "--max-chars", "30", "--no-show-speakers"])
+    assert a.paths == [] and a.projects == [{"paths": ["a.mov"], "names": ["Host"]}]
+    assert (a.names, a.tracks, a.max_chars, a.show_speakers) == (["A", "B"], [2], 30, False)
+    saved = tmp_path / "batch.json"
+    saved.write_text('[{"name": "Ep 1", "paths": ["a.mov"]}]', "utf-8-sig")       # a file, with or without a BOM
+    assert parser.parse_args(["run-batch", "--projects", str(saved)]).projects == [{"name": "Ep 1", "paths": ["a.mov"]}]
+    a = parser.parse_args(["transcript", "x", "--project", "2", "--file", "3"])
+    assert (a.source, a.project, a.file) == ("x", 2, 3)
+    assert parser.parse_args(["export", "x", "--file", "3"]).file == 3
+    assert parser.parse_args(["edit-lines", "x", "--project", "2", "--line", "0", "--delete"]).project == 2

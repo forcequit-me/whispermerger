@@ -6,6 +6,7 @@ function's signature and docstring, so the CLI and the MCP server always offer t
     whispermerger models            (alias of list-models)
 
 Lists are comma-separated for options (--names "Host,Guest"); file paths are plain arguments.
+A list of objects (run-batch --projects) is JSON text, or the path of a .json file holding it.
 Progress goes to stderr; --json prints machine-readable results on stdout.
 """
 
@@ -17,8 +18,9 @@ import json
 import re
 import sys
 import typing
+from pathlib import Path
 
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import actions  # noqa: E402
 
 ALIASES = {"list-models": ["models"], "get-transcript": ["transcript"], "get-progress": ["progress"]}
@@ -39,6 +41,12 @@ def _comma(item_type):
     return lambda s: [item_type(x.strip()) for x in s.split(",") if x.strip()]
 
 
+def _json(s: str):
+    """JSON text, or the path of a file holding it (JSON is awkward to quote on a command line)."""
+    p = Path(s)
+    return json.loads(p.read_text("utf-8-sig") if p.is_file() else s)
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="whispermerger", description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -57,14 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
             required = prm.default is inspect.Parameter.empty
             h = helps.get(pname)
             if required:
-                p.add_argument(pname, nargs="+" if is_list else None, type=item, help=h)
+                p.add_argument(pname, nargs="*" if is_list else None, type=item, help=h)
             elif tp is bool:
                 if prm.default:
                     p.add_argument("--no-" + pname.replace("_", "-"), dest=pname, action="store_false", help=h)
                 else:
                     p.add_argument(flag, dest=pname, action="store_true", help=h)
             else:
-                p.add_argument(flag, dest=pname, type=_comma(item) if is_list else item, default=prm.default,
+                p.add_argument(flag, dest=pname, type=_json if item is dict else _comma(item) if is_list else item,
+                               default=prm.default,
                                help=(h or "") + (f" (default: {','.join(map(str, prm.default))})" if is_list and prm.default
                                                  else f" (default: {prm.default})" if prm.default is not None else ""))
         p.set_defaults(_fn=fn)

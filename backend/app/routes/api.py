@@ -840,27 +840,43 @@ def cancel_batch_file(request: Request, batch_id: str, pidx: int, fidx: int) -> 
     return {"canceling": True}
 
 
-def _batch_result(item) -> dict:
+def _batch_item(request: Request, batch_id: str, pidx: int, fidx: int | None = None):
+    """A batch's project, or one file of a per-file project, that has a finished transcript."""
+    b = request.app.state.batches.get(batch_id)
+    item = project = b.projects[pidx] if b and 0 <= pidx < len(b.projects) else None
+    if project and fidx is not None:
+        item = project.files[fidx] if 0 <= fidx < len(project.files) else None
     if item is None or item.result is None:
-        raise HTTPException(404, "no finished transcript for that item")
+        raise HTTPException(404, "no finished transcript for that item" + (
+            " (this project has one transcript per file: name the file)"
+            if project and project.files and fidx is None else ""))
+    return item
+
+
+def _batch_result(item) -> dict:
     return {"merged": item.result.model_dump(mode="json"), "source_path": item.source_path}
 
 
 @router.get("/batch/{batch_id}/project/{pidx}/result")
 def batch_project_result(request: Request, batch_id: str, pidx: int) -> dict:
     """A finished merged project's transcript, to open in the editor, and its source when single."""
-    b = request.app.state.batches.get(batch_id)
-    item = b.projects[pidx] if b and 0 <= pidx < len(b.projects) else None
-    return _batch_result(item)
+    return _batch_result(_batch_item(request, batch_id, pidx))
 
 
 @router.get("/batch/{batch_id}/project/{pidx}/file/{fidx}/result")
 def batch_file_result(request: Request, batch_id: str, pidx: int, fidx: int) -> dict:
     """A finished file's transcript (per-file project), to open in the editor, and its source."""
-    b = request.app.state.batches.get(batch_id)
-    p = b.projects[pidx] if b and 0 <= pidx < len(b.projects) else None
-    item = p.files[fidx] if p and 0 <= fidx < len(p.files) else None
-    return _batch_result(item)
+    return _batch_result(_batch_item(request, batch_id, pidx, fidx))
+
+
+@router.put("/batch/{batch_id}/project/{pidx}/result", response_model=MergedOutput)
+@router.put("/batch/{batch_id}/project/{pidx}/file/{fidx}/result", response_model=MergedOutput)
+def save_batch_result(request: Request, batch_id: str, pidx: int, body: MergedOutput,
+                      fidx: int | None = None) -> MergedOutput:
+    """Replace a finished batch transcript with an edited one (the CLI / MCP `edit_lines`), so later
+    reads and exports of it use the edits. The files the batch already wrote stay as they are."""
+    _batch_item(request, batch_id, pidx, fidx).result = body
+    return body
 
 
 @router.post("/batch/{batch_id}/project/{pidx}/file/{fidx}/restart")

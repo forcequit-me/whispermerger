@@ -9,6 +9,7 @@ so the speech model stays loaded between calls. Files are read in place; nothing
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import subprocess
@@ -157,12 +158,23 @@ def _wait_job(job_id: str) -> dict:
         time.sleep(1)
 
 
-def _merged(source: str) -> tuple[dict, str]:
-    """A transcript from a job id or a WhisperMerger .json file, plus a default export name."""
+def _result(run_id: str, project: Optional[int] = None, file: Optional[int] = None) -> tuple[dict, str]:
+    """A finished transcript on the server and its route: a job's, or with a project / file number
+    one of a batch's."""
+    if project is None and file is None:
+        path = f"/api/result/{run_id}"
+        return _api("GET", path), path
+    path = _batch_path(run_id, project, file) + "/result"
+    return _api("GET", path)["merged"], path
+
+
+def _merged(source: str, project: Optional[int] = None, file: Optional[int] = None) -> tuple[dict, str]:
+    """A transcript from a job id, a batch id with a project / file number, or a WhisperMerger .json
+    file, plus a default export name."""
     path = Path(source).expanduser()
     if path.suffix.lower() == ".json" and path.is_file():
         return json.loads(path.read_text("utf-8")), path.stem
-    merged = _api("GET", f"/api/result/{source}")
+    merged, _ = _result(source, project, file)
     name = Path(merged["sources"][0]["filename"]).stem if merged.get("sources") else "transcript"
     return merged, f"{name} Transcript"
 
@@ -188,6 +200,9 @@ def _export_options(max_chars: int, max_lines: int, pad: float, subtitle_limits:
     return {"apply_limits": subtitle_limits, "chars_per_line": max_chars, "max_lines": max_lines,
             "pad_seconds": pad, "show_speakers": show_speakers, "label_on_change": name_on_change,
             "txt_timestamps": txt_timestamps}
+
+
+_EXPORT_KEYS = tuple(inspect.signature(_export_options).parameters)
 
 
 def _fmt_time(s: float) -> str:
@@ -315,11 +330,16 @@ def retry_batch(batch_id: str, projects: Optional[list[int]] = None, file: Optio
     return get_batch(batch_id)
 
 
-def get_transcript(source: str, full: bool = False) -> dict:
-    """A finished transcript, from a job id or a WhisperMerger .json file: lines numbered from 0
-    (the numbers edit_lines takes), with start and end (seconds), speaker, text and flags (overlap,
-    backchannel, edited...). full: the complete transcript including word-level timings."""
-    merged, _ = _merged(source)
+def get_transcript(source: str, full: bool = False, project: Optional[int] = None,
+                   file: Optional[int] = None) -> dict:
+    """A finished transcript, from a job id, a batch id (with project or file) or a WhisperMerger
+    .json file: lines numbered from 0 (the numbers edit_lines takes), with start and end (seconds),
+    speaker, text and flags (overlap, backchannel, edited...).
+
+    full: the complete transcript including word-level timings.
+    project: with a batch id: the project's number in get_batch.
+    file: with a batch id: the file's number in get_batch, when the project wrote one transcript per file (project defaults to 1)."""
+    merged, _ = _merged(source, project, file)
     if full:
         return merged
     return {"speakers": sorted({s["speaker"] for s in merged["segments"]}),
@@ -331,15 +351,19 @@ def get_transcript(source: str, full: bool = False) -> dict:
 def edit_lines(job_id: str, rename_from: Optional[str] = None, rename_to: Optional[str] = None,
                line: Optional[int] = None, text: Optional[str] = None, speaker: Optional[str] = None,
                start: Optional[float] = None, end: Optional[float] = None,
-               delete: bool = False) -> dict:
-    """Edit a finished job's transcript; later reads and exports use the edits. Give a rename, or a
+               delete: bool = False, project: Optional[int] = None, file: Optional[int] = None) -> dict:
+    """Edit a finished transcript of a job, or of a batch (with project or file); later reads and
+    exports of it use the edits, the files a batch already wrote don't change. Give a rename, or a
     line with at least one change, or both.
 
+    job_id: the job id, or a batch id.
+    project: with a batch id: the project's number in get_batch.
+    file: with a batch id: the file's number in get_batch (project defaults to 1).
     rename_from: a speaker name to rename on every line, to rename_to.
     rename_to: the new name for rename_from.
     line: line number from get_transcript (counted from 0) to change with text / speaker / start / end, or delete.
     A changed text is marked edited, so subtitle timing treats it like an edit made in the app."""
-    merged = _api("GET", f"/api/result/{job_id}")
+    merged, where = _result(job_id, project, file)
     segs = merged["segments"]
     changed = 0
     if rename_from is not None or rename_to is not None:
@@ -378,23 +402,26 @@ def edit_lines(job_id: str, rename_from: Optional[str] = None, rename_to: Option
         changed += 1
     if not changed:
         raise ActionError("nothing to change: give rename_from + rename_to, or line with text/speaker/start/end/delete")
-    _api("PUT", f"/api/result/{job_id}", merged)
+    _api("PUT", where, merged)
     return {"changed_lines": changed, "lines": len(segs)}
 
 
 def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"], filename: Optional[str] = None,
            max_chars: int = 42, max_lines: int = 2, pad: float = 0.0, subtitle_limits: bool = True,
-           show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True) -> dict:
-    """Write a transcript (a job id or a WhisperMerger .json file) to files.
+           show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True,
+           project: Optional[int] = None, file: Optional[int] = None) -> dict:
+    """Write a transcript (a job id, a batch id with project or file, or a WhisperMerger .json file) to files.
 
-    out: folder to write to (default: the .json file's folder, or the current folder for a job).
+    out: folder to write to (default: the .json file's folder, or the current folder for a job or batch).
+    project: with a batch id: the project's number in get_batch.
+    file: with a batch id: the file's number in get_batch (project defaults to 1).
 
     formats: srt, txt, csv, json. max_chars / max_lines: SRT subtitle limits (subtitle_limits turns
     them on or off). pad: seconds added to each line's start and end. name_on_change: in SRT, name
     the speaker only when it changes.
     txt_timestamps: start each TXT line with its start and end time (off, and show_speakers off: text alone).
     A TXT without timestamps opens in Edit Transcript as lines with no timing; keep a JSON to edit later."""
-    merged, name = _merged(source)
+    merged, name = _merged(source, project, file)
     opts = _export_options(max_chars, max_lines, pad, subtitle_limits, show_speakers, name_on_change,
                            txt_timestamps)
     if out is None:
@@ -405,22 +432,42 @@ def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"],
 
 def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True,
               formats: list[str] = ["srt", "txt", "csv", "json"], language: Optional[str] = None,
-              name: str = "Batch", wait: bool = False) -> dict:
+              name: str = "Batch", wait: bool = False, names: Optional[list[str]] = None,
+              tracks: Optional[list[int]] = None, projects: Optional[list[dict]] = None,
+              max_chars: int = 42, max_lines: int = 2, pad: float = 0.0, subtitle_limits: bool = True,
+              show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True) -> dict:
     """Transcribe many files (or whole folders) in the background, writing transcripts as each finishes.
 
+    paths: files or folders, which make one project called `name`; none when `projects` lists everything.
     out: folder for the transcripts (default: next to each source file).
     per_file: one transcript per file; off joins everything into one transcript.
+    names: speaker name for each audio track, in track order, used for every file.
+    tracks: which tracks to use, numbered from 1 (default: all).
+    projects: more projects for the same run. Each is an object with "paths" and, where it differs from what is given here, "name" (default "Project 2", ...), "names", "tracks", "per_file", "formats" or any of the options below. On the command line: JSON text, or the path of a .json file holding the list.
+    max_chars, max_lines, pad, subtitle_limits, show_speakers, name_on_change, txt_timestamps: how
+    the files are written, as in export.
     Returns the batch id; use get_batch to follow it. With no language given, the batch can stop to
     ask before a big word-timing download (see answer); waiting then ends early with the question."""
-    items = _register(paths)
-    project = {"name": name, "per_file": per_file, "formats": formats,
-               "sources": [_selection(it, None, None, k) for k, it in enumerate(items)]}
-    body = {"projects": [project], "language": language,
+    given = dict(locals())                     # every setting by name; a project's own values go over these
+    own = set(given) - {"out", "language", "wait", "projects"}
+    batch, files = [], 0
+    for n, spec in enumerate(([{"paths": paths, "name": name}] if paths else []) + (projects or []), 1):
+        if not isinstance(spec, dict) or not spec.get("paths") or set(spec) - own:
+            raise ActionError(f'project {n}: give an object with "paths" and any of {", ".join(sorted(own - {"paths"}))}')
+        p = {**given, "name": f"Project {n}", **spec}
+        items = _register(p["paths"])
+        files += len(items)
+        batch.append({"name": p["name"], "per_file": p["per_file"], "formats": p["formats"],
+                      "sources": [_selection(it, p["names"], p["tracks"], k) for k, it in enumerate(items)],
+                      "export": _export_options(**{k: p[k] for k in _EXPORT_KEYS})})
+    if not batch:
+        raise ActionError("nothing to run: give paths, or projects")
+    body = {"projects": batch, "language": language,
             "output_mode": "folder" if out else "source",
             "output_folder": str(Path(out).expanduser().resolve()) if out else None}
     batch_id = _api("POST", "/api/batch", body, timeout=120)["batch_id"]
     if not wait:
-        return {"batch_id": batch_id, "files": len(items)}
+        return {"batch_id": batch_id, "files": files}
     last = None
     while True:
         b = get_batch(batch_id)
