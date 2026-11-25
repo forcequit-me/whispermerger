@@ -306,7 +306,7 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
                detect_conflicts: bool = True, backchannel_render: str = "parenthetical",
                backchannel_max_words: int = 4, overlap_min_seconds: float = 2.0,
                bleed_window_seconds: float = 1.0, bleed_similarity: float = 0.7,
-               bleed_prefer_ratio: float = 2.0) -> dict:
+               bleed_prefer_ratio: float = 2.0, word_timing: bool = True) -> dict:
     """Transcribe audio/video files into one merged, speaker-labeled transcript.
 
     paths: files to transcribe; several are joined in that order on one timeline.
@@ -323,6 +323,7 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
     bleed_window_seconds: bleed is one voice picked up by two microphones; lines that start within this many seconds of each other are compared for it.
     bleed_similarity: how alike two such lines must read to count as bleed, from 0 to 1.
     bleed_prefer_ratio: the louder microphone's line is marked preferred only when it is at least this many times louder.
+    word_timing: time every word (the default). Off takes roughly half the time per file and needs no per-language word-timing model, so none is downloaded or asked about. The words are the same, but there are no word-level times and the lines are longer: one per stretch of speech (up to about 30 seconds) instead of one per sentence, so line start and end times are coarser and SRT splits inside a line are estimated. The result's "language" then says "(no word timing)".
     Returns {job_id} at once otherwise (plus "files" when `out` is given); follow it with
     get_progress, then read it with get_transcript. A file transcribed before with the same model
     and language comes from the cache and is done immediately.
@@ -333,7 +334,8 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
     items = _register(paths)
     sources = [_selection(it, names, tracks, k) for k, it in enumerate(items)]
     job_id = _api("POST", "/api/transcribe",
-                  {"sources": sources, "language": language, "options": options})["job_id"]
+                  {"sources": sources, "language": language, "options": options,
+                   "word_timing": word_timing})["job_id"]
     result = {"job_id": job_id}
     if out or wait:
         p = _wait_job(job_id)
@@ -355,7 +357,7 @@ def get_progress(job_id: str) -> dict:
     stage says "waiting for another run to finish" and the percent stays put; that's not stuck.
     When the result has "question", the job has stopped to ask (its message says "waiting for your
     answer") and stays put until you call answer. Once done, "language" is what Auto-detect chose
-    and how sure it was, e.g. "English 97%"."""
+    and how sure it was, e.g. "English 97%", with "(no word timing)" when the run went without it."""
     p = _api("GET", f"/api/progress/{job_id}")
     out = {"status": p["status"], "percent": round(p["progress"] * 100), "message": p["message"],
            "elapsed": round(p["elapsed"], 1), "error": p["error"]}
@@ -543,7 +545,7 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
               detect_conflicts: bool = True, backchannel_render: str = "parenthetical",
               backchannel_max_words: int = 4, overlap_min_seconds: float = 2.0,
               bleed_window_seconds: float = 1.0, bleed_similarity: float = 0.7,
-              bleed_prefer_ratio: float = 2.0) -> dict:
+              bleed_prefer_ratio: float = 2.0, word_timing: bool = True) -> dict:
     """Transcribe many files (or whole folders) in the background, writing transcripts as each finishes.
 
     paths: files or folders, which make one project called `name`; none when `projects` lists everything.
@@ -556,6 +558,7 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
     min_duration, edited_timing: how the files are written, as in export.
     detect_conflicts, backchannel_render, backchannel_max_words, overlap_min_seconds,
     bleed_window_seconds, bleed_similarity, bleed_prefer_ratio: how the tracks are merged, as in transcribe.
+    word_timing: time every word (the default). Off takes roughly half the time per file and needs no per-language word-timing model; the words are the same, but there are no word-level times and the lines are longer, so line times are coarser and SRT splits inside a line are estimated (see transcribe). A file's message then ends with "(no word timing)".
     Returns the batch id; use get_batch to follow it. With no language given, the batch can stop to
     ask before a big word-timing download (see answer); waiting then ends early with the question."""
     given = dict(locals())                     # every setting by name; a project's own values go over these
@@ -570,7 +573,7 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
         batch.append({"name": p["name"], "per_file": p["per_file"], "formats": p["formats"],
                       "sources": [_selection(it, p["names"], p["tracks"], k) for k, it in enumerate(items)],
                       "export": _export_options(**{k: p[k] for k in _EXPORT_KEYS}),
-                      "options": {k: p[k] for k in _MERGE_KEYS}})
+                      "options": {k: p[k] for k in _MERGE_KEYS}, "word_timing": p["word_timing"]})
     if not batch:
         raise ActionError("nothing to run: give paths, or projects")
     body = {"projects": batch, "language": language,

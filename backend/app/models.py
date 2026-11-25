@@ -57,6 +57,7 @@ class TrackLanguage(BaseModel):
     speaker: str
     language: str
     confidence: Optional[float] = None  # how sure Auto-detect was (0-1); None when the language was chosen
+    word_timing: bool = True            # False: this track ran without word timing (line timings only)
 
 
 class MergedOutput(BaseModel):
@@ -68,9 +69,12 @@ class MergedOutput(BaseModel):
     languages: list[TrackLanguage] = Field(default_factory=list)
 
     def language_note(self) -> str:
-        """What Auto-detect chose, for a status line: "English 97%" (each distinct one); "" if it
-        chose nothing (the language was picked, or the result predates this)."""
+        """What Auto-detect chose, for a status line: "English 97%" (each distinct one), and
+        whether a track ran without word timing: "English 97% (no word timing)", or "English (no
+        word timing)" for a chosen language. "" if there is neither to say."""
         from .modelstore import LANG_NAMES
-        notes = [f"{LANG_NAMES.get(t.language, t.language)} {t.confidence:.0%}"
-                 for t in self.languages if t.confidence is not None]
+        notes = [LANG_NAMES.get(t.language, t.language)
+                 + (f" {t.confidence:.0%}" if t.confidence is not None else "")
+                 + ("" if t.word_timing else " (no word timing)")
+                 for t in self.languages if t.confidence is not None or not t.word_timing]
         return ", ".join(dict.fromkeys(notes))

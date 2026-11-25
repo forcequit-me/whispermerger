@@ -60,6 +60,7 @@ class ProjectInput:
     formats: Optional[list[str]] = None          # which exports to write; None = all four
     options: Optional[MergeOptions] = None       # this project's merge settings; None = the batch's
     export: Optional[ExportOptions] = None       # this project's subtitle/export settings; None = defaults
+    transcribe_fn: Optional[TranscribeFn] = None  # this project's own (e.g. without word timing); None = the batch's
 
 
 @dataclass
@@ -280,7 +281,7 @@ def _guard(cb, is_cancelled: IsCancelled):
 
 
 def _lang(merged: MergedOutput) -> str:
-    """" · English 97%" for a done line, when Auto-detect chose the language."""
+    """" · English 97%" for a done line, when Auto-detect chose the language or word timing was skipped."""
     note = merged.language_note()
     return f" · {note}" if note else ""
 
@@ -316,6 +317,7 @@ def _process_project(
     ps.progress = 0.0
     ps.status = Status.RUNNING
     options = project.options or options
+    transcribe_fn = project.transcribe_fn or transcribe_fn
     ex = project.export or ExportOptions()
     tally = cache_tally()                        # to tell a reused result from a fresh run
 

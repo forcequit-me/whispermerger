@@ -79,6 +79,7 @@ def _fit_batch(cap: int) -> int:
         return cap
     return max(1, min(cap, int((free_gb - VRAM_MARGIN_GB - reserve) / GB_PER_BATCH_ITEM)))
 ALIGN_TAG = "wav2vec2"  # alignment method, part of the cache key (FR-CA-2)
+NO_WORDS_TAG = "no-words"  # in its place for a run asked to go without word timing (#39)
 # Optional language override: set WHISPERMERGER_LANGUAGE=en to skip auto-detect (and the
 # per-language align-model download it can trigger). Unset = auto-detect (original behavior).
 LANGUAGE = os.environ.get("WHISPERMERGER_LANGUAGE") or None
@@ -440,13 +441,18 @@ def transcribe_track(
     batch_size: int = BATCH_SIZE,
     cache: Optional[Cache] = None,
     language: Optional[str] = LANGUAGE,
+    word_timing: bool = True,
 ) -> dict:
     """Transcribe + align one mono/16k WAV. Returns the WhisperX output dict (cache-aware).
     `language` (e.g. "en") forces both transcription and alignment to that code; None
     auto-detects from speech across the file (the output then also has "language_probability").
     A chosen language fetches its align model on first use; an auto-detected one asks first when
     that download is big and the language isn't one the user listed (see asking()). `model_name`
-    None = the speech model chosen in the Models tab."""
+    None = the speech model chosen in the Models tab.
+    `word_timing` False skips alignment: no word-timing model is loaded, downloaded or asked
+    about, lines keep Whisper's own timings without words (one line per stretch of speech, up to
+    30 s, not per sentence), and the output has "word_timing": False (#39; alignment takes about
+    as long as the transcription itself, or longer)."""
     import whisperx
 
     model_name = model_name or modelstore.active_whisper()
@@ -461,6 +467,10 @@ def transcribe_track(
     # stays cached under the normal tag; Clear cache re-runs it if a model is added later.
     base_lang = modelstore.LANGUAGE_VARIANTS.get(language, language)
     tag = ALIGN_TAG if (base_lang is None or has_align_model(base_lang)) else "none"
+    if not word_timing:
+        # Its own tag, not "none": a run without word timing and one with it never get each
+        # other's result, whatever the language and whether it has a model.
+        tag = NO_WORDS_TAG
     punct = modelstore.pt_punctuation() and "pt-PT" in (language, pt_default)
     if punct:                                    # a merged result isn't a CAMOES-only one
         tag += "+punct"
@@ -477,7 +487,7 @@ def transcribe_track(
     audio = model = align_model = metadata = None
     try:
         audio = whisperx.load_audio(str(audio_path))
-        confidence, word_timing = None, True
+        confidence = None
         if auto and modelstore.english_only(model_name):
             language = "en"
         elif auto:
@@ -490,7 +500,7 @@ def transcribe_track(
             _note_detected(language, confidence)
             entry = modelstore.align_entry(language) if has_align_model(language) else None
             choice = None
-            if (entry and language not in used and entry.size_mb > ASK_OVER_MB
+            if (word_timing and entry and language not in used and entry.size_mb > ASK_OVER_MB
                     and not modelstore.is_installed(entry)):
                 choice, other = _ask_download(language, confidence, entry, probs)   # no turn held: others run meanwhile
             if choice == "skip":
@@ -559,6 +569,8 @@ def transcribe_track(
                       "segments": segments}
             if confidence is not None:                   # Auto-detect chose it: how sure it was
                 output["language_probability"] = round(confidence, 3)
+            if not word_timing:                          # skipped by choice: the option, or the "skip" answer
+                output["word_timing"] = False
             if cache:
                 cache.put(key, output)
             return output

@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 import zipfile
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -97,6 +98,7 @@ class TranscribeRequest(BaseModel):
     sources: list[SourceSelection]
     options: MergeOptionsIn = MergeOptionsIn()
     language: str | None = None              # force a language code; None = auto-detect
+    word_timing: bool = True                 # False: skip word timing (faster; line timings only)
 
 
 class JobCreated(BaseModel):
@@ -164,6 +166,7 @@ class BatchProjectIn(BaseModel):
     formats: list[str] | None = None        # which exports to write; None = all four
     options: MergeOptionsIn | None = None   # per-project override; None = the batch's settings
     export: ExportOptionsIn | None = None   # per-project override; None = the batch's settings
+    word_timing: bool | None = None         # per-project override; None = the batch's setting
 
 
 class BatchRequest(BaseModel):
@@ -173,6 +176,7 @@ class BatchRequest(BaseModel):
     options: MergeOptionsIn = MergeOptionsIn()
     export: ExportOptionsIn = ExportOptionsIn()   # subtitle/export settings for every written file
     language: str | None = None              # force a language code; None = auto-detect
+    word_timing: bool = True                 # False: skip word timing (faster; line timings only)
 
 
 class BatchCreated(BaseModel):
@@ -584,7 +588,8 @@ def transcribe(request: Request, body: TranscribeRequest) -> JobCreated:
     def work(progress) -> MergedOutput:
         return run_merge_pipeline(
             prepared,
-            lambda wav: transcribe_track(wav, cache=cache, language=body.language),
+            lambda wav: transcribe_track(wav, cache=cache, language=body.language,
+                                         word_timing=body.word_timing),
             options=options,
             progress_cb=progress,
         )
@@ -733,6 +738,9 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
         raise HTTPException(400, "output_folder required when output_mode='folder'")
     cache = request.app.state.cache
 
+    def transcribe_fn(wav: str, word_timing: bool = body.word_timing) -> dict:
+        return transcribe_track(wav, cache=cache, language=body.language, word_timing=word_timing)
+
     projects = []
     for p in body.projects:
         if p.formats is not None and not [f for f in p.formats if f in _FORMATS]:
@@ -744,13 +752,11 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
             formats=p.formats,
             options=(p.options or body.options).to_options(),
             export=(p.export or body.export).to_options(),
+            transcribe_fn=None if p.word_timing is None else partial(transcribe_fn, word_timing=p.word_timing),
         ))
     options = body.options.to_options()
     batch = request.app.state.batches.create(projects)
     batch.on_pause = unload_models               # free the GPU when the worker parks on a pause
-
-    def transcribe_fn(wav: str) -> dict:
-        return transcribe_track(wav, cache=cache, language=body.language)
 
     request.app.state.batches.set_spec(batch.id, _RunSpec(
         projects=projects, transcribe_fn=transcribe_fn,

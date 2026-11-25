@@ -260,5 +260,16 @@ def test_detected_language_stays_on_the_track_line(tmp_path):
     out = run_merge_pipeline([PreparedSource(input=src, path=str(wav))], stub,
                              progress_cb=lambda f, m: seen.append(m))
     assert "Transcribing track 1/1 · S1 · English 97% · 50%" in seen
-    assert out.languages[0].model_dump() == {"speaker": "S1", "language": "en", "confidence": 0.97}
+    assert out.languages[0].model_dump() == {"speaker": "S1", "language": "en", "confidence": 0.97,
+                                             "word_timing": True}
     assert out.language_note() == "English 97%"        # the done line and the result carry it
+
+    # a run without word timing (#39) says so in the same place, with or without Auto-detect
+    def run(output):
+        sf.write(wav, np.zeros(16000, dtype=np.float32), 16000)        # the pipeline deletes it after use
+        return run_merge_pipeline([PreparedSource(input=src, path=str(wav))], lambda path: output)
+
+    out = run({"language": "en", "language_probability": 0.97, "word_timing": False, "segments": []})
+    assert out.languages[0].word_timing is False and out.language_note() == "English 97% (no word timing)"
+    assert run({"language": "en", "word_timing": False, "segments": []}).language_note() == "English (no word timing)"
+    assert run({"language": "en", "segments": []}).language_note() == ""

@@ -212,6 +212,7 @@ def merge(
         sources=list(sources) if sources is not None else [],
         segments=segments,
         languages=[TrackLanguage(speaker=label, language=o["language"],
-                                 confidence=o.get("language_probability"))
+                                 confidence=o.get("language_probability"),
+                                 word_timing=o.get("word_timing", True))
                    for o, label in zip(outputs, labels) if o.get("language")],
     )

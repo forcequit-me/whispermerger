@@ -48,6 +48,9 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   a visible step without asking. Swedish uses KBLab's wav2vec2
   model. A language with no alignment model still transcribes, keeping Whisper's line timings
   without word-level timing (SRT splits inside a long line are then estimated).
+  Word timing can also be **turned off for a run** from the command line and MCP
+  (`--no-word-timing`, see below): about half the time per file and no word-timing model needed,
+  for the same words with longer lines and no word-level times.
   **Portuguese** comes in two: *Portugal* runs on CAMÕES (INESC-ID's large-v3 fine-tune on 425 h
   of European Portuguese, ~35% fewer errors than large-v3 on their benchmark) and *Brazil* on the
   chosen speech model; results are labeled `pt-PT` / `pt-BR`. Whisper can't tell the two apart
@@ -238,6 +241,7 @@ whispermerger export <job id or transcript.json> --format srt --max-chars 42
 whispermerger export <job id or transcript.json> --format txt --no-txt-timestamps --no-show-speakers   :: the text alone
 whispermerger export <job id or transcript.json> --min-duration 1.5 --edited-timing whole   :: edited lines: align | even | whole
 whispermerger transcript talk.srt                       :: an .srt, .txt or .csv opens too; so does export talk.srt --formats csv
+whispermerger transcribe ep1.mov --no-word-timing       :: about twice as fast, same words, no word-level times; run-batch takes it too
 whispermerger transcribe ep1.mov --no-detect-conflicts   :: merge options: also --backchannel-render skip, --overlap-min-seconds 3, --bleed-...
 whispermerger run-batch D:\rec --out D:\subs --formats srt,txt --wait
 whispermerger run-batch D:\rec\ep1 --name "Episode 1" --names "Host,Ana" --tracks 1,2 --max-chars 37 --out D:\subs
@@ -262,6 +266,16 @@ stderr. With no `--language`, a run can stop to ask before a big word-timing dow
 Language above): `get-progress` / `get-batch` then say "waiting for your answer" and carry the
 question and its choices, a `--wait` returns with them instead of hanging, and `answer` lets the
 run carry on.
+
+`--no-word-timing` (`word_timing: false` for MCP and the API; `transcribe`, `run-batch` and each
+project of a batch) skips the step that times every word. That step takes about as long as the
+transcription itself, so a file is done in roughly half the time, and no per-language word-timing
+model is loaded, downloaded or asked about. The words are the same. What you give up: there are
+no word-level times, lines are one per stretch of speech (up to about 30 seconds) instead of one
+per sentence, so their start and end times are coarser, and SRT splits inside a line are
+estimated. The finished line and the result say so (`English 97% (no word timing)`, and
+`word_timing: false` per track in the JSON export). Results with and without it are cached
+separately. The app itself always times words.
 
 `get-transcript` and `export` take a job id or a transcript file: a WhisperMerger `.json`, or an
 `.srt`, `.txt` or `.csv`, read the way Edit Transcript opens them (no word timings; a TXT line

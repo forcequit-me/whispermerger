@@ -526,3 +526,39 @@ def test_a_batch_carries_every_export_option(api, two_stream_file, tmp_path, mon
         actions.run_batch([f], projects=[{"paths": [f], "edited_timing": "nope"}])
     a = cli.build_parser().parse_args(["run-batch", "d", "--min-duration", "2", "--edited-timing", "whole"])
     assert (a.min_duration, a.edited_timing) == (2.0, "whole")
+
+
+def test_word_timing_option_reaches_a_job_and_each_batch_project(api, two_stream_file, tmp_path, monkeypatch):
+    """#39: on unless asked otherwise; off is passed down and the result says so."""
+    f, seen = str(two_stream_file), []
+
+    def stub(_wav, word_timing=True, **_kw):
+        seen.append(word_timing)
+        return {**_stub_transcribe(_wav), "language": "en", **({} if word_timing else {"word_timing": False})}
+
+    with monkeypatch.context() as m:           # its own scope: undoing the fixture's patches would reach a real server
+        m.setattr(routes.api, "transcribe_track", stub)
+        done = actions.transcribe([f], wait=True)
+        assert seen == [True, True] and "language" not in done          # default: as before
+        seen.clear()
+        done = actions.transcribe([f], wait=True, word_timing=False)
+        assert seen == [False, False] and done["language"] == "English (no word timing)"
+        assert actions.get_progress(done["job_id"])["message"].endswith("English (no word timing)")
+        full = actions.get_transcript(done["job_id"], full=True)
+        assert [t["word_timing"] for t in full["languages"]] == [False, False]
+
+        seen.clear()                           # a batch: the call's setting, and a project's own over it
+        b = actions.run_batch([f], out=str(tmp_path), formats=["json"], per_file=False, word_timing=False,
+                              projects=[{"paths": [f], "per_file": False, "word_timing": True},
+                                        {"paths": [f], "per_file": False}], wait=True)
+        assert seen == [False, False, True, True, False, False]
+        assert [i["message"].endswith("(no word timing)") for i in b["items"]] == [True, False, True]
+        seen.clear()
+        actions.run_batch([f], out=str(tmp_path), formats=["json"], wait=True)
+        assert seen == [True, True]
+
+    parser = cli.build_parser()
+    assert parser.parse_args(["transcribe", "a.mov"]).word_timing is True
+    assert parser.parse_args(["transcribe", "a.mov", "--no-word-timing"]).word_timing is False
+    assert parser.parse_args(["run-batch", "d"]).word_timing is True
+    assert parser.parse_args(["run-batch", "d", "--no-word-timing"]).word_timing is False

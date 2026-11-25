@@ -304,7 +304,7 @@ def test_auto_detect_asks_before_a_big_download(monkeypatch, tmp_path):
         reply[0] = ("skip", None)                                       # go without word timing
         seen["downloaded"].clear()
         out = transcribe.transcribe_track(tmp_path / "x.wav")
-        assert out["language"] == "nn" and out["segments"][0]["words"] == []
+        assert out["language"] == "nn" and out["segments"][0]["words"] == [] and out["word_timing"] is False
         assert "align:nn" not in seen["downloaded"]
 
         reply[0] = ("language", "en")                                   # use another language instead
@@ -349,3 +349,38 @@ def test_a_finished_run_lets_go_of_its_audio_and_models(monkeypatch, tmp_path):
     transcribe.transcribe_track(tmp_path / "x.wav")
     held = frames[0].f_locals
     assert held["audio"] is None and held["model"] is None and held["align_model"] is None and held["metadata"] is None
+
+
+def test_word_timing_off_skips_alignment_and_has_its_own_cache_entry(monkeypatch, tmp_path):
+    """#39: without word timing nothing is aligned, downloaded or asked; the words are the same;
+    and neither kind of run is handed the other's saved result."""
+    from app.cache import Cache
+    seen = _auto_detect(monkeypatch, tmp_path, {"nn": 0.36, "en": 0.30})   # nn: the 3.9 GB model that asks
+    wav, cache = tmp_path / "x.wav", Cache(tmp_path / "cache")
+    wav.write_bytes(b"audio")                                           # the cache key reads the file
+    texts = lambda out: [s["text"] for s in out["segments"]]
+    aligned = lambda: seen["aligned"] + [m for m in seen["downloaded"] if m.startswith("align:")]
+
+    with transcribe.asking(lambda q: (_ for _ in ()).throw(AssertionError("asked"))):
+        auto_off = transcribe.transcribe_track(wav, cache=cache, word_timing=False)
+        off = transcribe.transcribe_track(wav, cache=cache, language="en", word_timing=False)
+    assert aligned() == []                                              # no word-timing model ensured or loaded
+    assert auto_off["language"] == "nn" and auto_off["word_timing"] is False
+    assert off["word_timing"] is False and off["segments"][0]["words"] == []
+
+    on = transcribe.transcribe_track(wav, cache=cache, language="en")   # default: aligned, not the saved one
+    assert on["segments"][0]["words"] == ["w"] and "word_timing" not in on
+    assert texts(on) == texts(off)
+    assert aligned() == ["en", "align:en"]
+
+    ran = len(seen["downloaded"])                                       # each comes back from its own entry
+    assert transcribe.transcribe_track(wav, cache=cache, language="en", word_timing=False) == off
+    assert transcribe.transcribe_track(wav, cache=cache, language="en") == on
+    assert transcribe.transcribe_track(wav, cache=cache, word_timing=False) == auto_off
+    assert len(seen["downloaded"]) == ran
+
+    # a language with no word-timing model has no words either way, and still keeps the two apart
+    plain = transcribe.transcribe_track(wav, cache=cache, language="is")
+    assert "word_timing" not in plain and plain["segments"][0]["words"] == []
+    assert transcribe.transcribe_track(wav, cache=cache, language="is", word_timing=False)["word_timing"] is False
+    assert transcribe.transcribe_track(wav, cache=cache, language="is") == plain

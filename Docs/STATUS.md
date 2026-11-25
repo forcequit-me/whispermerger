@@ -654,6 +654,40 @@ the same routes the Models tab does). Run control, several projects, batch resul
 options are tested in-process only (the app through its test client, transcription stubbed), not
 against a running server.
 
+## Option to skip word timing (2026-11-25, #39)
+
+Word timing (alignment) takes as long as the transcription or longer, and a caller that only
+needs the text and rough line times had no way to turn it off. Now `word_timing` (default on, so
+nothing changes unless asked): `transcribe_track(..., word_timing=False)`, `word_timing` on
+`POST /api/transcribe` and `POST /api/batch` (the batch's, and each project's own over it), and
+`transcribe` / `run_batch` in `actions.py`, so `--no-word-timing` on the CLI and `word_timing:
+false` over MCP, also inside a `run_batch` project. No app UI.
+
+- **Off:** the existing "keep line timings only" branch. No word-timing model is ensured, loaded
+  or downloaded, and the #38 question about a big download is not asked.
+- **Cache:** its own tag, `no-words`, in place of `wav2vec2`. The existing `none` tag means "this
+  chosen language has no word-timing model"; reusing it would have mixed the two kinds of run for
+  such a language. With a separate tag a run with word timing and one without never get each
+  other's saved result.
+- **Shown:** the track's output has `"word_timing": False`, kept per track in
+  `MergedOutput.languages` (new field, default true, so it is in the JSON export), and
+  `language_note()` adds it to the finished line and the `language` of a job or batch file:
+  `English 97% (no word timing)`, or `English (no word timing)` when the language was chosen. The
+  "skip" answer from #38 is marked the same way. A language that simply has no word-timing model
+  is not marked (unchanged).
+- **Batch:** `ProjectInput.transcribe_fn` (None = the batch's) carries a project's own setting.
+
+Measured on the real GPU (3080 Ti, large-v3, batch 14, 0.9 GB in use by other apps, none of them
+computing), own server, a 10 min 9 s file of synthesized English speech, models already loaded,
+language auto-detected: **10.1 s without word timing, 20.9 s with it**. Same 1,665 words in the
+same order. Lines differ: 28 lines averaging 21.8 s without (one per stretch of speech, as Whisper
+returns them) against 95 averaging 5.8 s with (alignment also splits into sentences), so a caller
+that wants short paragraphs gets coarser stamps. The server console showed "no word-timing model
+used ... keeping line timings only" for the runs without it; GPU memory in use was not a clear
+signal either way (5.3 to 5.6 GB in both cases). Running each again returned its own saved result.
+
+Not covered: Label Track (`/api/diarize`) has no such option.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
