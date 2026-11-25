@@ -353,8 +353,8 @@
       </div>
       <details class="paste-details" id="paste-details" style="margin-top:12px">
         <summary class="muted">or paste JSON / SRT / TXT / CSV</summary>
-        <textarea id="json-in" class="json-in" placeholder='{"version":"1.0","segments":[...]}'></textarea>
-        <div style="margin-top:8px"><button id="json-load" class="ghost">Load pasted JSON</button>
+        <textarea id="json-in" class="json-in" placeholder="Paste a transcript here: JSON, SRT, TXT, CSV or plain text"></textarea>
+        <div style="margin-top:8px"><button id="json-load" class="ghost">Load pasted transcript</button>
           <span id="json-err" class="err"></span></div>
       </details>
       <div class="panel" id="edit-panel" style="display:none">
@@ -401,7 +401,7 @@
             <select id="my-languages-add" style="min-width:170px"></select></label>
           <div id="my-languages" class="my-langs"></div>
         </div>
-        <div class="muted" style="margin-top:6px">Auto-detect listens to speech from across the file. With languages chosen here, a guess outside them has to be a confident one, or the closest of yours is used. For a language outside them, a run asks before a word-timing download over 1 GB.</div>
+        <div class="muted" style="margin-top:6px">Auto-detect listens to speech from across the file. With languages chosen here, a guess outside them has to be a confident one, or the closest of yours is used. For a language outside them, a run asks before a word-timing download over 1.5 GB (most are about 1.3 GB and download without asking).</div>
       </div>
       <div class="panel" id="models-alignp" style="display:none">
         <h2>Word-timing models</h2>
@@ -413,6 +413,6 @@
   </main>
 
   <script src="app.js?v=52"></script>
-  <script type="module" src="labeltrack.js?v=14"></script>
+  <script type="module" src="labeltrack.js?v=15"></script>
 </body>
 </html>

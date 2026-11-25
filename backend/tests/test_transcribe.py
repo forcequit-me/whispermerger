@@ -326,10 +326,17 @@ def test_auto_detect_asks_before_a_big_download(monkeypatch, tmp_path):
 
 
 def test_auto_detect_does_not_ask_when_the_model_is_on_disk(monkeypatch, tmp_path):
-    seen = _auto_detect(monkeypatch, tmp_path, {"nl": 0.9}, installed={"align:nl"})
+    seen = _auto_detect(monkeypatch, tmp_path, {"nn": 0.9}, installed={"align:nn"})
+    with transcribe.asking(lambda q: (_ for _ in ()).throw(AssertionError("asked"))):
+        assert transcribe.transcribe_track(tmp_path / "x.wav")["language"] == "nn"
+    assert seen["aligned"] == ["nn"] and seen["dropped"] == ["nn"]
+
+
+def test_auto_detect_does_not_ask_for_a_usual_size_model(monkeypatch, tmp_path):
+    seen = _auto_detect(monkeypatch, tmp_path, {"nl": 0.9})            # 1.26 GB, not on disk
     with transcribe.asking(lambda q: (_ for _ in ()).throw(AssertionError("asked"))):
         assert transcribe.transcribe_track(tmp_path / "x.wav")["language"] == "nl"
-    assert seen["aligned"] == ["nl"] and seen["dropped"] == []
+    assert "align:nl" in seen["downloaded"] and seen["aligned"] == ["nl"] and seen["dropped"] == []
 
 
 def test_a_finished_run_lets_go_of_its_audio_and_models(monkeypatch, tmp_path):

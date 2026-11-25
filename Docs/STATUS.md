@@ -567,9 +567,11 @@ guess outside it needs 0.5 (`OUTSIDE_LIST_MIN`), else the best-scoring language 
 used. A Portuguese default (`auto_portuguese`) counts as using Portuguese. Empty list: the top
 guess stands, as before.
 
-**Ask before a big download.** Auto-detect, language not in the list, word-timing model over 1 GB
+**Ask before a big download.** Auto-detect, language not in the list, word-timing model over 1.5 GB
 (`ASK_OVER_MB`) and not on disk: `transcribe_track` asks through a per-thread hook
-(`transcribe.asking`) instead of downloading. Answers: download it, continue without word timing
+(`transcribe.asking`) instead of downloading. The limit started at 1 GB and was raised the same
+day: the usual word-timing models are about 1.26 GB, so nearly every language asked on first use;
+now only the unusually big ones ask (the Norwegian ones, 3.9 GB). Answers: download it, continue without word timing
 for this file, or use a different language. A language picked in a dropdown, or one in the list,
 downloads as before. No hook (a script calling `transcribe_track` directly): no download, line
 timings only.

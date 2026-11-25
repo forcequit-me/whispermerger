@@ -40,7 +40,8 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   **Languages I use** (Models tab, empty by default) is the list of languages your recordings are
   in: a guess among them is accepted, and a guess outside them has to be at least 50% sure,
   otherwise the closest of yours is used. Auto-detect never starts a big download on its own: when
-  it lands on a language outside that list whose word-timing model is over 1 GB and not on disk,
+  it lands on a language outside that list whose word-timing model is over 1.5 GB and not on disk
+  (most are about 1.3 GB and download without asking; the Norwegian ones are 3.9 GB),
   the run **stops and asks** — download it and continue, continue without word timing for that
   file, or use a different language instead. The clock stops while it waits, as with Pause, and
   Cancel still works. A language picked in a dropdown, or one in your list, downloads its model as

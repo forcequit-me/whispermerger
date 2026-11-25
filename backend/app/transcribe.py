@@ -318,8 +318,10 @@ DETECT_MIN_SPEECH_S = 5            # a spot with less speech than this doesn't v
 # under it, the best-scoring language of theirs is used instead.
 OUTSIDE_LIST_MIN = 0.5
 # Auto-detect never downloads a word-timing model bigger than this for a language outside that
-# list on its own: the run stops and asks (see asking()).
-ASK_OVER_MB = 1000
+# list on its own: the run stops and asks (see asking()). The usual ones are about 1.26 GB and
+# download without asking (at 1 GB nearly every language asked on first use); the unusually big
+# ones ask (the Norwegian ones are 3.9 GB).
+ASK_OVER_MB = 1500
 ASK_CHOICES = {"download": "download the model and continue",
                "skip": "continue without word timing for this file (line timings only)",
                "language": "use a different language instead (give its code, e.g. en)"}
