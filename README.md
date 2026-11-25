@@ -93,10 +93,14 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   to a loaded transcript to enable the waveform + ▶ for verification.
 - **Edit Transcript loads any of our formats** — drop/choose/paste a WhisperMerger **JSON, SRT,
   TXT, or CSV** (format auto-detected); JSON round-trips word-level timing, the others import as
-  plain segments. Standard SRT from other tools loads too (the parser is generic).
-- **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing. Tick one format for a plain
+  plain segments. Standard SRT from other tools loads too (the parser is generic). A TXT without
+  timestamps (or any plain text, one line per row) loads too: each line starts at 0 and is marked
+  *no timing* in the Notes column until you type its Start and End.
+- **Export** — SRT / TXT / CSV / JSON, all carrying start+end timing (untick **Timestamps in TXT**
+  for TXT without them; with *Show speakers* off too, it's the text alone). Tick one format for a plain
   file or several for one zip; a summary (formats, subtitle limits, padding, edited-line timing,
-  hidden speakers, edited-line count) shows before writing, with *Don't show again*. SRT splits lines on real
+  hidden speakers, edited-line count) shows before writing, with *Don't show again*. It warns when
+  lines marked *no timing* are about to be written into a format that carries times. SRT splits lines on real
   word timestamps (toggleable subtitle limits). **Pad (s)** extends each segment's start/end by N
   seconds (render-time only — source stays clean) so cut points aren't abrupt in a video editor.
   With *Show speakers* on, the `Name: ` label counts toward *Chars/line* on each subtitle's first
@@ -189,7 +193,8 @@ split also prints to the server console as a scrollback record (`[timing] <file>
 - **Label Track** — single-track files: add one (or several to sequence), auto-detected speech
   appears on a waveform, label regions per speaker, then transcribe into one transcript.
 - **Edit Transcript** — load a WhisperMerger transcript in any export format (`.json` / `.srt` /
-  `.txt` / `.csv`, or paste it) to tweak and re-export (e.g. a batch result).
+  `.txt` / `.csv`, or paste it) to tweak and re-export (e.g. a batch result). A TXT without
+  timestamps loads as lines with no timing, which you can type back in.
 - **Models** — every speech and word-timing model, whether it's on disk, its size, Download /
   Remove, on two tabs: **Speech models** (one line each, grouped Multilingual / English only / One
   language) and **Word-timing models** (a compact grid by language, with its code). Downloads show progress, can be canceled, and resume where they stopped (also after a
@@ -217,6 +222,7 @@ whispermerger transcribe "D:\rec\ep1.mov" --names "Host,Guest" --language en --o
 whispermerger transcript <job id>                       :: numbered lines with speakers and times
 whispermerger edit-lines <job id> --rename-from Guest --rename-to Ana   :: or --line 12 --text "..." / --delete
 whispermerger export <job id or transcript.json> --format srt --max-chars 42
+whispermerger export <job id or transcript.json> --format txt --no-txt-timestamps --no-show-speakers   :: the text alone
 whispermerger run-batch D:\rec --out D:\subs --formats srt,txt --wait
 whispermerger models                                    :: also download-model, use-model
 whispermerger --help                                    :: every command; add --json for machine-readable output

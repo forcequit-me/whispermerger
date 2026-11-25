@@ -222,6 +222,7 @@ table.editor tr.editing { background: var(--panel-2); }
 .chip.overlap { background: rgba(217,164,65,.2); color: var(--overlap); }
 .chip.backchannel { background: rgba(91,157,255,.2); color: var(--backchannel); }
 .chip.bleed_suspected { background: rgba(224,98,94,.2); color: var(--bleed); }
+.chip.no_timing { background: rgba(217,164,65,.2); color: var(--overlap); }
 .chip.edited, .chip.preferred { background: rgba(87,184,148,.2); color: var(--ok); }
 
 /* per-speaker export toggle bar (shared editor) */

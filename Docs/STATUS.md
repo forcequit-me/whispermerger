@@ -581,15 +581,23 @@ hook (#33) is put on the model per run, so one run pulled them from under the ot
   (`words:[]`). Generic third-party SRT loads too (the parser isn't WhisperMerger-specific);
   proprietary formats (Descript JSON, Premiere/Resolve XML) are still unsupported.
 
-- **Text-only TXT can't be reopened in Edit Transcript (2026-11-11):** Export has a *Timestamps in
-  TXT* option (on by default). With it off, and *Show speakers* off too, TXT is the text alone, one
-  transcript line per line. Edit Transcript's TXT import (`parseTxt` in `frontend/app.js`) only reads
-  lines that start with `[start --> end]`, so a TXT exported without timestamps fails with "No
-  transcript lines found in this file". To come back to: either load such a file as untimed lines
-  (times left at 0 and marked, so an SRT made from it isn't trusted), or keep refusing it but say
-  why and point to JSON. Until then, also export JSON (or a timestamped TXT) for anything that may
-  need editing later. Related gaps: the CLI and MCP `export` have no switch for this option yet, and
-  the text stays one line per transcript line (no flowing-paragraph mode).
+- **TXT without timestamps opens in Edit Transcript as lines with no timing (2026-11-25):** Export
+  has a *Timestamps in TXT* option (on by default). With it off, TXT lines have no
+  `[start --> end]`; with *Show speakers* off too, TXT is the text alone. Edit Transcript now loads
+  such a file (`parseTxt` in `frontend/app.js`): every non-empty line becomes one transcript line,
+  a leading `Name: ` is read as the speaker (same rule as timed TXT, otherwise "Speaker"), Start and
+  End are 0, and the line carries the `no_timing` flag, shown as *no timing* in the Notes column.
+  A file that mixes timed and untimed lines loads both, and pasted plain text loads the same way.
+  Typing a Start and a later End on a line removes its mark. The flag is an ordinary entry in
+  `flags`, so it survives a JSON or CSV export and reload with no model change. The export summary
+  warns, with a count, when lines with no timing are about to go into a format that carries times
+  (SRT, CSV, JSON, or TXT with timestamps on); they would be written at 00:00:00. It shows even
+  with *Don't show again* ticked, and doesn't block the export. The CLI and MCP `export` have the
+  switch too (`--no-txt-timestamps` / `txt_timestamps: false`); `run_batch` takes no export
+  options, so it has none. Still true: timing isn't recovered, only typed back in by hand, so keep a
+  JSON (or a timestamped TXT) for anything that may need editing later. A line break inside one
+  line's text comes back as separate lines (the extra ones marked *no timing*). The text stays one
+  line per transcript line (no flowing-paragraph mode).
 
 ## Validation — real-world stress test ✅
 

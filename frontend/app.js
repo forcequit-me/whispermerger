@@ -415,8 +415,15 @@ function buildRow(container, merged, seg, i, preview) {
 
   const start = el("input", { value: fmtTimeShort(seg.start) });
   const end = el("input", { value: fmtTimeShort(seg.end) });
-  start.onchange = () => { seg.start = parseTime(start.value); };
-  end.onchange = () => { seg.end = parseTime(end.value); };
+  // A line loaded without timing loses its "no timing" mark once it has a start and a later end.
+  const timed = () => {
+    if (seg.end <= seg.start || !seg.flags.includes("no_timing")) return;
+    seg.flags = seg.flags.filter((f) => f !== "no_timing");
+    renderFlags(flagsCell, seg);
+    tr.classList.remove("flag-no_timing");
+  };
+  start.onchange = () => { seg.start = parseTime(start.value); timed(); };
+  end.onchange = () => { seg.end = parseTime(end.value); timed(); };
 
   const txt = el("textarea", { value: seg.text, rows: 1 });
   txt.oninput = () => {
@@ -477,7 +484,8 @@ function buildRow(container, merged, seg, i, preview) {
 
 function renderFlags(cell, seg) {
   cell.innerHTML = "";
-  for (const f of seg.flags || []) cell.append(el("span", { className: `chip ${f}`, textContent: f }));
+  for (const f of seg.flags || [])
+    cell.append(el("span", { className: `chip ${f}`, textContent: f === "no_timing" ? "no timing" : f }));
 }
 
 // Move focus to the adjacent rendered row's text (skips hidden/filtered rows automatically), caret
@@ -597,7 +605,8 @@ function buildExportPanel(container, merged) {
     if (!segs.length) { alert("All speakers are toggled off — nothing to export."); return; }
     const hidden = distinctSpeakers(merged).filter((s) => container._disabled.has(s));
     const edited = segs.filter((s) => (s.flags || []).includes("edited")).length;
-    if (!(await confirmExport({ fmts, options, hidden, edited, lines: segs.length }))) return;
+    const untimed = segs.filter((s) => (s.flags || []).includes("no_timing")).length;
+    if (!(await confirmExport({ fmts, options, hidden, edited, untimed, lines: segs.length }))) return;
     await downloadExport({ ...merged, segments: segs }, fmts.join(","), filename.value || "transcript", options);
   };
 
@@ -624,8 +633,15 @@ function buildExportPanel(container, merged) {
 
 // What will shape the export, shown before writing it. "Don't show again" is remembered in this
 // browser only.
-function confirmExport({ fmts, options: o, hidden, edited, lines }) {
-  try { if (localStorage.getItem("wm-skip-export-summary") === "1") return Promise.resolve(true); } catch {}
+function confirmExport({ fmts, options: o, hidden, edited, untimed, lines }) {
+  // Lines loaded without timing would be written at 00:00:00 in any format that carries times.
+  const timedFmts = fmts.filter((f) => f !== "txt" || o.txt_timestamps).map((f) => f.toUpperCase());
+  const noTiming = untimed && timedFmts.length
+    ? `${untimed} line${untimed > 1 ? "s have" : " has"} no timing and will be written at 00:00:00 in ${timedFmts.join(", ")}. ` +
+      "Set Start and End on those lines first, or export TXT with Timestamps in TXT off."
+    : "";
+  // "Don't show again" doesn't hide that warning.
+  try { if (!noTiming && localStorage.getItem("wm-skip-export-summary") === "1") return Promise.resolve(true); } catch {}
   const srt = fmts.includes("srt");
   const rows = [
     ["Formats", fmts.map((f) => f.toUpperCase()).join(", ") + (fmts.length > 1 ? " (one zip)" : "")],
@@ -643,6 +659,7 @@ function confirmExport({ fmts, options: o, hidden, edited, lines }) {
   const dlg = el("dialog", { className: "export-summary" },
     el("h2", { textContent: "Export" }),
     el("dl", {}, ...rows.flatMap(([k, v]) => [el("dt", { textContent: k }), el("dd", { textContent: v })])),
+    noTiming && el("div", { className: "warn", style: "margin:0 0 16px", textContent: noTiming }),
     el("form", { method: "dialog", className: "row" },
       el("label", { className: "opt" }, skip, "Don't show again"), el("div", { className: "spacer" }),
       el("button", { className: "ghost", value: "back", textContent: "Back" }),
@@ -1028,9 +1045,9 @@ function sniffFormat(text) {
   const t = (text || "").trim();
   if (t.startsWith("{") || t.startsWith("[{")) return "json";
   if (/^\s*start\s*,\s*end\s*,\s*speaker/i.test(t)) return "csv";
-  if (/^\s*\[\d\d?:\d\d:\d\d/.test(t)) return "txt";   // [hh:mm:ss,mmm --> ...] text
+  if (/^\s*\[\d\d?:\d\d:\d\d/m.test(t)) return "txt";   // [hh:mm:ss,mmm --> ...] text, on any line
   if (/-->/.test(t)) return "srt";
-  return "json";
+  return "txt";                                        // plain text: one line per row, no timing
 }
 
 function parseJsonTranscript(text) {
@@ -1067,13 +1084,17 @@ function parseSrt(text) {
   return segs;
 }
 
+// A line without "[start --> end]" (TXT exported with timestamps off) loads at 0 with the
+// "no_timing" flag, so it can be edited and timed by hand.
 function parseTxt(text) {
   const segs = [];
   for (const raw of text.replace(/\r/g, "").split("\n")) {
-    const m = raw.trim().match(/^\[(.+?)\s*-->\s*(.+?)\]\s*(.*)$/);
-    if (!m) continue;
-    const { speaker, text: t } = splitSpeaker(m[3]);
-    segs.push({ speaker, start: parseSrtTime(m[1]), end: parseSrtTime(m[2]), text: t, words: [], flags: [] });
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(/^\[(.+?)\s*-->\s*(.+?)\]\s*(.*)$/);
+    const { speaker, text: t } = splitSpeaker(m ? m[3] : line);
+    segs.push({ speaker, start: m ? parseSrtTime(m[1]) : 0, end: m ? parseSrtTime(m[2]) : 0, text: t,
+      words: [], flags: m ? [] : ["no_timing"] });
   }
   return segs;
 }

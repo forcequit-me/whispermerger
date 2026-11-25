@@ -57,6 +57,12 @@ def test_transcribe_edit_export(api, two_stream_file, tmp_path):
     # a saved .json transcript exports too, next to itself by default
     saved = next(f for f in job["files"] if f.endswith(".json"))
     assert actions.export(saved, formats=["txt"])["files"][0].startswith(str(tmp_path))
+    # TXT keeps "[start --> end]" by default; the switch drops it (and the names, with show_speakers off).
+    # The saved file was written before the rename above, so it still says Host.
+    txt = lambda **kw: Path(actions.export(saved, formats=["txt"], **kw)["files"][0]).read_text("utf-8")
+    assert txt().startswith("[00:00:00,000 --> ")
+    assert txt(txt_timestamps=False) == "Host: hello\nGuest: hello"
+    assert txt(txt_timestamps=False, show_speakers=False) == "hello\nhello"
 
     with pytest.raises(actions.ActionError, match="no line 99: lines are numbered 0 to"):
         actions.edit_lines(job["job_id"], line=99, text="x")
@@ -78,6 +84,8 @@ def test_cli_has_a_command_per_action_and_parses_lists(api, two_stream_file, cap
     a = parser.parse_args(["transcribe", "a.mov", "b.mov", "--names", "Host,Guest", "--tracks", "1,2", "--wait"])
     assert a.paths == ["a.mov", "b.mov"] and a.names == ["Host", "Guest"] and a.tracks == [1, 2] and a.wait
     assert parser.parse_args(["export", "x.json", "--no-show-speakers"]).show_speakers is False
+    assert parser.parse_args(["export", "x.json"]).txt_timestamps is True
+    assert parser.parse_args(["export", "x.json", "--no-txt-timestamps"]).txt_timestamps is False
     names = {fn.__name__.replace("_", "-") for fn in actions.ACTIONS}
     assert names <= set(parser._subparsers._group_actions[0].choices)
 
