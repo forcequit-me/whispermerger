@@ -35,8 +35,9 @@ const el = (tag, props = {}, ...kids) => {
 // Batch's merge + subtitle settings, and each tab's Export panel. Not files, names or zoom.
 const SAVED = (() => { try { return JSON.parse(localStorage.getItem("wm-settings")) || {}; } catch { return {}; } })();
 function saveSettings() { try { localStorage.setItem("wm-settings", JSON.stringify(SAVED)); } catch {} }
-for (const id of ["batch-language", "batch-perfile", "opt-detect", "opt-language", "opt-backchannel", "opt-bc-words",
-                  "opt-overlap", "opt-bleed-win", "opt-bleed-sim", "opt-bleed-ratio", "label-pad", "label-language"]) {
+for (const id of ["batch-language", "batch-perfile", "batch-word-timing", "opt-detect", "opt-word-timing", "opt-language",
+                  "opt-backchannel", "opt-bc-words", "opt-overlap", "opt-bleed-win", "opt-bleed-sim", "opt-bleed-ratio",
+                  "label-pad", "label-language"]) {
   const n = $(`#${id}`), k = n.type === "checkbox" ? "checked" : "value";
   if (SAVED[id] !== undefined) n[k] = SAVED[id];
   n.addEventListener("change", () => { SAVED[id] = n[k]; saveSettings(); });
@@ -895,7 +896,8 @@ async function runPipeline() {
   try {
     res = await fetchTO("/api/transcribe", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sources, options: gatherOptions(), language: $("#opt-language").value || null }),
+      body: JSON.stringify({ sources, options: gatherOptions(), language: $("#opt-language").value || null,
+                             word_timing: $("#opt-word-timing").checked }),
     }, 30000);
   } catch (e) {
     setProgress(0, "couldn't reach the server to start — is it still running?");
@@ -1281,7 +1283,9 @@ function buildProjectOutput(proj) {
   const ov = el("input", { type: "checkbox", checked: !!proj.override });
   ov.onchange = () => {
     proj.override = ov.checked;
-    if (proj.override && !proj.formats) { proj.formats = globalFormats(); proj.perFile = globalPerFile(); }
+    if (proj.override && !proj.formats) {
+      proj.formats = globalFormats(); proj.perFile = globalPerFile(); proj.wordTiming = $("#batch-word-timing").checked;
+    }
     renderProjects();
   };
   const row = el("div", { className: "row", style: "margin-top:6px" },
@@ -1295,10 +1299,13 @@ function buildProjectOutput(proj) {
   const fmtChecks = ["srt", "txt", "csv", "json"].map((f) =>
     el("input", { type: "checkbox", value: f, checked: (proj.formats || []).includes(f) }));
   fmtChecks.forEach((cb) => { cb.onchange = () => { proj.formats = fmtChecks.filter((c) => c.checked).map((c) => c.value); }; });
+  const wt = el("input", { type: "checkbox", checked: proj.wordTiming });
+  wt.onchange = () => { proj.wordTiming = wt.checked; };
   row.append(
     el("label", { className: "opt" }, pf, "One transcript per file"),
     el("span", { className: "muted", textContent: "Formats:" }),
-    ...fmtChecks.map((cb) => el("label", { className: "opt" }, cb, cb.value.toUpperCase())));
+    ...fmtChecks.map((cb) => el("label", { className: "opt" }, cb, cb.value.toUpperCase())),
+    el("label", { className: "opt", title: "Off: about twice as fast, but longer lines and no word times (see Word timing under Output)" }, wt, "Word timing"));
   return row;
 }
 
@@ -1447,10 +1454,12 @@ function runBatch() {
     options: batchSettings.options,
     export: batchSettings.export,
     language: $("#batch-language").value || null,
+    word_timing: $("#batch-word-timing").checked,
     projects: resolved.map(({ p, perFile, formats }) => ({
       name: p.name,
       per_file: perFile,
       formats,
+      ...(p.override ? { word_timing: p.wordTiming } : {}),   // left out: the batch's setting
       ...(p.settings ? { options: p.settings.options, export: p.settings.export } : {}),
       sources: p.files.map((f, i) => ({
         file_id: f.file_id,

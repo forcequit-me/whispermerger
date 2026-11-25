@@ -111,6 +111,10 @@
             One transcript per file <span class="muted">(otherwise a project's files merge/sequence into one)</span></label>
         </div>
         <div class="row" style="margin-top:4px">
+          <label class="opt"><input type="checkbox" id="batch-word-timing" checked>
+            Word timing <span class="muted">(off: about twice as fast and no word-timing model needed, but each line is a whole stretch of speech, up to about 30 s, with no word times and estimated subtitle splits)</span></label>
+        </div>
+        <div class="row" style="margin-top:4px">
           <span class="muted">Formats:</span>
           <label class="opt"><input type="checkbox" class="batch-fmt" value="srt" checked> SRT</label>
           <label class="opt"><input type="checkbox" class="batch-fmt" value="txt" checked> TXT</label>
@@ -172,6 +176,8 @@
         <div class="row" style="margin-bottom:10px">
           <label class="opt"><input type="checkbox" id="opt-detect" checked>
             Detect conflicts (backchannel / overlap / bleed)</label>
+          <label class="opt"><input type="checkbox" id="opt-word-timing" checked>
+            Word timing <span class="muted">(off: about twice as fast and no word-timing model needed, but each line is a whole stretch of speech, up to about 30 s, with no word times and estimated subtitle splits)</span></label>
         </div>
         <div class="row">
           <label class="field"><span>Language</span>
@@ -412,7 +418,7 @@
     </section>
   </main>
 
-  <script src="app.js?v=52"></script>
+  <script src="app.js?v=53"></script>
   <script type="module" src="labeltrack.js?v=15"></script>
 </body>
 </html>

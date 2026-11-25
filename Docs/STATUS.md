@@ -661,7 +661,8 @@ needs the text and rough line times had no way to turn it off. Now `word_timing`
 nothing changes unless asked): `transcribe_track(..., word_timing=False)`, `word_timing` on
 `POST /api/transcribe` and `POST /api/batch` (the batch's, and each project's own over it), and
 `transcribe` / `run_batch` in `actions.py`, so `--no-word-timing` on the CLI and `word_timing:
-false` over MCP, also inside a `run_batch` project. No app UI.
+false` over MCP, also inside a `run_batch` project. The app got its tick box afterwards (see "In
+the app" below).
 
 - **Off:** the existing "keep line timings only" branch. No word-timing model is ensured, loaded
   or downloaded, and the #38 question about a big download is not asked.
@@ -686,7 +687,26 @@ that wants short paragraphs gets coarser stamps. The server console showed "no w
 used ... keeping line timings only" for the runs without it; GPU memory in use was not a clear
 signal either way (5.3 to 5.6 GB in both cases). Running each again returned its own saved result.
 
-Not covered: Label Track (`/api/diarize`) has no such option.
+**In the app:** a **Word timing** tick box, on by default, with a one-line note of what off costs.
+Transcribe & Merge has it under Merge options, above Language (`#opt-word-timing`); Batch has it
+under Output with the other per-project defaults (`#batch-word-timing`), and each project's
+"Override output settings" row has its own, which starts as the batch's and is sent as that
+project's `word_timing` (a project that does not override sends none, so it gets the batch's).
+Both boxes are remembered per tab in `wm-settings`, like the Language choice. No new result UI:
+the finished line and a batch file's message already carry "(no word timing)". Checked in a
+browser on an own server with a 25 s clip of synthesized English: both boxes survive a reload,
+unticked they send `word_timing: false`, the Transcribe & Merge run ended "Done in 9s · 1 track ·
+English 100% (no word timing)" with the whole clip as one line, and in a two-project batch the
+project on the batch's setting ended "English 100% (no word timing)" while the one overriding it
+back on ended "English 100%".
+
+Not covered: Label Track (`/api/diarize`) has no such option, on purpose. It transcribes each
+speaker's labeled regions joined into one clip and puts every line back on the timeline from its
+word times. Without them a line is a stretch of up to about 30 s of that joined clip, so it can
+start in one region and end several regions later, across the other speakers' turns: lines come
+out in the wrong order and get flagged as overlaps. Passing the option through is a few lines;
+making the result usable needs lines cut at region ends, which is not. (Read from the code, not
+run.)
 
 ## Partial / outstanding (v1 polish)
 
