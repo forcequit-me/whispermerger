@@ -600,6 +600,37 @@ released and clock stopped while waiting, a wrong language code refused, each an
 "download" answer goes through the same `ensure()` every other model download uses), and Label
 Track's question box (same function as the other two tabs).
 
+## CLI + MCP parity with the app (2026-11-25)
+
+Things the app could do that the CLI and MCP server could not. All are actions in
+`backend/actions.py`, so each is a command and a tool.
+
+- **Settings.** `set_auto_portuguese` (pt-PT / pt-BR / leave out for neither) and
+  `set_pt_punctuation` (`--on`; without it, off). `list_models` shows both next to `my_languages`.
+- **Export options.** `export` takes `min_duration` (shortest SRT subtitle, default 1.0 s) and
+  `edited_timing` (`align` / `even` / `whole`, default `align`), the route's own names and values.
+  `_export_options` takes them last with those defaults.
+- **Transcript files.** `get_transcript` and `export` take an `.srt`, `.txt` or `.csv` as well as a
+  job id or `.json`. The parsers (`_parse_srt`, `_parse_txt`, `_parse_csv` in `actions.py`,
+  standard library only) follow `parseSrt` / `parseTxt` / `parseCsv` in `frontend/app.js`: the same
+  `Name: ` speaker rule, `no_timing` for a TXT line without a timestamp, CSV columns by header name
+  or in export order. Tested by round trip (what `export.py` writes reads back as the same lines)
+  and compared against the JS parsers on the same awkward inputs. `export` refuses to write over
+  the file it is reading (`export talk.srt` would otherwise replace it with a re-wrapped copy).
+  `edit_lines` still takes a job only.
+- **Models.** `cancel_download`, `remove_model` (marked destructive), `run_benchmark` (`--wait`, or
+  follow the job with `get_progress`) and `get_benchmark`; `list_models` adds `disk_free_mb` and
+  each model's `partial` (a stopped download left on disk).
+- **Server.** `GET /api/benchmark/{job}` also returns the job's `status`. A model id outside the
+  catalog is now unknown (404) for download, cancel, remove and use: `whisper:<anything>` used to
+  resolve to a model-cache folder of that name, which `DELETE /api/models/...` would then delete,
+  whoever it belonged to.
+- **Fixed on the way.** `whispermerger --help` crashed on the `%` in a command's description
+  (argparse reads it as a format); the CLI now escapes it, and a test prints every command's help.
+
+Not run for real: the Benchmark, a model download and a removal (tests stub them; the actions call
+the same routes the Models tab does).
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

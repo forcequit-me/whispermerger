@@ -236,10 +236,16 @@ whispermerger transcript <job id>                       :: numbered lines with s
 whispermerger edit-lines <job id> --rename-from Guest --rename-to Ana   :: or --line 12 --text "..." / --delete
 whispermerger export <job id or transcript.json> --format srt --max-chars 42
 whispermerger export <job id or transcript.json> --format txt --no-txt-timestamps --no-show-speakers   :: the text alone
+whispermerger export <job id or transcript.json> --min-duration 1.5 --edited-timing whole   :: edited lines: align | even | whole
+whispermerger transcript talk.srt                       :: an .srt, .txt or .csv opens too; so does export talk.srt --formats csv
 whispermerger run-batch D:\rec --out D:\subs --formats srt,txt --wait
 whispermerger answer <job or batch id> skip             :: when a run stops to ask: download | skip | language --language en
-whispermerger models                                    :: also download-model, use-model
+whispermerger models                                    :: with free disk space and the settings; also download-model, use-model
+whispermerger cancel-download align:nl                  :: stop a download (it resumes later); remove-model align:nl deletes it from disk
+whispermerger run-benchmark --wait                      :: time every downloaded speech model; without --wait: get-progress, get-benchmark
 whispermerger set-my-languages --languages en,pt        :: "Languages I use" (models shows it); no --languages empties it
+whispermerger set-auto-portuguese --variant pt-PT       :: what Auto-detect treats Portuguese as: pt-PT | pt-BR; no --variant = neither
+whispermerger set-pt-punctuation --on                   :: Portugal punctuation (also run large-v3); without --on it turns off
 whispermerger --help                                    :: every command; add --json for machine-readable output
 ```
 
@@ -249,10 +255,17 @@ Language above): `get-progress` / `get-batch` then say "waiting for your answer"
 question and its choices, a `--wait` returns with them instead of hanging, and `answer` lets the
 run carry on.
 
+`get-transcript` and `export` take a job id or a transcript file: a WhisperMerger `.json`, or an
+`.srt`, `.txt` or `.csv`, read the way Edit Transcript opens them (no word timings; a TXT line
+without a timestamp gets the `no_timing` flag). `export` never writes over the file it is reading;
+give another `--out` folder or `--filename`. `edit-lines` works on a job.
+
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
 Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `get_transcript`, `edit_lines`, `export`,
-`run_batch`, `get_batch`, `list_models`, `download_model`, `use_model`, `set_my_languages`,
-`cache_stats`, `clear_cache` and `shutdown` (both marked destructive), `status`.
+`run_batch`, `get_batch`, `list_models`, `download_model`, `cancel_download`, `use_model`,
+`run_benchmark`, `get_benchmark`, `set_my_languages`, `set_auto_portuguese`, `set_pt_punctuation`,
+`cache_stats`, `status`, and `remove_model`, `clear_cache` and `shutdown` (all three marked
+destructive).
 
 - Claude Code:
   ```bat
