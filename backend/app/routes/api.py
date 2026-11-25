@@ -112,6 +112,27 @@ class ProgressResponse(BaseModel):
     paused: bool = False                     # pause requested
     gpu_freed: bool = False                  # the GPU has actually been released (worker parked)
     reused: bool = False                     # done, and every track came from the cache
+    language: str = ""                       # done: what Auto-detect chose, e.g. "English 97%"
+    question: dict | None = None             # the job waits for the user to answer this (POST /answer)
+
+
+class AnswerIn(BaseModel):
+    """The answer to a run's question (see transcribe.ASK_CHOICES)."""
+    choice: Literal["download", "skip", "language"]
+    language: str | None = None              # for choice "language": the code to use, e.g. "en" or "pt-PT"
+
+    def checked(self) -> tuple:
+        if self.choice != "language":
+            return self.choice, None
+        if not self.language or not _known_language(self.language, variants=True):
+            raise HTTPException(400, f"unknown language code {self.language!r} (e.g. en, pt-PT)")
+        return self.choice, self.language
+
+
+def _known_language(code: str, variants: bool = False) -> bool:
+    """Whether Whisper has this language code (or, with `variants`, it's one of our dropdown variants)."""
+    from faster_whisper.tokenizer import _LANGUAGE_CODES
+    return code in _LANGUAGE_CODES or (variants and code in modelstore.LANGUAGE_VARIANTS)
 
 
 class ExportOptionsIn(BaseModel):
@@ -194,6 +215,7 @@ class BatchStatusOut(BaseModel):
     elapsed: float = 0.0
     paused: bool = False                      # pause requested
     gpu_freed: bool = False                   # the GPU has actually been released (worker parked)
+    question: dict | None = None              # the batch waits for the user to answer this (POST .../answer)
     projects: list[ProjectStatusOut]
 
 
@@ -580,7 +602,8 @@ def progress(request: Request, job_id: str) -> ProgressResponse:
         raise HTTPException(404, "unknown job")
     return ProgressResponse(status=job.status.value, progress=job.progress,
                             message=job.message, elapsed=job.elapsed, error=job.error,
-                            paused=job.paused, gpu_freed=job.gpu_freed, reused=job.reused)
+                            paused=job.paused, gpu_freed=job.gpu_freed, reused=job.reused,
+                            language=job.language, question=job.question)
 
 
 @router.get("/result/{job_id}", response_model=MergedOutput)
@@ -615,6 +638,17 @@ def cancel_job(request: Request, job_id: str) -> dict:
         raise HTTPException(404, "unknown job")
     job.cancel()
     return {"canceling": True}
+
+
+@router.post("/answer/{job_id}")
+def answer_job(request: Request, job_id: str, body: AnswerIn) -> dict:
+    """Answer the question a job is waiting on (its progress has `question`); it then carries on."""
+    job = request.app.state.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    if not job.answer(*body.checked()):
+        raise HTTPException(409, "that job isn't waiting for an answer")
+    return {"answered": True}
 
 
 @router.post("/pause/{job_id}")
@@ -730,7 +764,7 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
 def _batch_out(batch) -> BatchStatusOut:
     return BatchStatusOut(
         id=batch.id, status=batch.status.value, progress=batch.progress, elapsed=batch.elapsed,
-        paused=batch.paused, gpu_freed=batch.gpu_freed,
+        paused=batch.paused, gpu_freed=batch.gpu_freed, question=batch.question,
         projects=[ProjectStatusOut(name=p.name, status=p.status.value, progress=p.progress,
                                    message=p.message, weight=p.weight, elapsed=p.elapsed,
                                    output_dir=p.output_dir, error=p.error,
@@ -760,6 +794,16 @@ def cancel_batch(request: Request, batch_id: str) -> dict:
     if not request.app.state.batches.cancel(batch_id):
         raise HTTPException(404, "unknown batch")
     return {"canceling": True}
+
+
+@router.post("/batch/{batch_id}/answer")
+def answer_batch(request: Request, batch_id: str, body: AnswerIn) -> dict:
+    """Answer the question a batch is waiting on (its status has `question`); it then carries on."""
+    if request.app.state.batches.get(batch_id) is None:
+        raise HTTPException(404, "unknown batch")
+    if not request.app.state.batches.answer(batch_id, *body.checked()):
+        raise HTTPException(409, "that batch isn't waiting for an answer")
+    return {"answered": True}
 
 
 @router.post("/batch/{batch_id}/pause")
@@ -870,6 +914,7 @@ def list_models() -> dict:
                     "download": d.to_dict() if d else None})
     return {"active": f"whisper:{modelstore.active_whisper()}", "models": out,
             "auto_portuguese": modelstore.pt_default(),
+            "my_languages": modelstore.my_languages(),
             "pt_punctuation": modelstore.pt_punctuation(),
             "disk_free": modelstore.disk_free(),     # bytes, for the Download all warning
             # what each dropdown variant needs on disk, so the dropdowns can show the download size
@@ -887,6 +932,21 @@ def set_auto_portuguese(body: AutoPortugueseIn) -> dict:
     """What Auto-detect treats detected Portuguese as (saved across restarts)."""
     modelstore.set_pt_default(body.value)
     return {"auto_portuguese": body.value}
+
+
+class MyLanguagesIn(BaseModel):
+    value: list[str] = []
+
+
+@router.post("/settings/my-languages")
+def set_my_languages(body: MyLanguagesIn) -> dict:
+    """The languages the user's recordings are in, as Whisper codes; empty = not set (saved across
+    restarts). Auto-detect leans on them, see modelstore.my_languages."""
+    bad = [c for c in body.value if not _known_language(c)]
+    if bad:
+        raise HTTPException(400, f"unknown language code {', '.join(bad)}")
+    modelstore.set_my_languages(body.value)
+    return {"my_languages": modelstore.my_languages()}
 
 
 class PtPunctuationIn(BaseModel):

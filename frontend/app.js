@@ -119,6 +119,45 @@ async function fetchTO(url, opts = {}, ms = 15000) {
 }
 window.fetchTO = fetchTO;   // labeltrack.js (module) reuses it
 
+// A run stopped to ask before a big word-timing download (Auto-detect chose a language outside
+// "Languages I use"): show the question after `anchor`, with its three answers posted to `url`.
+// `q` null takes it away. Built once per question, so a poll never swaps a button out mid-click.
+function showQuestion(anchor, q, url) {
+  let box = anchor.nextElementSibling;
+  if (!box || !box.classList.contains("question")) {
+    if (!q) return;
+    box = el("div", { className: "question" });
+    anchor.after(box);
+  }
+  const key = q ? JSON.stringify(q) : "";
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = "";
+  box.style.display = q ? "" : "none";
+  if (!q) return;
+  const send = async (choice, language = null) => {
+    box.querySelectorAll("button, select").forEach((n) => { n.disabled = true; });
+    try {
+      await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ choice, language }) });
+    } catch {}
+  };
+  const pick = el("select", { title: "the language to use instead" },
+    ...[...$("#opt-language").options].filter((o) => o.value)
+      .map((o) => el("option", { value: o.value, textContent: o.textContent })));
+  // start on the next most likely language the list offers, else English
+  const next = (q.others || []).map((o) => o.language).find((c) => [...pick.options].some((o) => o.value === c));
+  pick.value = next || "en";
+  const btn = (textContent, title, onclick) => Object.assign(el("button", { className: "ghost", textContent, title }), { onclick });
+  box.append(
+    el("div", { className: "question-text", textContent: (q.item ? `${q.item}: ` : "") + q.text }),
+    btn(`Download it (${fmtSize(q.size_mb)}) and continue`, "", () => send("download")),
+    btn("Continue without word timing", "This file keeps line timings only; subtitle splits inside a long line are estimated", () => send("skip")),
+    el("span", { className: "question-lang" },
+      btn("Use this language instead:", "", () => send("language", pick.value)), pick));
+}
+window.showQuestion = showQuestion;   // labeltrack.js (module) reuses it
+
 // --- shutdown --------------------------------------------------------------------------
 $("#shutdown-btn").onclick = async () => {
   if (!confirm("Stop the WhisperMerger server?")) return;
@@ -894,6 +933,7 @@ function pollJob(jobId, runBtn) {
     // vs fully parked (GPU released). The backend sends "paused · GPU released" once freed.
     const msg = (p.paused && !p.gpu_freed) ? "pausing… (finishing current stage)" : (p.message || p.status);
     setProgress(p.progress, `${msg}${p.elapsed ? " · " + fmtElapsed(p.elapsed) : ""}`);
+    showQuestion($("#progress-msg"), p.question, `/api/answer/${jobId}`);
     if (p.status === "done") {
       refreshCacheStats();
       try {
@@ -909,7 +949,8 @@ function pollJob(jobId, runBtn) {
         // Collapse to one line: "Done in 4m 12s · 2 tracks".
         const tracks = uploaded.reduce((n, it) => n + it.source.tracks.filter((t) => t.selected !== false).length, 0);
         // Every track came from the cache: say so, where "Done in 0s" would read as if nothing ran.
-        setProgress(1, `${p.reused ? "Reused saved result" : `Done in ${fmtElapsed(p.elapsed)}`} · ${tracks} track${tracks === 1 ? "" : "s"}`);
+        // p.language: what Auto-detect chose and how sure it was, e.g. "English 97%".
+        setProgress(1, `${p.reused ? "Reused saved result" : `Done in ${fmtElapsed(p.elapsed)}`} · ${tracks} track${tracks === 1 ? "" : "s"}${p.language ? " · " + p.language : ""}`);
         $("#progress-wrap").classList.add("finished");
       } catch (e) { setProgress(1, "done — but couldn't load the result: " + e.message); }
       finish();
@@ -1443,6 +1484,7 @@ function pollBatch(id, btn) {
       b = await r.json();
     } catch (e) { setTimeout(tick, 1500); return; }   // transient — keep waiting, don't die
     renderBatchStatus(b, id, btn);
+    showQuestion(pauseBtn.parentElement, b.question, `/api/batch/${id}/answer`);
     paused = !!b.paused;                                // sync the toggle to the server
     pauseBtn.disabled = false;
     pauseBtn.textContent = b.paused ? "Resume" : "Pause";
@@ -1872,6 +1914,7 @@ async function refreshModels() {
   renderGroup("whisper", data.models, data.disk_free);
   renderGroup("align", data.models, data.disk_free);
   annotateLanguages(data.models, data.variants);
+  renderMyLanguages(data);
   $("#auto-portuguese").value = data.auto_portuguese || "";
   $("#pt-punctuation").checked = !!data.pt_punctuation;
   clearTimeout(modelsPoll);
@@ -2022,6 +2065,31 @@ function annotateLanguages(models, variants = {}) {
       o.textContent = mb ? `${o.dataset.base} · ${fmtSize(mb)} download` : o.dataset.base;
     }
   }
+}
+
+// "Languages I use": a button per language (click to remove) and a dropdown to add one, from
+// every language that has a word-timing model. Rebuilt only when the list changes, so the 1 s
+// refresh during downloads doesn't close the dropdown.
+function renderMyLanguages(data) {
+  const mine = data.my_languages || [], box = $("#my-languages"), add = $("#my-languages-add");
+  if (box.dataset.sig === mine.join(",") && add.options.length) return;
+  box.dataset.sig = mine.join(",");
+  const names = Object.fromEntries(data.models.filter((m) => m.kind === "align")
+    .map((m) => [m.info.language, m.name.replace(/ word timing$/, "")]));
+  const save = async (value) => {
+    await fetch("/api/settings/my-languages", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }) });
+    refreshModels();
+  };
+  box.innerHTML = add.innerHTML = "";
+  box.append(...mine.map((c) => Object.assign(
+    el("button", { className: "ghost", textContent: `${names[c] || c} ×`, title: "remove from the languages I use" }),
+    { onclick: () => save(mine.filter((x) => x !== c)) })));
+  if (!mine.length) box.append(el("span", { className: "muted", textContent: "none chosen: Auto-detect accepts any language" }));
+  add.append(el("option", { value: "", textContent: "Add a language…" }),
+    ...Object.entries(names).filter(([c]) => !mine.includes(c))
+      .map(([c, n]) => el("option", { value: c, textContent: n })));
+  add.onchange = () => { if (add.value) save([...mine, add.value]); };
 }
 
 $("#auto-portuguese").onchange = async (e) => {

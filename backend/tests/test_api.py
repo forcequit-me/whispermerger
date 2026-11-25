@@ -411,3 +411,50 @@ def test_batch_folder_mode_requires_folder(client, two_stream_file):
         "projects": [{"name": "P", "sources": [
             {"file_id": file_id, "tracks": [{"track_index": 0, "speaker": "Speaker 1"}]}]}]})
     assert r.status_code == 400
+
+
+def test_my_languages_setting(client, monkeypatch, tmp_path):
+    from app import modelstore
+    monkeypatch.setattr(modelstore, "SETTINGS_FILE", tmp_path / "settings.json")
+    assert client.get("/api/models").json()["my_languages"] == []                 # default: not set
+    r = client.post("/api/settings/my-languages", json={"value": ["pt", "en", "en"]})
+    assert r.json() == {"my_languages": ["en", "pt"]}
+    assert client.get("/api/models").json()["my_languages"] == ["en", "pt"]       # saved by the server
+    assert client.post("/api/settings/my-languages", json={"value": ["xx"]}).status_code == 400
+    assert client.post("/api/settings/my-languages", json={"value": []}).json() == {"my_languages": []}
+
+
+def test_job_question_is_shown_and_answered(client, two_stream_file, monkeypatch):
+    from app.transcribe import _asker
+    answers = []
+
+    def asking_stub(_wav, **_kw):
+        answers.append(_asker.fn({"language": "nn", "text": "big download?", "choices": {}}))
+        return _stub_transcribe(_wav)
+
+    monkeypatch.setattr(routes.api, "transcribe_track", asking_stub)
+    monkeypatch.setattr(routes.api, "unload_models", lambda: None)
+    file_id = _add(client, two_stream_file)[0]["file_id"]
+    job_id = client.post("/api/transcribe", json={"sources": [{"file_id": file_id, "tracks": [
+        {"track_index": 0, "speaker": "Speaker 1"}]}]}).json()["job_id"]
+    assert client.post(f"/api/answer/{job_id}", json={"choice": "nope"}).status_code == 422
+
+    def poll(until):
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            p = client.get(f"/api/progress/{job_id}").json()
+            if until(p):
+                return p
+            time.sleep(0.02)
+        raise AssertionError(p)
+
+    p = poll(lambda p: p["question"])
+    assert p["status"] == "running" and p["message"].startswith("waiting for your answer")
+    assert client.post(f"/api/answer/{job_id}", json={"choice": "language"}).status_code == 400        # which one?
+    assert client.post(f"/api/answer/{job_id}", json={"choice": "language", "language": "xx"}).status_code == 400
+    assert client.post(f"/api/answer/{job_id}", json={"choice": "language", "language": "pt-PT"}).json() == {"answered": True}
+    p = poll(lambda p: p["status"] == "done")
+    assert p["question"] is None and answers == [("language", "pt-PT")]
+    assert client.post(f"/api/answer/{job_id}", json={"choice": "skip"}).status_code == 409           # not asking
+    assert client.post("/api/answer/nope", json={"choice": "skip"}).status_code == 404
+    assert client.post("/api/batch/nope/answer", json={"choice": "skip"}).status_code == 404

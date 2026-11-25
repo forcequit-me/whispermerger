@@ -40,16 +40,21 @@ _vad_model = None
 _vad_lock = threading.Lock()
 
 
-def detect_speech(wav_path: str | Path) -> list[Region]:
-    """Run silero-VAD over a mono/16k wav and return speech regions (seconds)."""
+def speech_spans(wav) -> list[Region]:
+    """Run silero-VAD over mono/16k samples (a tensor) and return speech regions (seconds)."""
     global _vad_model
-    from silero_vad import get_speech_timestamps, load_silero_vad, read_audio
-    wav = read_audio(str(wav_path), sampling_rate=SR)
+    from silero_vad import get_speech_timestamps, load_silero_vad
     with _vad_lock:
         if _vad_model is None:
             _vad_model = load_silero_vad()
         spans = get_speech_timestamps(wav, _vad_model, sampling_rate=SR, return_seconds=True)
     return [(float(s["start"]), float(s["end"])) for s in spans]
+
+
+def detect_speech(wav_path: str | Path) -> list[Region]:
+    """Run silero-VAD over a mono/16k wav and return speech regions (seconds)."""
+    from silero_vad import read_audio
+    return speech_spans(read_audio(str(wav_path), sampling_rate=SR))
 
 
 # --- timeline remapping (pure, GPU-independent) ----------------------------------------
@@ -102,7 +107,9 @@ def _remap_output(wx: dict, mapping: list[tuple[float, float, float]]) -> dict:
             end = _map_time(float(seg.get("end", 0.0)), mapping)
         out_segments.append({"start": start, "end": end,
                              "text": seg.get("text", ""), "words": words})
-    return {"segments": out_segments}
+    # the language (and how sure Auto-detect was) rides along into the merged result
+    return {**{k: wx[k] for k in ("language", "language_probability") if k in wx},
+            "segments": out_segments}
 
 
 def _safe(name: str) -> str:

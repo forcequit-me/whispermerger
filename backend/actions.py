@@ -115,7 +115,15 @@ def _selection(item: dict, names: Optional[list[str]], tracks: Optional[list[int
     return {"file_id": item["file_id"], "sequence": seq, "tracks": sel}
 
 
+def _asked(run_id: str, question: dict) -> dict:
+    """What a run that stopped to ask returns: the question, its choices and how to answer."""
+    return {"status": "waiting for your answer", "question": question,
+            "next": f"answer it (answer {run_id} download | skip | language, the last with --language en); "
+                    "the run then carries on, follow it with get_progress or get_batch"}
+
+
 def _wait_job(job_id: str) -> dict:
+    """Follow a job until it's done, or until it stops to ask something (then p["question"] is set)."""
     last = None
     while True:
         p = _request("GET", f"/api/progress/{job_id}")
@@ -123,7 +131,7 @@ def _wait_job(job_id: str) -> dict:
         if msg != last and p["message"]:
             _say(msg)
             last = msg
-        if p["status"] == "done":
+        if p["status"] == "done" or p.get("question"):
             return p
         if p["status"] in ("error", "cancelled"):
             raise ActionError(f"job {p['status']}: {p.get('error') or p['message']}")
@@ -191,14 +199,21 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
     wait: wait until it's done (long files take minutes) and return {job_id, status, elapsed}.
     Returns {job_id} at once otherwise (plus "files" when `out` is given); follow it with
     get_progress, then read it with get_transcript. A file transcribed before with the same model
-    and language comes from the cache and is done immediately."""
+    and language comes from the cache and is done immediately.
+    With no language given, a run can stop to ask before a big word-timing download for a language
+    it detected: waiting then ends early with the question (see answer), and nothing is written
+    to `out` yet (export it once the job is done)."""
     items = _register(paths)
     sources = [_selection(it, names, tracks, k) for k, it in enumerate(items)]
     job_id = _api("POST", "/api/transcribe", {"sources": sources, "language": language})["job_id"]
     result = {"job_id": job_id}
     if out or wait:
         p = _wait_job(job_id)
+        if p.get("question"):
+            return {**result, **_asked(job_id, p["question"])}
         result.update(status="done", elapsed=round(p["elapsed"], 1))
+        if p.get("language"):
+            result["language"] = p["language"]
         if out:
             merged, name = _merged(job_id)
             result["files"] = _write(merged, out, name, formats, {})
@@ -209,10 +224,35 @@ def get_progress(job_id: str) -> dict:
     """Progress of a transcription job: status (queued, running, done, error, cancelled), percent and
     stage. Poll every few seconds until status is done, then call get_transcript. One transcription
     runs on the GPU at a time: while another is running (in the app, a batch or another job), the
-    stage says "waiting for another run to finish" and the percent stays put; that's not stuck."""
+    stage says "waiting for another run to finish" and the percent stays put; that's not stuck.
+    When the result has "question", the job has stopped to ask (its message says "waiting for your
+    answer") and stays put until you call answer. Once done, "language" is what Auto-detect chose
+    and how sure it was, e.g. "English 97%"."""
     p = _api("GET", f"/api/progress/{job_id}")
-    return {"status": p["status"], "percent": round(p["progress"] * 100), "message": p["message"],
-            "elapsed": round(p["elapsed"], 1), "error": p["error"]}
+    out = {"status": p["status"], "percent": round(p["progress"] * 100), "message": p["message"],
+           "elapsed": round(p["elapsed"], 1), "error": p["error"]}
+    if p.get("language"):
+        out["language"] = p["language"]
+    if p.get("question"):
+        out.update(_asked(job_id, p["question"]), status=p["status"])
+    return out
+
+
+def answer(run_id: str, choice: str, language: Optional[str] = None) -> dict:
+    """Answer the question a job or batch stopped to ask (get_progress / get_batch show it under
+    "question"). Auto-detect asks before a big word-timing download for a language that isn't in
+    "Languages I use" (Models tab).
+
+    run_id: the job id or batch id that is waiting.
+    choice: "download" (get the model and continue), "skip" (continue without word timing for this file: line timings only) or "language" (use a different language instead).
+    language: for choice "language": the code to use, such as "en" or "pt-PT"."""
+    body = {"choice": choice, "language": language}
+    try:
+        return _api("POST", f"/api/answer/{run_id}", body)
+    except ActionError as e:
+        if not str(e).startswith("404"):
+            raise
+    return _api("POST", f"/api/batch/{run_id}/answer", body)
 
 
 def get_transcript(source: str, full: bool = False) -> dict:
@@ -307,7 +347,8 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
 
     out: folder for the transcripts (default: next to each source file).
     per_file: one transcript per file; off joins everything into one transcript.
-    Returns the batch id; use get_batch to follow it."""
+    Returns the batch id; use get_batch to follow it. With no language given, the batch can stop to
+    ask before a big word-timing download (see answer); waiting then ends early with the question."""
     items = _register(paths)
     project = {"name": name, "per_file": per_file, "formats": formats,
                "sources": [_selection(it, None, None, k) for k, it in enumerate(items)]}
@@ -324,21 +365,27 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
         if msg != last:
             _say(msg)
             last = msg
-        if b["status"] in ("done", "canceled"):
+        if b["status"] in ("done", "canceled") or b.get("question"):
             return b
         time.sleep(2)
 
 
 def get_batch(batch_id: str) -> dict:
-    """Progress of a batch: overall percent, and each file's status and where its transcript went."""
+    """Progress of a batch: overall percent, and each file's status, message and where its transcript
+    went. When the result has "question", the batch has stopped to ask about the file named in it
+    and stays put until you call answer."""
     b = _api("GET", f"/api/batch/{batch_id}")
     files = []
     for p in b["projects"]:
         rows = p.get("files") or [p]
         files += [{"name": f["name"], "status": f["status"], "percent": round(f["progress"] * 100),
-                   "output_dir": f.get("output_dir"), "error": f.get("error")} for f in rows]
-    return {"status": b["status"], "percent": round(b["progress"] * 100), "files": len(files),
-            "done": sum(f["status"] == "done" for f in files), "items": files}
+                   "message": f["message"], "output_dir": f.get("output_dir"), "error": f.get("error")}
+                  for f in rows]
+    out = {"status": b["status"], "percent": round(b["progress"] * 100), "files": len(files),
+           "done": sum(f["status"] == "done" for f in files), "items": files}
+    if b.get("question"):
+        out.update(_asked(batch_id, b["question"]), status=b["status"])
+    return out
 
 
 def list_models(kind: str = "speech", installed_only: bool = False) -> dict:
@@ -394,6 +441,6 @@ def shutdown() -> dict:
 
 
 # The one list. Destructive ones are marked for MCP clients.
-ACTIONS = [add_files, transcribe, get_progress, get_transcript, edit_lines, export, run_batch,
+ACTIONS = [add_files, transcribe, get_progress, answer, get_transcript, edit_lines, export, run_batch,
            get_batch, list_models, download_model, use_model, cache_stats, clear_cache, status, shutdown]
 DESTRUCTIVE = {clear_cache, shutdown}

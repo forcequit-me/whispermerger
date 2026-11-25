@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Callable, Optional
 
 from . import modelstore
-from .transcribe import cache_tally, reused_since
+from .transcribe import asking, cache_tally, reused_since
 from .models import MergedOutput
 
 
@@ -31,6 +31,8 @@ class JobCancelled(Exception):
     """Raised through the progress callback when a job cancel is requested."""
 
 
+WAITING_ANSWER = "waiting for your answer"       # status line while a run has a question for the user
+
 # A pipeline reports progress through this callback: fraction in [0,1] + a status message.
 ProgressCb = Callable[[float, str], None]
 
@@ -44,6 +46,8 @@ class Job:
     result: Optional[MergedOutput] = None
     error: Optional[str] = None
     reused: bool = False                          # every track came from the cache
+    language: str = ""                            # what Auto-detect chose, e.g. "English 97%"
+    question: Optional[dict] = None               # what the job is waiting for the user to answer
     started_at: float = 0.0
     finished_at: float = 0.0
     paused: bool = False
@@ -54,6 +58,7 @@ class Job:
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     _wake: threading.Event = field(default_factory=threading.Event, repr=False)
     _on_pause: Optional[Callable[[], None]] = field(default=None, repr=False)
+    _answers: dict = field(default_factory=dict, repr=False)   # detected language -> (choice, language)
 
     def cancel(self) -> None:
         """Request cancellation; takes effect at the next progress checkpoint (stage boundary)."""
@@ -69,20 +74,49 @@ class Job:
         self.paused = False
         self._wake.set()
 
+    def _park(self, waiting: Callable[[], bool], message: str) -> None:
+        """Wait here, on the worker thread, while `waiting()`: GPU freed, clock stopped. A cancel
+        ends the wait too."""
+        if self._on_pause:
+            self._on_pause()                      # free the GPU (runs on the worker thread)
+        self.gpu_freed = True
+        self.pause_started = time.time()
+        self.message = message
+        while waiting() and not self._cancel.is_set():
+            self._wake.wait()
+            self._wake.clear()
+        if self.pause_started:                    # bank the paused gap so elapsed excludes it
+            self.paused_total += time.time() - self.pause_started
+            self.pause_started = 0.0
+        self.gpu_freed = False
+
+    def ask(self, question: dict) -> tuple:
+        """Stop and ask the user (called on the worker thread, see transcribe.asking): the job waits
+        as if paused until answer() or cancel(). A later track of this job with the same detected
+        language reuses the answer."""
+        key = question["language"]
+        if key not in self._answers:
+            before = self.message
+            self.question = question
+            self._park(lambda: key not in self._answers, f"{WAITING_ANSWER}: {question['text']}")
+            self.question = None
+            if self._cancel.is_set():
+                raise JobCancelled()
+            self.message = before
+        return self._answers[key]
+
+    def answer(self, choice: str, language: Optional[str] = None) -> bool:
+        """The user's answer to the pending question. False if the job isn't asking."""
+        q = self.question
+        if q is None:
+            return False
+        self._answers[q["language"]] = (choice, language)
+        self._wake.set()
+        return True
+
     def _set_progress(self, fraction: float, message: str) -> None:
         if self.paused and not self._cancel.is_set():
-            if self._on_pause:
-                self._on_pause()                  # free the GPU (runs on the worker thread)
-            self.gpu_freed = True
-            self.pause_started = time.time()
-            self.message = "paused · GPU released"
-            while self.paused and not self._cancel.is_set():
-                self._wake.wait()
-                self._wake.clear()
-            if self.pause_started:                # bank the paused gap so elapsed excludes it
-                self.paused_total += time.time() - self.pause_started
-                self.pause_started = 0.0
-            self.gpu_freed = False
+            self._park(lambda: self.paused, "paused · GPU released")
         if self._cancel.is_set():
             raise JobCancelled()
         self.progress = max(0.0, min(1.0, fraction))
@@ -127,12 +161,14 @@ class JobRegistry:
             try:
                 # A model download inside the work reports on the job's progress line; that same
                 # call is the pause/cancel checkpoint, so Cancel also stops the download.
-                with modelstore.reporting(lambda msg: job._set_progress(job.progress, msg)):
+                with modelstore.reporting(lambda msg: job._set_progress(job.progress, msg)), asking(job.ask):
                     job.result = work(job._set_progress)
                 job.finished_at = time.time()
                 job.progress = 1.0
                 job.reused = reused_since(tally)
-                job.message = "reused saved result" if job.reused else f"done in {job.elapsed:.0f}s"
+                job.language = job.result.language_note() if isinstance(job.result, MergedOutput) else ""
+                job.message = ("reused saved result" if job.reused else f"done in {job.elapsed:.0f}s") \
+                    + (f" · {job.language}" if job.language else "")
                 job.status = JobStatus.DONE
             except JobCancelled:  # cooperative cancel at a stage boundary
                 job.finished_at = time.time()

@@ -615,6 +615,7 @@ function poll(jobId, btn) {
     const line = msg + (p.elapsed ? " · " + window.fmtElapsed(p.elapsed) : "");
     setLabelBar(p.progress, line);
     $("#label-status").textContent = line;
+    window.showQuestion($("#label-progress-msg"), p.question, `/api/answer/${jobId}`);
     if (p.status === "done") {
       try {
         const merged = await (await window.fetchTO(`/api/result/${jobId}`)).json();
@@ -624,8 +625,9 @@ function poll(jobId, btn) {
         const t = activeTrack;
         window.renderEditor($("#editor-label"), merged,
           { file_id: activeFileId, duration: activeDuration, trackOf: new Proxy({}, { get: () => t }) });
-        setLabelBar(1, "done");
-        $("#label-status").textContent = "done";
+        const done = "done" + (p.language ? " · " + p.language : "");   // what Auto-detect chose, e.g. "English 97%"
+        setLabelBar(1, done);
+        $("#label-status").textContent = done;
       } catch (e) { $("#label-status").textContent = "done — but couldn't load the result"; }
       finish();
       return;

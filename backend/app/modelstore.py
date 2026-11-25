@@ -123,6 +123,19 @@ def set_pt_default(value: Optional[str]) -> None:
     SETTINGS_FILE.write_text(json.dumps({**_settings(), "auto_portuguese": value}, indent=2), "utf-8")
 
 
+def my_languages() -> list[str]:
+    """The languages this user's recordings are in, as Whisper codes ("en", "pt"); [] = not set.
+    Auto-detect accepts a guess among them, wants one outside them to be sure, and asks before a
+    big word-timing download for one outside them."""
+    v = _settings().get("my_languages")
+    return [c for c in v if isinstance(c, str)] if isinstance(v, list) else []
+
+
+def set_my_languages(codes: list[str]) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps({**_settings(), "my_languages": sorted(set(codes))}, indent=2), "utf-8")
+
+
 def pt_punctuation() -> bool:
     """Portugal runs also transcribe with large-v3 and copy its capitalization and punctuation onto
     CAMOES's words (about 2x GPU time). Off = CAMOES alone."""
@@ -489,6 +502,13 @@ def reporting(fn: Callable[[str], None]):
         yield
     finally:
         _reporter.fn = prev
+
+
+def report(msg: str) -> None:
+    """Put `msg` on this thread's progress line, if it has one (also its pause/cancel checkpoint)."""
+    fn = getattr(_reporter, "fn", None)
+    if fn:
+        fn(msg)
 
 
 def ensure(e: ModelEntry) -> None:

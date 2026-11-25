@@ -23,7 +23,8 @@ from .export import ExportOptions, export_all, pad_segments
 from .merge import MergeOptions
 from .models import MergedOutput
 from .pipeline import WAITING, PreparedSource, run_merge_pipeline, run_per_file_pipeline
-from .transcribe import cache_tally, reused_since
+from .jobs import WAITING_ANSWER
+from .transcribe import asking, cache_tally, reused_since
 
 TranscribeFn = Callable[[str], dict]
 
@@ -129,6 +130,9 @@ class BatchStatus:
     # Project indices requested for re-run while the worker is busy — the worker drains these
     # when it frees up (one GPU, so re-runs queue instead of starting a competing thread).
     rerun_pending: list[int] = field(default_factory=list)
+    question: Optional[dict] = None               # what the batch is waiting for the user to answer
+    answers: dict = field(default_factory=dict, repr=False)   # (row, detected language) -> (choice, language)
+    _asked: Optional[tuple] = field(default=None, repr=False)   # the pending question's key in `answers`
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _wake: threading.Event = field(default_factory=threading.Event, repr=False)  # unblocks a paused worker
 
@@ -214,27 +218,56 @@ def _open_timed(batch: "BatchStatus"):
                 yield f
 
 
+def _park(batch: "BatchStatus", waiting: Callable[[], bool]) -> None:
+    """Block the worker here while `waiting()`: GPU freed, open clocks frozen. A batch cancel ends
+    the wait too."""
+    if batch.on_pause:
+        batch.on_pause()                         # free the GPU (runs on the worker thread)
+    batch.gpu_freed = True
+    now = time.time()
+    for obj in _open_timed(batch):
+        obj.pause_started = now
+    while waiting() and not batch.cancelled:
+        batch._wake.wait()
+        batch._wake.clear()
+    now = time.time()
+    for obj in _open_timed(batch):               # bank the paused gap so elapsed excludes it
+        if obj.pause_started:
+            obj.paused_total += now - obj.pause_started
+            obj.pause_started = 0.0
+    batch.gpu_freed = False
+
+
 def _gate(batch: "BatchStatus") -> bool:
     """Cooperative checkpoint, called wherever a cancel would be checked. While paused it frees the
     GPU, freezes the open clocks, and blocks here until resume or cancel. Returns True if the run
     should stop (a cancel is pending). Zero cost when not paused."""
     if batch.paused and not batch.cancelled:
-        if batch.on_pause:
-            batch.on_pause()                     # free the GPU (runs on the worker thread)
-        batch.gpu_freed = True
-        now = time.time()
-        for obj in _open_timed(batch):
-            obj.pause_started = now
-        while batch.paused and not batch.cancelled:
-            batch._wake.wait()
-            batch._wake.clear()
-        now = time.time()
-        for obj in _open_timed(batch):           # bank the paused gap so elapsed excludes it
-            if obj.pause_started:
-                obj.paused_total += now - obj.pause_started
-                obj.pause_started = 0.0
-        batch.gpu_freed = False
+        _park(batch, lambda: batch.paused)
     return batch.cancelled
+
+
+def _asker(batch: "BatchStatus", ps: "ProjectStatus") -> Callable[[dict], tuple]:
+    """How a run in this project asks the user something (see transcribe.asking): the question
+    shows on the batch and on the row it is about, and the worker waits as if paused until it is
+    answered, or the batch, the project or that file is canceled. Later tracks of the same file
+    (or merged project) with the same detected language reuse the answer."""
+    def ask(question: dict) -> tuple:
+        row = next((f for f in ps.files if f.status is Status.RUNNING), ps)
+        key = (id(row), question["language"])
+        if key not in batch.answers:
+            before = row.message
+            row.message = f"{WAITING_ANSWER}: {question['text']}"
+            _recalc_project(ps)
+            batch.question, batch._asked = {**question, "item": row.name}, key
+            _park(batch, lambda: key not in batch.answers
+                  and not (ps.cancel_requested or row.cancel_requested))
+            batch.question = batch._asked = None
+            row.message = before
+            if key not in batch.answers:         # canceled while waiting
+                raise Cancelled()
+        return batch.answers[key]
+    return ask
 
 
 def _guard(cb, is_cancelled: IsCancelled):
@@ -244,6 +277,12 @@ def _guard(cb, is_cancelled: IsCancelled):
             raise Cancelled()
         cb(frac, msg)
     return wrapped
+
+
+def _lang(merged: MergedOutput) -> str:
+    """" · English 97%" for a done line, when Auto-detect chose the language."""
+    note = merged.language_note()
+    return f" · {note}" if note else ""
 
 
 def _download_reporter(ps: ProjectStatus, is_cancelled: IsCancelled) -> Callable[[str], None]:
@@ -324,19 +363,23 @@ def _process_project(
                 tally_at[i] = cache_tally()
                 _recalc_project(ps)
 
+            label: dict[int, str] = {}                  # each file's current track line
+
             def on_track(i: int, j: int, total_tracks: int, speaker: str) -> None:
                 fs = files[i]
                 fs.track = j + 1
                 fs.tracks = total_tracks
                 fs.progress = j / max(total_tracks, 1)
-                fs.message = f"track {j + 1}/{total_tracks} · {speaker}"
+                fs.message = label[i] = f"track {j + 1}/{total_tracks} · {speaker}"
                 _recalc_project(ps)
 
-            def on_chunk(i: int, j: int, total_tracks: int, frac: float, waiting: bool = False) -> None:
+            def on_chunk(i: int, j: int, total_tracks: int, frac: float, waiting: bool = False,
+                         detected: Optional[str] = None) -> None:
                 # Moves the row within a track; transcription is 90% of it, word timing the rest.
                 files[i].progress = (j + 0.9 * frac) / max(total_tracks, 1)
-                base = files[i].message.removesuffix(f" · {WAITING}")
-                files[i].message = f"{base} · {WAITING}" if waiting else base
+                if detected:                             # what Auto-detect chose stays on the track's line
+                    label[i] += f" · {detected}"
+                files[i].message = f"{label[i]} · {WAITING}" if waiting else label[i]
                 _recalc_project(ps)
 
             def on_done(i: int, src: PreparedSource, merged, seen=seen) -> None:
@@ -353,7 +396,7 @@ def _process_project(
                 fs.finished_at = time.time()
                 fs.output_dir = str(dest)
                 reused = i in tally_at and reused_since(tally_at[i])
-                fs.message = "reused saved result" if reused else f"done in {fs.elapsed:.0f}s"
+                fs.message = ("reused saved result" if reused else f"done in {fs.elapsed:.0f}s") + _lang(merged)
                 # Per-file timing split (also shown per-row in the UI): real read + ffmpeg time
                 # (everything before the GPU) vs the GPU transcription itself, so a run reveals read-
                 # vs GPU-bound files. Still printed to the console as a scrollback record.
@@ -407,8 +450,8 @@ def _process_project(
             ps.source_path = project.prepared[0].path if len(project.prepared) == 1 else None
         ps.finished_at = time.time()
         ps.progress = 1.0
-        ps.message = (_file_summary(ps) if ps.files else "reused saved result" if reused_since(tally)
-                      else f"done in {ps.elapsed:.0f}s")
+        ps.message = (_file_summary(ps) if project.per_file else
+                      ("reused saved result" if reused_since(tally) else f"done in {ps.elapsed:.0f}s") + _lang(merged))
         ps.status = Status.DONE
     except Cancelled:
         ps.finished_at = time.time()
@@ -435,9 +478,10 @@ def _run_projects(
     output_folder: Optional[str],
     options: Optional[MergeOptions],
     is_cancelled: IsCancelled,
+    batch: Optional[BatchStatus] = None,
 ) -> None:
     """Process (project, status) pairs in order; stop at the next boundary on cancel and
-    mark any not-yet-finished ones CANCELED."""
+    mark any not-yet-finished ones CANCELED. `batch`: where a run's questions for the user go."""
     for project, ps in pairs:
         if is_cancelled():
             break
@@ -450,7 +494,8 @@ def _run_projects(
             return is_cancelled() or ps.cancel_requested
 
         try:
-            with modelstore.reporting(_download_reporter(ps, proj_cancelled)):
+            with modelstore.reporting(_download_reporter(ps, proj_cancelled)), \
+                    asking(_asker(batch, ps) if batch else None):
                 _process_project(project, ps, transcribe_fn, output_mode=output_mode,
                                  output_folder=output_folder, options=options,
                                  is_cancelled=proj_cancelled)
@@ -478,7 +523,7 @@ def run_batch(
     stops at the next file/project boundary if `batch.cancelled` is set."""
     _run_projects(list(zip(projects, batch.projects)), transcribe_fn,
                   output_mode=output_mode, output_folder=output_folder,
-                  options=options, is_cancelled=lambda: _gate(batch))
+                  options=options, is_cancelled=lambda: _gate(batch), batch=batch)
 
 
 def _set(ps: ProjectStatus, frac: float, msg: str) -> None:
@@ -578,6 +623,7 @@ class BatchRegistry:
         if batch is None or not (0 <= index < len(batch.projects)):
             return False
         batch.projects[index].cancel_requested = True
+        batch._wake.set()                         # it may be waiting for an answer: let it unwind
         return True
 
     def cancel_file(self, batch_id: str, pindex: int, findex: int) -> bool:
@@ -590,6 +636,17 @@ class BatchRegistry:
         if not (0 <= findex < len(ps.files)):
             return False
         ps.files[findex].cancel_requested = True
+        batch._wake.set()                         # it may be waiting for an answer: let it unwind
+        return True
+
+    def answer(self, batch_id: str, choice: str, language: Optional[str] = None) -> bool:
+        """The user's answer to the batch's pending question. False if it isn't asking."""
+        batch = self.get(batch_id)
+        key = batch._asked if batch else None
+        if key is None:
+            return False
+        batch.answers[key] = (choice, language)
+        batch._wake.set()
         return True
 
     def restart_file(self, batch_id: str, pindex: int, findex: int) -> bool:
@@ -656,7 +713,7 @@ class BatchRegistry:
         pairs = [(spec.projects[i], batch.projects[i]) for i in indices]
         _run_projects(pairs, spec.transcribe_fn, output_mode=spec.output_mode,
                       output_folder=spec.output_folder, options=spec.options,
-                      is_cancelled=lambda: _gate(batch))
+                      is_cancelled=lambda: _gate(batch), batch=batch)
 
     def run(self, batch: BatchStatus, work: Callable[[], None]) -> None:
         """Run `work` on a background thread, then keep draining any re-runs requested while it

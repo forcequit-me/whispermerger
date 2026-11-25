@@ -7,6 +7,8 @@ underneath in `Segment.words` and is preserved through edit -> export, never edi
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -49,9 +51,26 @@ class InputSource(BaseModel):
     sequence: int = 0  # position when several files are merged in order (UC2)
 
 
+class TrackLanguage(BaseModel):
+    """The language one track (speaker) was transcribed in."""
+
+    speaker: str
+    language: str
+    confidence: Optional[float] = None  # how sure Auto-detect was (0-1); None when the language was chosen
+
+
 class MergedOutput(BaseModel):
     """The merge engine's output and the export module's input (§9.2)."""
 
     version: str = "1.0"
     sources: list[InputSource] = Field(default_factory=list)
     segments: list[Segment] = Field(default_factory=list)
+    languages: list[TrackLanguage] = Field(default_factory=list)
+
+    def language_note(self) -> str:
+        """What Auto-detect chose, for a status line: "English 97%" (each distinct one); "" if it
+        chose nothing (the language was picked, or the result predates this)."""
+        from .modelstore import LANG_NAMES
+        notes = [f"{LANG_NAMES.get(t.language, t.language)} {t.confidence:.0%}"
+                 for t in self.languages if t.confidence is not None]
+        return ", ".join(dict.fromkeys(notes))
