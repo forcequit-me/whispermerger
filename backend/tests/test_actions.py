@@ -95,6 +95,58 @@ def test_export_min_duration_and_edited_timing(api, tmp_path):
     assert cli.build_parser().parse_args(["export", "x.json"]).edited_timing == "align"
 
 
+def test_srt_txt_csv_transcripts_round_trip(api, tmp_path):
+    """What export writes for each format reads back as the same lines (as Edit Transcript opens them)."""
+    segs = [{"speaker": "Ana", "start": 0.0, "end": 1.5, "text": 'Hello, "world": it\'s 10:30',
+             "words": [], "flags": ["overlap", "edited"]},
+            {"speaker": "Speaker 2", "start": 3723.25, "end": 3725.0, "text": "Olá, então", "words": [], "flags": []}]
+    src = tmp_path / "talk.json"
+    src.write_text(json.dumps({"segments": segs}), "utf-8")
+    plain = [{**s, "flags": []} for s in segs]                    # only CSV and JSON keep the flags
+
+    def back(fmt, **kw):
+        path = actions.export(str(src), out=str(tmp_path / "out"), formats=[fmt], **kw)["files"][0]
+        return actions.get_transcript(path, full=True)["segments"]
+
+    assert back("csv") == segs
+    assert back("srt") == plain
+    assert back("txt") == plain
+    assert back("txt", txt_timestamps=False) == [{**s, "start": 0.0, "end": 0.0, "flags": ["no_timing"]} for s in segs]
+    assert back("txt", txt_timestamps=False, show_speakers=False)[1]["speaker"] == "Speaker"   # no name written
+
+    # the numbered view, and exporting on from such a file (next to it by default)
+    srt = tmp_path / "out" / "talk.srt"
+    t = actions.get_transcript(str(srt))
+    assert t["speakers"] == ["Ana", "Speaker 2"] and t["lines"][1] == {
+        "line": 1, "start": 3723.25, "end": 3725.0, "speaker": "Speaker 2", "text": "Olá, então", "flags": []}
+    made = actions.export(str(srt), formats=["csv"], filename="again")["files"][0]
+    assert Path(made) == tmp_path / "out" / "again.csv" and actions.get_transcript(made, full=True)["segments"] == plain
+    before = srt.read_bytes()
+    with pytest.raises(actions.ActionError, match="would write over talk.srt"):
+        actions.export(str(srt))                                  # srt -> the same .srt
+    assert srt.read_bytes() == before
+    (tmp_path / "empty.txt").write_text(" \n", "utf-8")
+    with pytest.raises(actions.ActionError, match="no transcript lines found in empty.txt"):
+        actions.get_transcript(str(tmp_path / "empty.txt"))
+
+
+def test_hand_written_srt_txt_csv_parse_like_the_app():
+    # no cue number, "." before the milliseconds, a two-line cue, a cue with no name, junk between cues
+    srt = "00:00:01.5 --> 00:00:02,250\nAna: one\ntwo\n\n\n7\n01:00:00,000 --> 01:00:01,000\nno name here\n\nnot a cue\n"
+    assert [(s["speaker"], s["start"], s["end"], s["text"]) for s in actions._parse_srt(srt)] == [
+        ("Ana", 1.5, 2.25, "one two"), ("Speaker", 3600.0, 3601.0, "no name here")]
+    txt = actions._parse_txt("[00:00:01,000 --> 00:00:02,000] Ana: hi\n\n  just text\nBo: named, no time\n")
+    assert [(s["speaker"], s["start"], s["text"], s["flags"]) for s in txt] == [
+        ("Ana", 1.0, "hi", []), ("Speaker", 0.0, "just text", ["no_timing"]), ("Bo", 0.0, "named, no time", ["no_timing"])]
+    # CSV: columns by header name in any order; without a header, in the export's order; blank rows skipped
+    by_name = actions._parse_csv('start,end,text,speaker\n1,2.5,"a, ""b""\nc",Ana\n\n,,only text,\n')
+    assert by_name == [
+        {"speaker": "Ana", "start": 1.0, "end": 2.5, "text": 'a, "b"\nc', "words": [], "flags": []},
+        {"speaker": "Speaker", "start": 0.0, "end": 0.0, "text": "only text", "words": [], "flags": []}]
+    assert actions._parse_csv("0,1,Ana,hi,overlap| edited\n")[0] == {
+        "speaker": "Ana", "start": 0.0, "end": 1.0, "text": "hi", "words": [], "flags": ["overlap", "edited"]}
+
+
 def test_batch_on_a_folder(api, two_stream_file, tmp_path):
     b = actions.run_batch([str(two_stream_file.parent)], out=str(tmp_path / "out"), formats=["txt"], wait=True)
     assert b["status"] == "done" and b["done"] == b["files"] >= 1

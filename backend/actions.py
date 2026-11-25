@@ -9,8 +9,11 @@ so the speech model stays loaded between calls. Files are read in place; nothing
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -139,11 +142,82 @@ def _wait_job(job_id: str) -> dict:
         time.sleep(1)
 
 
+# Reading .srt / .txt / .csv transcripts: the same rules as the Edit Transcript tab (parseSrt /
+# parseTxt / parseCsv in frontend/app.js), which mirror what backend/app/export.py writes. These
+# formats carry no word timings.
+
+def _srt_time(v: str) -> float:
+    """"HH:MM:SS,mmm" (or with ".") -> seconds; 0 when it isn't a time."""
+    m = re.search(r"(\d+):(\d\d):(\d\d)[,.](\d{1,3})", v)
+    return int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3]) + float("0." + m[4]) if m else 0.0
+
+
+def _line(start: float, end: float, body: str, flags: tuple = ()) -> dict:
+    """One transcript line; a leading "Name: " (as exports with speakers write it) is the speaker."""
+    m = re.fullmatch(r"([^:]{1,40}):\s(.*)", body)
+    return {"speaker": m[1].strip() if m else "Speaker", "start": start, "end": end,
+            "text": m[2] if m else body, "words": [], "flags": list(flags)}
+
+
+def _parse_srt(text: str) -> list[dict]:
+    segs = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = [ln for ln in block.split("\n") if ln.strip()]
+        i = 1 if lines and re.fullmatch(r"\d+", lines[0].strip()) else 0     # optional cue number
+        tc = re.search(r"(.+?)\s*-->\s*(.+)", lines[i]) if i < len(lines) else None
+        if tc:
+            segs.append(_line(_srt_time(tc[1]), _srt_time(tc[2]), " ".join(lines[i + 1:]).strip()))
+    return segs
+
+
+def _parse_txt(text: str) -> list[dict]:
+    """A line without "[start --> end]" (TXT exported with timestamps off) loads at 0, flagged no_timing."""
+    segs = []
+    for line in filter(None, map(str.strip, text.split("\n"))):
+        m = re.fullmatch(r"\[(.+?)\s*-->\s*(.+?)\]\s*(.*)", line)
+        segs.append(_line(_srt_time(m[1]), _srt_time(m[2]), m[3]) if m else _line(0.0, 0.0, line, ("no_timing",)))
+    return segs
+
+
+def _parse_csv(text: str) -> list[dict]:
+    """Columns start, end, speaker, text, flags: by name when the first row names them, else in that order."""
+    rows = [r for r in csv.reader(io.StringIO(text)) if any(r)]
+    cols = ["start", "end", "speaker", "text", "flags"]
+    head = [h.strip().lower() for h in rows[0]] if rows else []
+    if head[:2] == cols[:2]:
+        at, rows = {c: head.index(c) if c in head else -1 for c in cols}, rows[1:]
+    else:
+        at = {c: i for i, c in enumerate(cols)}
+
+    def cell(r, c):
+        return r[at[c]] if 0 <= at[c] < len(r) else ""
+
+    def num(v):
+        try:
+            return float(v)
+        except ValueError:
+            return 0.0
+
+    return [{"speaker": (cell(r, "speaker") or "Speaker").strip(), "start": num(cell(r, "start")),
+             "end": num(cell(r, "end")), "text": cell(r, "text"), "words": [],
+             "flags": [f.strip() for f in cell(r, "flags").split("|") if f.strip()]} for r in rows]
+
+
+_PARSERS = {".srt": _parse_srt, ".txt": _parse_txt, ".csv": _parse_csv}
+
+
 def _merged(source: str) -> tuple[dict, str]:
-    """A transcript from a job id or a WhisperMerger .json file, plus a default export name."""
+    """A transcript from a job id or a transcript file (a WhisperMerger .json, or an .srt, .txt or
+    .csv), plus a default export name."""
     path = Path(source).expanduser()
-    if path.suffix.lower() == ".json" and path.is_file():
+    ext = path.suffix.lower()
+    if ext == ".json" and path.is_file():
         return json.loads(path.read_text("utf-8")), path.stem
+    if ext in _PARSERS and path.is_file():
+        segs = _PARSERS[ext](path.read_text("utf-8-sig", errors="replace"))
+        if not segs:
+            raise ActionError(f"no transcript lines found in {path.name}")
+        return {"segments": segs}, path.stem
     merged = _api("GET", f"/api/result/{source}")
     name = Path(merged["sources"][0]["filename"]).stem if merged.get("sources") else "transcript"
     return merged, f"{name} Transcript"
@@ -261,9 +335,11 @@ def answer(run_id: str, choice: str, language: Optional[str] = None) -> dict:
 
 
 def get_transcript(source: str, full: bool = False) -> dict:
-    """A finished transcript, from a job id or a WhisperMerger .json file: lines numbered from 0
-    (the numbers edit_lines takes), with start and end (seconds), speaker, text and flags (overlap,
-    backchannel, edited...). full: the complete transcript including word-level timings."""
+    """A finished transcript, from a job id or a transcript file (a WhisperMerger .json, or an
+    .srt, .txt or .csv): lines numbered from 0 (the numbers edit_lines takes), with start and end
+    (seconds), speaker, text and flags (overlap, backchannel, edited...). Only a job or a .json has
+    word-level timings; a TXT line without a timestamp starts at 0 with the flag no_timing.
+    full: the complete transcript including word-level timings."""
     merged, _ = _merged(source)
     if full:
         return merged
@@ -331,9 +407,10 @@ def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"],
            max_chars: int = 42, max_lines: int = 2, pad: float = 0.0, subtitle_limits: bool = True,
            show_speakers: bool = True, name_on_change: bool = False, txt_timestamps: bool = True,
            min_duration: float = 1.0, edited_timing: str = "align") -> dict:
-    """Write a transcript (a job id or a WhisperMerger .json file) to files.
+    """Write a transcript (a job id, or a transcript file: a WhisperMerger .json, or an .srt, .txt
+    or .csv) to files. It never writes over the file it is reading.
 
-    out: folder to write to (default: the .json file's folder, or the current folder for a job).
+    out: folder to write to (default: the transcript file's folder, or the current folder for a job).
 
     formats: srt, txt, csv, json. max_chars / max_lines: SRT subtitle limits (subtitle_limits turns
     them on or off). pad: seconds added to each line's start and end. name_on_change: in SRT, name
@@ -345,10 +422,14 @@ def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"],
     merged, name = _merged(source)
     opts = _export_options(max_chars, max_lines, pad, subtitle_limits, show_speakers, name_on_change,
                            txt_timestamps, min_duration, edited_timing)
+    src, name = Path(source).expanduser(), filename or name
     if out is None:
-        src = Path(source).expanduser()
         out = str(src.parent) if src.is_file() else os.getcwd()
-    return {"files": _write(merged, out, filename or name, formats, opts)}
+    for dest in (Path(out).expanduser() / f"{name}.{f}" for f in formats):
+        if src.is_file() and dest.exists() and dest.samefile(src):
+            raise ActionError(f"that would write over {src.name}, the transcript being read; "
+                              "give another out folder or filename")
+    return {"files": _write(merged, out, name, formats, opts)}
 
 
 def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True,
