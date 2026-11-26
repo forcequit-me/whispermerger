@@ -151,6 +151,56 @@ def test_srt_txt_csv_transcripts_round_trip(api, tmp_path):
         actions.get_transcript(str(tmp_path / "empty.txt"))
 
 
+def test_edit_lines_on_a_transcript_file(api, tmp_path):
+    """A file is edited into a new .json, never over itself; a .json edit_lines wrote is edited in place."""
+    words = [{"word": "hello", "start": 0.0, "end": 0.5}, {"word": "there", "start": 0.5, "end": 1.0}]
+    src = tmp_path / "talk.json"
+    src.write_text(json.dumps({"segments": [
+        {"speaker": "Host", "start": 0.0, "end": 1.0, "text": "hello there", "words": words, "flags": ["overlap"]},
+        {"speaker": "Ana", "start": 2.0, "end": 3.0, "text": "hi", "words": [], "flags": []}]}), "utf-8")
+    actions.export(str(src), formats=["srt", "txt", "csv"])
+    for fmt in ("json", "srt", "txt", "csv"):
+        f = tmp_path / f"talk.{fmt}"
+        before, copy = f.read_bytes(), tmp_path / "edits" / f"{fmt}.json"
+        assert actions.edit_lines(str(f), line=1, text="hi all", out=str(copy)) == {
+            "changed_lines": 1, "lines": 2, "file": str(copy.resolve())}
+        assert f.read_bytes() == before
+        t = actions.get_transcript(str(copy))
+        assert t["speakers"] == ["Ana", "Host"] and t["lines"][1]["text"] == "hi all"
+        assert t["lines"][1]["flags"] == ["edited"]                 # as on a job's line
+    kept = actions.get_transcript(str(tmp_path / "edits" / "json.json"), full=True)["segments"][0]
+    assert kept["words"] == words and kept["flags"] == ["overlap"]
+
+    srt = tmp_path / "talk.srt"
+    with pytest.raises(actions.ActionError, match="talk.srt is a transcript file: add out"):
+        actions.edit_lines(str(srt), line=0, text="x")
+    for same in (src, tmp_path / "TALK.JSON"):                    # paths compare case-insensitively on Windows
+        with pytest.raises(actions.ActionError, match="would write over talk.json, the original"):
+            actions.edit_lines(str(src), line=0, text="x", out=str(same))
+    with pytest.raises(actions.ActionError, match="out must end in .json"):
+        actions.edit_lines(str(srt), line=0, text="x", out=str(tmp_path / "talk2.srt"))
+    with pytest.raises(actions.ActionError, match="out is only for a transcript file"):
+        actions.edit_lines("some-job-id", line=0, text="x", out=str(tmp_path / "x.json"))
+    assert not (tmp_path / "talk2.srt").exists() and not (tmp_path / "x.json").exists()
+
+    # the copy carries the mark, so edits in a row go back into it: with out left out, or out the same file
+    copy = tmp_path / "edits" / "srt.json"
+    assert json.loads(copy.read_text("utf-8"))["edit_lines_copy"] is True
+    actions.edit_lines(str(copy), rename_from="Host", rename_to="Presenter")
+    actions.edit_lines(str(copy), line=1, delete=True, out=str(copy))
+    t = actions.get_transcript(str(copy))
+    assert t["speakers"] == ["Presenter"] and len(t["lines"]) == 1
+    # and it reads and exports exactly like the same .json without the mark
+    plain = tmp_path / "plain.json"
+    plain.write_text(json.dumps({k: v for k, v in json.loads(copy.read_text("utf-8")).items()
+                                 if k != "edit_lines_copy"}), "utf-8")
+    assert actions.get_transcript(str(copy)) == actions.get_transcript(str(plain))
+    a = actions.export(str(copy), out=str(tmp_path / "a"), filename="t", formats=["srt", "json"])["files"]
+    b = actions.export(str(plain), out=str(tmp_path / "b"), filename="t", formats=["srt", "json"])["files"]
+    assert [Path(f).read_bytes() for f in a] == [Path(f).read_bytes() for f in b]
+    assert "Presenter: hello there" in Path(a[0]).read_text("utf-8")
+
+
 def test_hand_written_srt_txt_csv_parse_like_the_app():
     # no cue number, "." before the milliseconds, a two-line cue, a cue with no name, junk between cues
     srt = "00:00:01.5 --> 00:00:02,250\nAna: one\ntwo\n\n\n7\n01:00:00,000 --> 01:00:01,000\nno name here\n\nnot a cue\n"
