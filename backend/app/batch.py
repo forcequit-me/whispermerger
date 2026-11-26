@@ -457,19 +457,24 @@ def _process_project(
         ps.status = Status.DONE
     except Cancelled:
         ps.finished_at = time.time()
-        ps.message = "canceled"
-        ps.status = Status.CANCELED
-        for fs in ps.files:                          # mark any unfinished files canceled too
-            if fs.status in (Status.QUEUED, Status.RUNNING):
-                fs.status = Status.CANCELED
-                fs.finished_at = time.time()
-                fs.message = "canceled"
+        _mark_canceled(ps)
         raise
     except Exception as exc:  # record + let the queue continue to the next project
         traceback.print_exc()
         ps.finished_at = time.time()
         ps.error = str(exc)
         ps.status = Status.ERROR
+
+
+def _mark_canceled(ps: ProjectStatus) -> None:
+    """A canceled project, and its files that hadn't finished (or started)."""
+    ps.message = "canceled"
+    ps.status = Status.CANCELED
+    for fs in ps.files:
+        if fs.status in (Status.QUEUED, Status.RUNNING):
+            fs.status = Status.CANCELED
+            fs.finished_at = time.time()
+            fs.message = "canceled"
 
 
 def _run_projects(
@@ -488,8 +493,7 @@ def _run_projects(
         if is_cancelled():
             break
         if ps.cancel_requested:                       # this item canceled before it ran — skip it
-            ps.status = Status.CANCELED
-            ps.message = "canceled"
+            _mark_canceled(ps)
             continue
 
         def proj_cancelled(ps=ps) -> bool:            # batch-wide OR this one project
@@ -508,8 +512,7 @@ def _run_projects(
     if is_cancelled():
         for _, ps in pairs:
             if ps.status in (Status.QUEUED, Status.RUNNING):
-                ps.status = Status.CANCELED
-                ps.message = "canceled"
+                _mark_canceled(ps)
 
 
 def run_batch(

@@ -626,3 +626,24 @@ def test_retry_refuses_a_project_still_running_or_queued(api, two_stream_file, m
     assert actions.retry_batch(bid, projects=[1, 2])["batch_id"] == bid       # finished: runs again
     _until(lambda: actions.get_batch(bid)["status"] == "done")
 
+
+def test_a_canceled_batch_leaves_no_file_queued(api, two_stream_file, monkeypatch, tmp_path):
+    """The files of a project that never started end canceled too, not queued."""
+    turns, f = threading.Semaphore(0), str(two_stream_file)
+
+    def stub(_wav, **_kw):                     # each transcription waits for its own turn
+        turns.acquire(timeout=5)
+        return _stub_transcribe(_wav)
+
+    with monkeypatch.context() as m:
+        m.setattr(routes.api, "transcribe_track", stub)
+        m.setattr(routes.api, "unload_models", lambda: None)
+        rows = lambda bid: [(i["project"], i["status"]) for i in actions.get_batch(bid)["items"]]
+
+        bid = actions.run_batch([f], out=str(tmp_path / "a"), formats=["txt"], tracks=[1],
+                                projects=[{"paths": [f, f]}])["batch_id"]   # project 2: a transcript per file
+        _until(lambda: rows(bid)[0][1] == "running")
+        actions.cancel(bid)
+        turns.release()
+        _until(lambda: actions.get_batch(bid)["status"] == "canceled")
+        assert rows(bid) == [(1, "canceled"), (2, "canceled"), (2, "canceled")]
