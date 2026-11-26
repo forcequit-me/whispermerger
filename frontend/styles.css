@@ -135,6 +135,10 @@ button.ghost:disabled { opacity: .45; cursor: not-allowed; }
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline-offset: 1px; border-color: var(--accent); }
 label.opt { display: inline-flex; gap: 6px; align-items: center; margin-right: 16px; color: var(--muted); }
+/* Word timing's note is long: at note size, and on its own line when the window is too narrow
+   for it beside the box, so it stays one line down to about 1000 px. */
+label.opt:has(> #opt-word-timing, > #batch-word-timing) { flex-wrap: wrap; margin-right: 0; }   /* last in its row */
+label.opt:has(> #opt-word-timing, > #batch-word-timing) > .muted { font-size: 12px; }
 .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field span { font-size: 11px; color: var(--muted); }
