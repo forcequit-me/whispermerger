@@ -762,6 +762,26 @@ until then; `add-files` prints each file's tracks as a raw list. `edit-lines` st
 job or batch result, not a transcript file: where the edited copy would go is a decision of its
 own (an `--out` file, a copy next to the source, or a result held on the server).
 
+## edit-lines on a transcript file (2026-11-26)
+
+`edit_lines` (`edit-lines`) takes a transcript file as well as a job or batch id: a WhisperMerger
+`.json`, or an `.srt`, `.txt` or `.csv`, read by the same `_merged` as `get_transcript` and
+`export`, then edited by the same code as a job (rename, a line's text / speaker / start / end,
+delete, the `edited` flag on a changed text). Its first parameter is now `source`, like theirs
+(it was `job_id`). The edited copy goes to `out`, a `.json` file the caller names, written
+straight from the transcript with `json.dumps`, so nothing is lost: flags, word timings and
+anything else in a `.json`. It needs no server. Refused with a plain message, before any edit:
+a file without `out`, `out` that is the source (`samefile`, as `export` checks, so a path that
+differs only in case counts on Windows), `out` not ending in `.json`, and `out` with a job or
+batch id. An existing file at `out` is overwritten, as `export` does.
+
+The files it writes carry a top-level `"edit_lines_copy": true`, and such a file may be edited in
+place (`out` left out or the same file), so edits in a row are one call each. The mark is safe
+everywhere else: `_merged` reads `.json` with `json.loads` and keeps every key, and the server's
+`MergedOutput` ignores keys it doesn't know, so `export` of a marked file writes the same bytes
+as of the same file without the mark, and its own `.json` export comes out without it.
+`get_transcript --full` shows the file as it is, mark included.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

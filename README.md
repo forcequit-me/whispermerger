@@ -238,6 +238,7 @@ isn't running and leave it running, so the speech model stays loaded. Files are 
 whispermerger transcribe "D:\rec\ep1.mov" --names "Host,Guest" --language en --out D:\subs --formats srt,json
 whispermerger transcript <job id>                       :: numbered lines with speakers and times
 whispermerger edit-lines <job id> --rename-from Guest --rename-to Ana   :: or --line 12 --text "..." / --delete
+whispermerger edit-lines talk.srt --line 3 --text "..." --out talk-edited.json   :: a file: the edited copy is a .json
 whispermerger export <job id or transcript.json> --format srt --max-chars 42
 whispermerger export <job id or transcript.json> --format txt --no-txt-timestamps --no-show-speakers   :: the text alone
 whispermerger export <job id or transcript.json> --min-duration 1.5 --edited-timing whole   :: edited lines: align | even | whole
@@ -282,7 +283,15 @@ Track always times words.
 `get-transcript` and `export` take a job id or a transcript file: a WhisperMerger `.json`, or an
 `.srt`, `.txt` or `.csv`, read the way Edit Transcript opens them (no word timings; a TXT line
 without a timestamp gets the `no_timing` flag). `export` never writes over the file it is reading;
-give another `--out` folder or `--filename`. `edit-lines` works on a job or a batch result.
+give another `--out` folder or `--filename`.
+
+`edit-lines` edits a job's or a batch's transcript in place. Given a transcript file, it never
+writes over it: the edited copy goes to the `.json` file you name with `--out` (`out` for MCP),
+always a WhisperMerger `.json`, so flags and word timings are kept; `export` turns it into SRT,
+TXT or CSV. No `--out`, `--out` set to the file itself, or an `--out` that isn't `.json`: it
+says so and writes nothing; an existing file at `--out` is overwritten, as `export` does. A
+`.json` that `edit-lines` wrote carries `"edit_lines_copy": true`, and that one is edited in
+place, so edits in a row go `--out talk-edited.json` once, then `edit-lines talk-edited.json ...`.
 
 **Batches.** `run-batch` makes one project from the paths you give, with `--names`, `--tracks`,
 `--per-file` (on by default; `--no-per-file` joins the files into one transcript), the export
