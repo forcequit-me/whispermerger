@@ -29,6 +29,7 @@ PORT = int(os.environ.get("WHISPERMERGER_PORT", "8756"))
 BASE = f"http://127.0.0.1:{PORT}"
 FORMATS = ("srt", "txt", "csv", "json")
 EDITED_TIMING = ("align", "even", "whole")
+BACKCHANNEL_RENDER = ("parenthetical", "separate", "skip")
 
 # Where long-running actions report progress (the CLI prints it to stderr; MCP leaves it off,
 # since stdout carries the protocol).
@@ -167,7 +168,20 @@ def _result(run_id: str, project: Optional[int] = None, file: Optional[int] = No
     one of a batch's."""
     if project is None and file is None:
         path = f"/api/result/{run_id}"
-        return _api("GET", path), path
+        try:
+            return _api("GET", path), path
+        except ActionError as e:
+            if not str(e).startswith("404"):
+                raise
+            try:                                 # a batch id without its project / file number?
+                b = _api("GET", f"/api/batch/{run_id}")
+            except ActionError:
+                raise e from None
+        parts = [f'project {n} "{p["name"]}"' + (" (files: " + ", ".join(
+                     f"{m} {f['name']}" for m, f in enumerate(p["files"], 1)) + ")" if p.get("files") else "")
+                 for n, p in enumerate(b["projects"], 1)]
+        raise ActionError(f"{run_id} is a batch id: add project, and file for a project with one transcript "
+                          f"per file (numbers as get_batch shows them). Its projects: {'; '.join(parts)}")
     path = _batch_path(run_id, project, file) + "/result"
     return _api("GET", path)["merged"], path
 
@@ -285,6 +299,13 @@ _MERGE_KEYS = ("detect_conflicts", "backchannel_render", "backchannel_max_words"
                "bleed_window_seconds", "bleed_similarity", "bleed_prefer_ratio")
 
 
+def _merge_options(values: dict) -> dict:
+    """The merge options among `values`, checked here so a wrong value gets a plain answer, not the server's 422."""
+    if values["backchannel_render"] not in BACKCHANNEL_RENDER:
+        raise ActionError(f"backchannel_render is one of {', '.join(BACKCHANNEL_RENDER)}")
+    return {k: values[k] for k in _MERGE_KEYS}
+
+
 def _fmt_time(s: float) -> str:
     return f"{int(s // 3600):02d}:{int(s % 3600 // 60):02d}:{s % 60:05.2f}"
 
@@ -330,7 +351,7 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
     With no language given, a run can stop to ask before a big word-timing download for a language
     it detected: waiting then ends early with the question (see answer), and nothing is written
     to `out` yet (export it once the job is done)."""
-    options = {k: v for k, v in locals().items() if k in _MERGE_KEYS}
+    options = _merge_options(locals())
     items = _register(paths)
     sources = [_selection(it, names, tracks, k) for k, it in enumerate(items)]
     job_id = _api("POST", "/api/transcribe",
@@ -573,7 +594,7 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
         batch.append({"name": p["name"], "per_file": p["per_file"], "formats": p["formats"],
                       "sources": [_selection(it, p["names"], p["tracks"], k) for k, it in enumerate(items)],
                       "export": _export_options(**{k: p[k] for k in _EXPORT_KEYS}),
-                      "options": {k: p[k] for k in _MERGE_KEYS}, "word_timing": p["word_timing"]})
+                      "options": _merge_options(p), "word_timing": p["word_timing"]})
     if not batch:
         raise ActionError("nothing to run: give paths, or projects")
     body = {"projects": batch, "language": language,

@@ -909,6 +909,11 @@ def retry_batch(request: Request, batch_id: str,
                    if p.status in (Status.ERROR, Status.CANCELED)]
     if not indices:
         raise HTTPException(400, "no failed or canceled projects to retry")
+    busy = [i for i in indices if batch.projects[i].status in (Status.RUNNING, Status.QUEUED)]
+    if busy:
+        p = batch.projects[busy[0]]
+        raise HTTPException(409, f'project {busy[0] + 1} "{p.name}" is still {p.status.value}: '
+                                 "wait for it to finish, or cancel it first")
     if not request.app.state.batches.retry(batch_id, indices):
         raise HTTPException(409, "batch cannot be retried")
     return _batch_out(batch)

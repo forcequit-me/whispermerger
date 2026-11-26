@@ -492,7 +492,7 @@ def test_merge_options_reach_a_job_and_each_batch_project(api, two_stream_file, 
     o = sent[0]
     assert (o.backchannel_render.value, o.backchannel_max_words, o.overlap_min_seconds, o.bleed_prefer_ratio,
             o.detect_conflicts, o.bleed_window_seconds, o.bleed_similarity) == ("skip", 2, 3.5, 4.0, True, 1.0, 0.7)
-    with pytest.raises(actions.ActionError, match="422"):
+    with pytest.raises(actions.ActionError, match="backchannel_render is one of"):
         actions.transcribe([f], backchannel_render="loud")
 
     b = actions.run_batch([f], out=str(tmp_path), formats=["json"], per_file=False, detect_conflicts=False,
@@ -562,3 +562,67 @@ def test_word_timing_option_reaches_a_job_and_each_batch_project(api, two_stream
     assert parser.parse_args(["transcribe", "a.mov", "--no-word-timing"]).word_timing is False
     assert parser.parse_args(["run-batch", "d"]).word_timing is True
     assert parser.parse_args(["run-batch", "d", "--no-word-timing"]).word_timing is False
+
+
+def _mcp(name: str, args: dict):
+    """A tool called the way an MCP client calls it; a refusal comes back as ToolError."""
+    import asyncio
+    import mcp_server
+    return asyncio.run(mcp_server.server.call_tool(name, args))
+
+
+def test_a_batch_id_alone_says_what_to_add(api, two_stream_file, tmp_path, capsys):
+    from mcp.server.mcpserver.exceptions import ToolError
+    f = str(two_stream_file)
+    b = actions.run_batch([f, f], out=str(tmp_path), formats=["txt"], name="Talks", wait=True,
+                          projects=[{"paths": [f], "name": "Joined", "per_file": False}])
+    hint = (f'is a batch id: add project, and file for a project with one transcript per file '
+            f'(numbers as get_batch shows them). Its projects: project 1 "Talks" (files: 1 two_stream.mkv, '
+            f'2 two_stream.mkv); project 2 "Joined"')
+    for act in (lambda: actions.get_transcript(b["batch_id"]), lambda: actions.export(b["batch_id"], out=str(tmp_path)),
+                lambda: actions.edit_lines(b["batch_id"], line=0, delete=True)):
+        with pytest.raises(actions.ActionError) as e:
+            act()
+        assert hint in str(e.value)
+    with pytest.raises(ToolError, match="is a batch id"):
+        _mcp("get_transcript", {"source": b["batch_id"]})
+    assert cli.main(["get-transcript", b["batch_id"]]) == 1 and hint in capsys.readouterr().err
+    with pytest.raises(actions.ActionError, match="404: unknown job"):   # neither a job nor a batch
+        actions.get_transcript("nope")
+    assert actions.get_transcript(b["batch_id"], project=2)["lines"]
+
+
+def test_a_wrong_backchannel_render_names_the_valid_ones(api, two_stream_file, capsys):
+    from mcp.server.mcpserver.exceptions import ToolError
+    f, msg = str(two_stream_file), "backchannel_render is one of parenthetical, separate, skip"
+    with pytest.raises(actions.ActionError, match=msg):
+        actions.transcribe([f], backchannel_render="inline")
+    with pytest.raises(actions.ActionError, match=msg):
+        actions.run_batch([f], backchannel_render="inline")
+    with pytest.raises(actions.ActionError, match=msg):
+        actions.run_batch([f], projects=[{"paths": [f], "backchannel_render": "inline"}])
+    for tool, args in (("transcribe", {"paths": [f], "backchannel_render": "inline"}),
+                       ("run_batch", {"paths": [f], "backchannel_render": "inline"})):
+        with pytest.raises(ToolError, match=msg):
+            _mcp(tool, args)
+    assert cli.main(["transcribe", f, "--backchannel-render", "inline"]) == 1 and msg in capsys.readouterr().err
+    assert not api.app.state.batches._batches and not api.app.state.jobs._jobs   # nothing was started
+
+
+def test_retry_refuses_a_project_still_running_or_queued(api, two_stream_file, monkeypatch, tmp_path):
+    from mcp.server.mcpserver.exceptions import ToolError
+    gate, f = _held(monkeypatch), str(two_stream_file)
+    bid = actions.run_batch([f], out=str(tmp_path), formats=["txt"], per_file=False, name="First",
+                            projects=[{"paths": [f], "per_file": False, "name": "Second"}])["batch_id"]
+    _until(lambda: actions.get_batch(bid)["items"][0]["status"] == "running")
+    with pytest.raises(actions.ActionError, match='409: project 1 "First" is still running: wait for it'):
+        actions.retry_batch(bid, projects=[1])
+    with pytest.raises(ToolError, match='project 2 "Second" is still queued'):
+        _mcp("retry_batch", {"batch_id": bid, "projects": [2]})
+    r = api.post(f"/api/batch/{bid}/retry", json={"projects": [0, 1]})       # the app's route: the same
+    assert r.status_code == 409 and "still running" in r.json()["detail"]
+    gate.set()
+    _until(lambda: actions.get_batch(bid)["status"] == "done")
+    assert actions.retry_batch(bid, projects=[1, 2])["batch_id"] == bid       # finished: runs again
+    _until(lambda: actions.get_batch(bid)["status"] == "done")
+
