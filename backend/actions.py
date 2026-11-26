@@ -466,22 +466,48 @@ def get_transcript(source: str, full: bool = False, project: Optional[int] = Non
                       for i, s in enumerate(merged["segments"])]}
 
 
-def edit_lines(job_id: str, rename_from: Optional[str] = None, rename_to: Optional[str] = None,
+# Top-level key edit_lines puts in the .json files it writes: such a file may be edited in place.
+_EDITED_COPY = "edit_lines_copy"
+
+
+def edit_lines(source: str, rename_from: Optional[str] = None, rename_to: Optional[str] = None,
                line: Optional[int] = None, text: Optional[str] = None, speaker: Optional[str] = None,
                start: Optional[float] = None, end: Optional[float] = None,
-               delete: bool = False, project: Optional[int] = None, file: Optional[int] = None) -> dict:
-    """Edit a finished transcript of a job, or of a batch (with project or file); later reads and
-    exports of it use the edits, the files a batch already wrote don't change. Give a rename, or a
-    line with at least one change, or both.
+               delete: bool = False, out: Optional[str] = None,
+               project: Optional[int] = None, file: Optional[int] = None) -> dict:
+    """Edit a finished transcript of a job, of a batch (with project or file), or a transcript file
+    (a WhisperMerger .json, or an .srt, .txt or .csv). A job's or batch's transcript is edited in
+    place: later reads and exports of it use the edits, the files a batch already wrote don't
+    change. A transcript file is never written over: the edited copy goes to out, always a
+    WhisperMerger .json (export turns it into SRT, TXT or CSV). A .json that edit_lines wrote can
+    be edited again in place, with out left out. Give a rename, or a line with at least one
+    change, or both.
 
-    job_id: the job id, or a batch id.
+    source: the job id, a batch id, or a transcript file.
+    out: with a transcript file: the .json file to write the edited copy to (an existing file there is overwritten, as export does).
     project: with a batch id: the project's number in get_batch.
     file: with a batch id: the file's number in get_batch (project defaults to 1).
     rename_from: a speaker name to rename on every line, to rename_to.
     rename_to: the new name for rename_from.
     line: line number from get_transcript (counted from 0) to change with text / speaker / start / end, or delete.
     A changed text is marked edited, so subtitle timing treats it like an edit made in the app."""
-    merged, where = _result(job_id, project, file)
+    src = Path(source).expanduser()
+    dest = where = None
+    if src.suffix.lower() in (".json", *_PARSERS) and src.is_file():
+        merged, _ = _merged(source)
+        mine = merged.get(_EDITED_COPY) is True
+        if out is None and not mine:
+            raise ActionError(f"{src.name} is a transcript file: add out, the .json file to write the edited copy to")
+        dest = Path(out).expanduser() if out is not None else src
+        if dest.suffix.lower() != ".json":
+            raise ActionError("out must end in .json: the edited copy is a WhisperMerger .json, "
+                              "and export turns it into SRT, TXT or CSV")
+        if not mine and dest.exists() and dest.samefile(src):
+            raise ActionError(f"that would write over {src.name}, the original; give out another file name")
+    else:
+        if out is not None:
+            raise ActionError("out is only for a transcript file; a job's or batch's transcript is edited in place")
+        merged, where = _result(source, project, file)
     segs = merged["segments"]
     changed = 0
     if rename_from is not None or rename_to is not None:
@@ -520,8 +546,13 @@ def edit_lines(job_id: str, rename_from: Optional[str] = None, rename_to: Option
         changed += 1
     if not changed:
         raise ActionError("nothing to change: give rename_from + rename_to, or line with text/speaker/start/end/delete")
-    _api("PUT", where, merged)
-    return {"changed_lines": changed, "lines": len(segs)}
+    if dest is None:
+        _api("PUT", where, merged)
+        return {"changed_lines": changed, "lines": len(segs)}
+    merged[_EDITED_COPY] = True
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(merged, ensure_ascii=False, indent=2), "utf-8")
+    return {"changed_lines": changed, "lines": len(segs), "file": str(dest.resolve())}
 
 
 def export(source: str, out: Optional[str] = None, formats: list[str] = ["srt"], filename: Optional[str] = None,
