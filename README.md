@@ -300,8 +300,10 @@ Give it as JSON text or, easier on a command line, the path of a `.json` file:
 With `--projects` the paths after the command are optional. `get-batch` numbers every item:
 `project` and, in a one-transcript-per-file project, `file`, both from 1. Those numbers are what
 `cancel`, `retry-batch`, `get-transcript`, `edit-lines` and `export` take (`--file` alone means
-project 1). Edits to a batch result are used by later reads and exports; the files the batch
-already wrote stay as they are. `cancel`, `pause` and `resume` take a job id or a batch id.
+project 1); given a batch id without them, they say so and list the batch's projects and files.
+Edits to a batch result are used by later reads and exports; the files the batch already wrote
+stay as they are. `cancel`, `pause` and `resume` take a job id or a batch id. A project that is
+still running or queued can't be retried (in the app too): wait for it, or cancel it first.
 
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
 Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `cancel`, `pause`, `resume`,

@@ -598,7 +598,7 @@ marked clips, the whole question flow from the CLI and in the app (a job and a b
 released and clock stopped while waiting, a wrong language code refused, each answer except
 "download" carried out, cancel while waiting. Not run for real: the 3.9 GB download itself (the
 "download" answer goes through the same `ensure()` every other model download uses), and Label
-Track's question box (same function as the other two tabs).
+Track's question box (same function as the other two tabs). (Both since run for real: see "CLI + MCP against a real server" below.)
 
 ## CLI + MCP parity with the app (2026-11-25)
 
@@ -652,7 +652,7 @@ Things the app could do that the CLI and MCP server could not. All are actions i
 Not run for real: the Benchmark, a model download and a removal (tests stub them; the actions call
 the same routes the Models tab does). Run control, several projects, batch results and merge
 options are tested in-process only (the app through its test client, transcription stubbed), not
-against a running server.
+against a running server. (All since run against a real server: see "CLI + MCP against a real server" below.)
 
 ## Option to skip word timing (2026-11-25, #39)
 
@@ -707,6 +707,60 @@ start in one region and end several regions later, across the other speakers' tu
 out in the wrong order and get flagged as overlaps. Passing the option through is a few lines;
 making the result usable needs lines cut at region ends, which is not. (Read from the code, not
 run.)
+
+## CLI + MCP against a real server, and rough edges (2026-11-26)
+
+Everything from the two sections above, run for real: an own server on its own port, driven by
+the CLI and by an MCP client over stdio (the `mcp` package's stdio client starting
+`mcp_server.py`). Test audio: two-speaker dialogues spoken by the Windows voices into a
+two-track `.mkv` (one voice per track), 1 min 51 s and 14 min 45 s. GPU: large-v3, with other
+apps holding about 1.1 GB; no timings are claimed here.
+
+**Ran, both from the CLI and over MCP, and passed:** `transcribe --wait` on the two-track file,
+then `get-transcript`, `edit-lines` (rename, line text, delete, a wrong line refused) and `export`
+(all four formats, and reading an exported `.txt` back); `pause` (GPU released, clock stopped),
+`resume` and `cancel` on a running job and on a running batch, `cancel --project`; `run-batch`
+with three projects (one with word timing off, ending "(no word timing)", one per-file, one
+merged), `get-batch`, `retry-batch` (all canceled, one file, chosen projects), batch results by
+`--project` / `--file`; `run-benchmark` / `get-benchmark` (17 models); `list-models`,
+`download-model`, `cancel-download` (leaves a partial), resuming it, `remove-model` (full and
+partial), `use-model` and back; `set-my-languages`, `set-auto-portuguese`, `set-pt-punctuation`
+(wrong values refused), `cache-stats`, `clear-cache` (on that server's own cache folder), `status`.
+
+**#38 for real:** with only the language guess faked to Norwegian Nynorsk / Norwegian at 36% (no
+Norwegian voice to speak a clip), a job asked before the 3.9 GB word-timing download and `answer
+... download` from the CLI downloaded it and finished; a batch asked the same over MCP and the
+`answer` tool did the same with the other Norwegian model. In a browser, Label Track showed the
+same question box under its progress line; "Use this language instead" carried on in English and
+the box went away. (The file was added by answering the page's file-picker request with the
+add-path route; a page can't drive the server's own file dialog.) Both big models were removed
+afterwards.
+
+**Fixed:**
+
+- A batch id given to `get-transcript`, `export` or `edit-lines` without `project` / `file`
+  answered "404: unknown job". It now says it is a batch id and lists the batch's projects and
+  their files by number (`_result` in `actions.py`); nothing is picked for you.
+- A wrong `backchannel_render` came back as the server's raw 422. `transcribe` and `run-batch`
+  (a batch project too) now answer "backchannel_render is one of parenthetical, separate, skip"
+  before anything starts (`_merge_options`).
+- Retrying a project that is still running (or queued) was accepted, and reset it under the run.
+  `POST /api/batch/{id}/retry` refuses it with 409 and the project's number and name, so the app
+  gets the same answer as the CLI and MCP.
+- After a whole-batch cancel, the files of a per-file project that hadn't started stayed
+  "queued" in a canceled batch (the project itself said canceled). They now end canceled too
+  (`_mark_canceled` in `batch.py`, also used when a project is canceled before it runs).
+- The Word timing note (Transcribe & Merge, Batch) wrapped below about 1280 px. At note size
+  (12 px) it now sits beside the box down to about 1100 px and on one line of its own under it
+  down to about 985 px.
+
+**Seen, left as they are:** a project canceled during its last track still writes that file, so
+it ends "canceled" with its one file "done", and `get-batch` (which lists file rows) shows done;
+`run-batch` counts source files where `get-batch` counts rows (a merged project of two files is 1
+there); pausing a job that is waiting for the GPU takes effect once it gets it, so its clock runs
+until then; `add-files` prints each file's tracks as a raw list. `edit-lines` still takes only a
+job or batch result, not a transcript file: where the edited copy would go is a decision of its
+own (an `--out` file, a copy next to the source, or a result held on the server).
 
 ## Partial / outstanding (v1 polish)
 
