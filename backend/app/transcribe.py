@@ -297,15 +297,27 @@ def has_align_model(language: str) -> bool:
 @contextmanager
 def _gpu_turn():
     """This thread's turn on the shared models (GPU_TURN), counted as a GPU user meanwhile so
-    another thread can't unload them under it. While another run has the GPU, say so."""
+    another thread can't unload them under it. While another run has the GPU, say so, every half
+    second: that report is also where a waiting run is paused (it blocks) or canceled (it raises),
+    while it holds nothing yet."""
     fn = getattr(_chunk, "fn", None)
-    waited = bool(fn) and GPU_TURN.locked()
+    waited = not GPU_TURN.acquire(blocking=not fn)
     if waited:
-        fn(0.0, waiting=True)
-    with GPU_TURN, gpu_user():
-        if waited:
-            fn(0.0)                                   # our turn: back to the normal label
-        yield
+        _chunk.waiting = True                         # unload_models leaves the other run's models alone
+        try:
+            while True:
+                fn(0.0, waiting=True)
+                if GPU_TURN.acquire(timeout=0.5):
+                    break
+        finally:
+            _chunk.waiting = False
+    try:
+        with gpu_user():
+            if waited:
+                fn(0.0)                               # our turn: back to the normal label
+            yield
+    finally:
+        GPU_TURN.release()
 
 
 # Auto-detect listens to speech from across the file. It used to take the first 30 s, so a
@@ -419,6 +431,8 @@ def unload_models() -> None:
     """Drop the cached ASR + alignment models and hand their VRAM back to CUDA. Called when a run
     is paused so a paused job stops occupying the GPU; the models reload lazily on the next
     transcribe. Must run on the worker thread that owns the GPU (where the models were created)."""
+    if getattr(_chunk, "waiting", False):  # paused while waiting for its turn: nothing on the GPU is
+        return                             # this run's, the models there belong to the run using them
     _release_loaded()
     _load_model.cache_clear()
     _load_align.cache_clear()

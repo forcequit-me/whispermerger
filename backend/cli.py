@@ -96,8 +96,9 @@ def _human(x, pad: str = "") -> None:
                 print(f"{pad}{k}: {v}")
     elif isinstance(x, list):
         for v in x:
-            if isinstance(v, dict):
-                print(pad + "- " + ", ".join(f"{k}={w}" for k, w in v.items() if not isinstance(w, (dict, list)) or w))
+            if isinstance(v, dict):       # its plain values on one line, any list or object in it below
+                print(pad + "- " + ", ".join(f"{k}={w}" for k, w in v.items() if not isinstance(w, (dict, list))))
+                _human({k: w for k, w in v.items() if isinstance(w, (dict, list)) and w}, pad + "  ")
             else:
                 print(f"{pad}- {v}")
     else:

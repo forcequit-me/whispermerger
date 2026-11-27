@@ -224,6 +224,17 @@ def test_batch_on_a_folder(api, two_stream_file, tmp_path):
     assert list((tmp_path / "out").rglob("*.txt"))
 
 
+def test_run_batch_and_get_batch_count_the_same_files(api, two_stream_file, tmp_path):
+    """Both count source files. get_batch used to count its items, so two files joined into one
+    transcript were 2 for run_batch and 1 for get_batch."""
+    f = str(two_stream_file)
+    started = actions.run_batch([f, f], out=str(tmp_path), formats=["txt"], per_file=False)
+    assert started["files"] == 2
+    _until(lambda: actions.get_batch(started["batch_id"])["status"] == "done")
+    b = actions.get_batch(started["batch_id"])
+    assert (b["files"], b["done"], len(b["items"])) == (2, 2, 1)
+
+
 def test_cli_has_a_command_per_action_and_parses_lists(api, two_stream_file, capsys):
     parser = cli.build_parser()
     a = parser.parse_args(["transcribe", "a.mov", "b.mov", "--names", "Host,Guest", "--tracks", "1,2", "--wait"])
@@ -240,6 +251,11 @@ def test_cli_has_a_command_per_action_and_parses_lists(api, two_stream_file, cap
 
     assert cli.main(["--json", "add-files", str(two_stream_file)]) == 0
     assert json.loads(capsys.readouterr().out)[0]["tracks"][1]["track"] == 2
+    assert cli.main(["add-files", str(two_stream_file)]) == 0        # without --json: a line per track
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert lines[1] == "  tracks:" and lines[2].startswith("    - track=1, speaker=") and "[" not in out
+    assert lines[3].startswith("    - track=2, speaker=")
     assert cli.main(["edit-lines", "nope"]) == 1                     # refused: nothing to change
 
 
@@ -470,7 +486,7 @@ def test_batch_projects_keep_their_own_settings_and_open_by_number(api, two_stre
                    "formats": ["srt"], "show_speakers": False},
                   {"paths": [f]}])
     bid = b["batch_id"]
-    assert b["status"] == "done" and b["files"] == b["done"] == 3
+    assert b["status"] == "done" and b["files"] == b["done"] == 4    # source files: "Two" joins two into one item
     assert [(i["project"], i.get("file"), i["name"]) for i in b["items"]] == [
         (1, 1, two_stream_file.name), (2, None, "Two"), (3, 1, two_stream_file.name)]
     written = lambda folder, ext: next((tmp_path / folder).glob(f"*.{ext}")).read_text("utf-8")

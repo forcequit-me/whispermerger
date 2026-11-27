@@ -206,6 +206,7 @@ class ProjectStatusOut(BaseModel):
     progress: float
     message: str
     weight: float = 0.0                       # total audio-seconds × tracks (what the % is measured against)
+    sources: int = 0                          # how many source files it has
     elapsed: float = 0.0
     output_dir: str | None = None
     error: str | None = None
@@ -772,7 +773,8 @@ def _batch_out(batch) -> BatchStatusOut:
         id=batch.id, status=batch.status.value, progress=batch.progress, elapsed=batch.elapsed,
         paused=batch.paused, gpu_freed=batch.gpu_freed, question=batch.question,
         projects=[ProjectStatusOut(name=p.name, status=p.status.value, progress=p.progress,
-                                   message=p.message, weight=p.weight, elapsed=p.elapsed,
+                                   message=p.message, weight=p.weight, sources=p.sources,
+                                   elapsed=p.elapsed,
                                    output_dir=p.output_dir, error=p.error,
                                    files=[FileStatusOut(name=f.name, status=f.status.value,
                                                         progress=f.progress, message=f.message,

@@ -754,7 +754,8 @@ afterwards.
   (12 px) it now sits beside the box down to about 1100 px and on one line of its own under it
   down to about 985 px.
 
-**Seen, left as they are:** a project canceled during its last track still writes that file, so
+**Seen, left as they are** (the first four are fixed since, see "Four oddities from the live
+test" below)**:** a project canceled during its last track still writes that file, so
 it ends "canceled" with its one file "done", and `get-batch` (which lists file rows) shows done;
 `run-batch` counts source files where `get-batch` counts rows (a merged project of two files is 1
 there); pausing a job that is waiting for the GPU takes effect once it gets it, so its clock runs
@@ -781,6 +782,37 @@ everywhere else: `_merged` reads `.json` with `json.loads` and keeps every key, 
 `MergedOutput` ignores keys it doesn't know, so `export` of a marked file writes the same bytes
 as of the same file without the mark, and its own `.json` export comes out without it.
 `get_transcript --full` shows the file as it is, mark included.
+
+## Four oddities from the live test (2026-11-26)
+
+- **Canceled during the last track.** A file of a one-transcript-per-file project whose cancel
+  (of the file, its project or the whole batch) arrived while its last track was being
+  transcribed was still merged and written, so it showed "done" in a project that said
+  "canceled". It now ends "canceled" with nothing written, as a cancel between tracks always did,
+  and as a joined project already behaved. The track that was running still finishes and is
+  cached, so a retry is immediate. `on_done` in `batch.py` asks `cancel_pending`, the cancel
+  question without the pause stop (`is_cancelled` parks on a pause, and a pause during the last
+  track must still write the file first).
+- **File counts.** `get_batch` counted its items, `run_batch` source files, so two files joined
+  into one transcript were 2 in one and 1 in the other. Both count source files now: a joined
+  project is one item that counts as every file in it, in `files` and in `done`. The server
+  reports each project's `sources` (`ProjectStatus`, `ProjectStatusOut`); the app doesn't use it.
+- **Pause while waiting for the GPU.** A run blocked on `GPU_TURN` had no checkpoint, so a pause
+  (or a cancel) landed only once it got the GPU: a job's clock ran until then and it then parked
+  holding the turn; a batch file transcribed its whole track first. `_gpu_turn` now waits in
+  half-second steps and reports "waiting" on each one, and that report is the checkpoint: a job
+  parks or stops in `_set_progress`, a joined batch project in its guard, and a per-file batch
+  project in `on_chunk` (new check). Nothing is held while it waits. `unload_models` does nothing
+  for a thread in that wait (`_chunk.waiting`): the models on the GPU are the running run's, and
+  dropping them under it is what made the next load slow. So "paused · GPU released" there means
+  the run has let go, not that the GPU is empty.
+- **`add-files` on the command line.** `_human` in `cli.py` printed a list inside a list item as
+  Python text (`tracks=[{'track': 1, ...}]`). An item's plain values now go on its line and any
+  list or object in it below, indented: one line per track. `--json` and MCP are unchanged.
+
+Tests: 209 pass, 4 new (each fails on the old code). `add-files` was run through the real CLI on
+a server of its own; the other three were not run on the real GPU (about 8.9 of 12 GB was in use
+by other apps at the time).
 
 ## Partial / outstanding (v1 polish)
 

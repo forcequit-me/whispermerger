@@ -506,3 +506,69 @@ def test_cancel_while_batch_waits_for_an_answer(two_stream_file, tmp_path):
     reg.cancel(batch.id)                               # cancel the whole batch while it waits
     _wait_status(batch)
     assert batch.status is Status.CANCELED and batch.question is None
+
+
+def test_cancel_during_the_last_track_writes_nothing(two_stream_file, tmp_path):
+    """A cancel that arrives while a file's last track is being transcribed leaves that file
+    canceled with nothing written, like a cancel between tracks: of the file, its project or the
+    whole batch. (It used to be written and shown "done", in a project that said "canceled".)"""
+    def run(name, cancel):
+        reg, proj, calls = BatchRegistry(), _perfile_project(two_stream_file), []
+        batch = reg.create([proj])
+
+        def stub(wav):                                     # the cancel arrives while b.mkv's only track runs
+            calls.append(wav)
+            if len(calls) == 2:
+                cancel(reg, batch.id)
+            return _stub(wav)
+
+        run_batch(batch, [proj], stub, output_mode="folder", output_folder=str(tmp_path / name))
+        assert _find(tmp_path / name / "Lib", "a", "txt") and not _find(tmp_path / name / "Lib", "b", "txt")
+        return batch.projects[0].status, [f.status for f in batch.projects[0].files]
+
+    done, canceled = Status.DONE, Status.CANCELED
+    assert run("file", lambda reg, bid: reg.cancel_file(bid, 0, 1)) == (done, [done, canceled])
+    assert run("project", lambda reg, bid: reg.cancel_project(bid, 0)) == (canceled, [done, canceled])
+    assert run("batch", lambda reg, bid: reg.cancel(bid)) == (canceled, [done, canceled])
+
+
+def test_a_batch_waiting_for_the_gpu_pauses_and_cancels_at_once(two_stream_file, tmp_path):
+    """While another run has the GPU, transcribe_track reports "waiting" every half second. In a
+    batch that report is a checkpoint: a pause parks there and a cancel stops there, instead of
+    after the other run has finished and this track has been transcribed."""
+    import threading
+    import time as _t
+    from app.transcribe import _chunk
+    turn, transcribed = threading.Event(), []
+
+    def waiting_stub(wav):                                 # never gets its turn in this test
+        while not turn.is_set():
+            _chunk.fn(0.0, waiting=True)
+            _t.sleep(0.01)
+        transcribed.append(wav)
+        return _stub(wav)
+
+    def until(check):
+        deadline = _t.time() + 3
+        while not check() and _t.time() < deadline:
+            _t.sleep(0.01)
+        assert check()
+
+    reg, proj = BatchRegistry(), _perfile_project(two_stream_file)
+    batch = reg.create([proj])
+    reg.run(batch, lambda: run_batch(batch, [proj], waiting_stub,
+            output_mode="folder", output_folder=str(tmp_path)))
+    a = batch.projects[0].files[0]
+    until(lambda: a.message.endswith("waiting for another run to finish"))
+    reg.pause(batch.id)
+    until(lambda: batch.gpu_freed)                         # parked while still waiting
+    e1 = a.elapsed
+    _t.sleep(0.2)
+    assert a.elapsed - e1 < 0.1                            # its clock stopped
+    reg.resume(batch.id)
+    until(lambda: not batch.gpu_freed)
+    reg.cancel_project(batch.id, 0)
+    _wait_status(batch)
+    turn.set()
+    assert batch.projects[0].status is Status.CANCELED and not transcribed
+    assert all(f.status is Status.CANCELED for f in batch.projects[0].files)

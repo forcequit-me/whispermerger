@@ -212,6 +212,48 @@ def test_a_waiting_run_says_so(monkeypatch, tmp_path):
     assert seen[:2] == [(0.0, True), (0.0, False)]
 
 
+def test_a_run_waiting_for_the_gpu_pauses_and_cancels_at_once(monkeypatch, tmp_path):
+    """Waiting for the GPU reports every half second, and that report is the run's checkpoint: a
+    paused job parks there (clock stopped, the running run's models left alone) and a canceled one
+    stops there. Neither waits for its turn first."""
+    import time
+    from app.jobs import JobRegistry, JobStatus
+    monkeypatch.setattr(whisperx, "load_audio", lambda p: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(transcribe.modelstore, "ensure", lambda e: None)
+    monkeypatch.setattr(transcribe, "_load_model", lambda *a: _FakeModel("is"))
+
+    def work(progress):
+        with transcribe.chunk_progress(lambda f, waiting=False: progress(f, "waiting" if waiting else "running")):
+            transcribe.transcribe_track(tmp_path / "x.wav", language="is")
+
+    def until(check):
+        deadline = time.time() + 3
+        while not check() and time.time() < deadline:
+            time.sleep(0.01)
+        assert check()
+
+    theirs = object()                                  # the model of the run that has the GPU
+    transcribe._loaded[:] = [theirs]
+    job = JobRegistry().create()
+    transcribe.GPU_TURN.acquire()                      # another run holds the GPU, to the end of this test
+    try:
+        JobRegistry().run(job, work, on_pause=transcribe.unload_models)
+        until(lambda: job.message == "waiting")
+        job.pause()
+        until(lambda: job.gpu_freed)                   # parked, without its turn
+        assert transcribe._loaded == [theirs]          # nothing dropped under the run using it
+        e1 = job.elapsed
+        time.sleep(0.2)
+        assert job.elapsed - e1 < 0.1                  # its clock stopped
+        job.resume()
+        until(lambda: job.message == "waiting")        # back to waiting
+        job.cancel()
+        until(lambda: job.status is JobStatus.CANCELLED)
+    finally:
+        transcribe.GPU_TURN.release()
+        transcribe._loaded.clear()
+
+
 # --- Auto-detect: speech across the file, the user's languages, asking before a big download (#38) ---
 
 def test_speech_windows_come_from_across_the_file_and_skip_what_has_no_speech(monkeypatch):

@@ -417,7 +417,8 @@ def cancel(run_id: str, project: Optional[int] = None, file: Optional[int] = Non
 
 def pause(run_id: str) -> dict:
     """Pause a job or a batch. The file being transcribed finishes, then the models leave the GPU
-    and the clock stops until resume; get_progress / get_batch show "paused".
+    and the clock stops until resume; get_progress / get_batch show "paused". A run that is still
+    waiting for another run to finish pauses at once.
 
     run_id: the job id or batch id."""
     return _run_post(run_id, "pause")
@@ -649,19 +650,23 @@ def run_batch(paths: list[str], out: Optional[str] = None, per_file: bool = True
 def get_batch(batch_id: str) -> dict:
     """Progress of a batch: overall percent, and each file's status, message and where its transcript
     went. Each item carries its project number and, in a one-transcript-per-file project, its file
-    number: the numbers cancel, retry_batch, get_transcript, edit_lines and export take. When the
-    result has "question", the batch has stopped to ask about the file named in it and stays put
-    until you call answer."""
+    number: the numbers cancel, retry_batch, get_transcript, edit_lines and export take. "files" and
+    "done" count source files, as run_batch does: a project joined into one transcript is one item
+    that counts as every file in it. When the result has "question", the batch has stopped to ask
+    about the file named in it and stays put until you call answer."""
     b = _api("GET", f"/api/batch/{batch_id}")
-    files = []
+    files, total, done = [], 0, 0
     for n, p in enumerate(b["projects"], 1):
         rows = [{"project": n, "file": m, **f} for m, f in enumerate(p.get("files") or [], 1)] or [{"project": n, **p}]
         files += [{**{k: f[k] for k in ("project", "file") if k in f},
                    "name": f["name"], "status": f["status"], "percent": round(f["progress"] * 100),
                    "message": f["message"], "output_dir": f.get("output_dir"), "error": f.get("error")}
                   for f in rows]
-    out = {"batch_id": batch_id, "status": b["status"], "percent": round(b["progress"] * 100), "files": len(files),
-           "done": sum(f["status"] == "done" for f in files), "items": files}
+        each = 1 if p.get("files") else p["sources"]      # source files behind each of its rows
+        total += each * len(rows)
+        done += each * sum(f["status"] == "done" for f in rows)
+    out = {"batch_id": batch_id, "status": b["status"], "percent": round(b["progress"] * 100), "files": total,
+           "done": done, "items": files}
     if b["paused"]:
         out["paused"] = _paused(b)
     if b.get("question"):

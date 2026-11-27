@@ -99,6 +99,7 @@ class ProjectStatus:
     progress: float = 0.0
     message: str = ""
     weight: float = 0.0                          # total audio seconds × tracks (for batch weighting)
+    sources: int = 0                             # how many source files it has
     output_dir: Optional[str] = None
     error: Optional[str] = None
     started_at: float = 0.0
@@ -308,9 +309,11 @@ def _process_project(
     output_folder: Optional[str],
     options: Optional[MergeOptions],
     is_cancelled: IsCancelled,
+    cancel_pending: IsCancelled = lambda: False,
 ) -> None:
     """Run one project to disk, mutating its ProjectStatus. Raises Cancelled if a cancel is
-    requested at a file/stage boundary; any other failure is recorded on the status."""
+    requested at a file/stage boundary; any other failure is recorded on the status.
+    `cancel_pending`: the same question as `is_cancelled`, asked without stopping for a pause."""
     ps.started_at = time.time()
     ps.finished_at = 0.0
     ps.error = None
@@ -383,9 +386,17 @@ def _process_project(
                     label[i] += f" · {detected}"
                 files[i].message = f"{label[i]} · {WAITING}" if waiting else label[i]
                 _recalc_project(ps)
+                # Waiting for the GPU is a checkpoint too (it reports every half second): a pause
+                # or a cancel takes effect now, not after the other run and then this track.
+                if waiting and (files[i].cancel_requested or is_cancelled()):
+                    raise Cancelled()
 
             def on_done(i: int, src: PreparedSource, merged, seen=seen) -> None:
                 fs = files[i]
+                # Canceled during its last track: nothing is written, as when it is canceled between
+                # tracks. What was transcribed is cached, so running it again is immediate.
+                if fs.cancel_requested or cancel_pending():
+                    return on_skip(i, src)
                 dest = Path(src.path).parent if output_mode == "source" else out_dir
                 stem = _safe_name(Path(src.input.filename).stem)
                 seen[(str(dest), stem)] = seen.get((str(dest), stem), 0) + 1
@@ -499,12 +510,15 @@ def _run_projects(
         def proj_cancelled(ps=ps) -> bool:            # batch-wide OR this one project
             return is_cancelled() or ps.cancel_requested
 
+        def cancel_pending(ps=ps) -> bool:            # the same, without stopping for a pause
+            return ps.cancel_requested or bool(batch and batch.cancelled)
+
         try:
             with modelstore.reporting(_download_reporter(ps, proj_cancelled)), \
                     asking(_asker(batch, ps) if batch else None):
                 _process_project(project, ps, transcribe_fn, output_mode=output_mode,
                                  output_folder=output_folder, options=options,
-                                 is_cancelled=proj_cancelled)
+                                 is_cancelled=proj_cancelled, cancel_pending=cancel_pending)
         except Cancelled:
             if is_cancelled():                        # whole-batch cancel stops the queue
                 break
@@ -580,7 +594,8 @@ class BatchRegistry:
     def create(self, projects: list[ProjectInput]) -> BatchStatus:
         batch = BatchStatus(
             id=uuid.uuid4().hex,
-            projects=[ProjectStatus(name=p.name, weight=_project_weight(p), files=_file_statuses(p))
+            projects=[ProjectStatus(name=p.name, weight=_project_weight(p), sources=len(p.prepared),
+                                    files=_file_statuses(p))
                       for p in projects])
         with self._lock:
             self._batches[batch.id] = batch

@@ -313,6 +313,11 @@ project 1); given a batch id without them, they say so and list the batch's proj
 Edits to a batch result are used by later reads and exports; the files the batch already wrote
 stay as they are. `cancel`, `pause` and `resume` take a job id or a batch id. A project that is
 still running or queued can't be retried (in the app too): wait for it, or cancel it first.
+`files` and `done` in `get-batch` count source files, as `run-batch` does: a project joined into
+one transcript is one item that counts as every file in it. A file that is canceled while it is
+being transcribed is not written, whichever track it was on; the track that was running still
+finishes and stays cached, so `retry-batch` is quick. A run that is waiting for another run to
+finish with the GPU pauses or cancels at once.
 
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
 Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `cancel`, `pause`, `resume`,
