@@ -1143,6 +1143,18 @@ it as it starts (`runPipeline` in `app.js`), and it is shown again only when tha
 its own transcript. Label Track had the same thing and gets the same line (`runTranscribe` in
 `labeltrack.js`). Nothing else on the page changes.
 
+## A refused batch button says why in plain words (2026-11-27)
+
+The batch screen's Retry and per-row Restart buttons showed a refusal as the server's raw answer,
+for example `Restart failed: {"detail":"the batch is still stopping; try again in a moment"}`. A
+small helper in `app.js`, `errorText`, takes the sentence from `detail` (or the raw text when there
+is none), and those buttons use it. The per-row Cancel buttons (a project, a file) ignored a refusal
+and stayed on "Canceling…"; they now show "Cancel failed: ..." the same way and can be pressed
+again. A refusal there only happens for an unknown batch, for example after the server restarted.
+
+Still raw where a request fails elsewhere: starting a batch, a run on Transcribe & Merge or Label
+Track, the folder picker and scan, and Export.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

@@ -120,6 +120,13 @@ async function fetchTO(url, opts = {}, ms = 15000) {
 }
 window.fetchTO = fetchTO;   // labeltrack.js (module) reuses it
 
+// The sentence a refused request gives (the server's {"detail": "..."}), else its raw text.
+async function errorText(r) {
+  const text = await r.text();
+  try { const d = JSON.parse(text).detail; if (typeof d === "string") return d; } catch {}
+  return text || r.statusText;
+}
+
 // A run stopped to ask before a big word-timing download (Auto-detect chose a language outside
 // "Languages I use"): show the question after `anchor`, with its three answers posted to `url`.
 // `q` null takes it away. Built once per question, so a poll never swaps a button out mid-click.
@@ -1536,7 +1543,7 @@ function pollBatch(id, btn) {
           try {
             const r = await fetchTO(`/api/batch/${id}/retry`,
               { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, 30000);
-            if (!r.ok) { $("#batch-err").textContent = "Retry failed: " + (await r.text()); retryBtn.disabled = false; return; }
+            if (!r.ok) { $("#batch-err").textContent = "Retry failed: " + (await errorText(r)); retryBtn.disabled = false; return; }
             retryBtn.style.display = "none";
             pollBatch(id, btn);                        // resume polling the same batch
           } catch (e) { $("#batch-err").textContent = "Couldn't reach server for retry."; retryBtn.disabled = false; }
@@ -1647,7 +1654,13 @@ function projectActionBtn(p, i, id, btn, ended) {
     cancel.dataset.kind = "cancel";
     cancel.onclick = async () => {
       cancel.disabled = true; cancel.title = "Canceling…";
-      try { await fetch(`/api/batch/${id}/project/${i}/cancel`, { method: "POST" }); } catch {}
+      try {
+        const r = await fetch(`/api/batch/${id}/project/${i}/cancel`, { method: "POST" });
+        if (!r.ok) {
+          $("#batch-err").textContent = "Cancel failed: " + (await errorText(r));
+          cancel.disabled = false; cancel.title = "Cancel this item";
+        }
+      } catch {}
     };
     return cancel;
   }
@@ -1661,7 +1674,7 @@ function projectActionBtn(p, i, id, btn, ended) {
         { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ projects: [i] }) }, 30000);
       if (!r.ok) {
-        $("#batch-err").textContent = "Restart failed: " + (await r.text());
+        $("#batch-err").textContent = "Restart failed: " + (await errorText(r));
         restart.disabled = false; restart.textContent = "Restart"; return;
       }
       if (ended) pollBatch(id, btn);                      // polling had stopped — resume it
@@ -1801,7 +1814,13 @@ function fileActionBtn(f, pidx, fidx, id, btn, ended) {
     cancel.dataset.kind = "cancel";
     cancel.onclick = async () => {
       cancel.disabled = true; cancel.title = "Canceling…";
-      try { await fetch(`/api/batch/${id}/project/${pidx}/file/${fidx}/cancel`, { method: "POST" }); } catch {}
+      try {
+        const r = await fetch(`/api/batch/${id}/project/${pidx}/file/${fidx}/cancel`, { method: "POST" });
+        if (!r.ok) {
+          $("#batch-err").textContent = "Cancel failed: " + (await errorText(r));
+          cancel.disabled = false; cancel.title = "Cancel this file";
+        }
+      } catch {}
     };
     return cancel;
   }
@@ -1813,7 +1832,7 @@ function fileActionBtn(f, pidx, fidx, id, btn, ended) {
     try {
       const r = await fetchTO(`/api/batch/${id}/project/${pidx}/file/${fidx}/restart`, { method: "POST" }, 30000);
       if (!r.ok) {
-        $("#batch-err").textContent = "Restart failed: " + (await r.text());
+        $("#batch-err").textContent = "Restart failed: " + (await errorText(r));
         restart.disabled = false; restart.textContent = "Restart"; return;
       }
       if (ended) pollBatch(id, btn);                      // polling had stopped — resume it
