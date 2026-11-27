@@ -890,6 +890,7 @@ async function runPipeline() {
   runBtn.disabled = true;
   $("#progress-wrap").classList.add("show");
   $("#progress-wrap").classList.remove("finished");
+  $("#result-panel").style.display = "none";          // the last run's transcript isn't this run's result
   setProgress(0, "starting…");
 
   let res;

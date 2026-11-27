@@ -1134,6 +1134,15 @@ Tests: 1 new in `test_batch.py` (fails on the old code): a batch paused for a wh
 then run again by a retry and (another one) by a restart, counts while the re-run goes and ends
 on the re-run's time.
 
+## A canceled run left the last run's transcript on screen (2026-11-27)
+
+On Transcribe & Merge, after a run was canceled (or failed), the transcript of the run before it
+and its Export button were still showing below the progress line, easy to take for the canceled
+run's result. The result panel was shown when a run finished but never hidden. Now a new run hides
+it as it starts (`runPipeline` in `app.js`), and it is shown again only when that run is done, with
+its own transcript. Label Track had the same thing and gets the same line (`runTranscribe` in
+`labeltrack.js`). Nothing else on the page changes.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

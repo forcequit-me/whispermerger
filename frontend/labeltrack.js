@@ -559,6 +559,7 @@ async function runTranscribe() {
   btn.disabled = true;
   $("#label-status").textContent = "starting…";
   $("#label-progress").classList.add("show");
+  $("#label-result-panel").style.display = "none";    // the last run's transcript isn't this run's result
   setLabelBar(0, "starting…");
   let res;
   try {
