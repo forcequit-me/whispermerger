@@ -894,6 +894,8 @@ def test_an_ended_run_shows_no_pause_and_the_wording_fits_every_run(api, two_str
     get_progress / get_batch (CLI and MCP) and in the routes the app reads."""
     gate = _held(monkeypatch)
     job_id = actions.transcribe([str(two_stream_file)], tracks=[1])["job_id"]
+    # Pause only once the track is held: asked any earlier, the pause can land before it ("GPU released").
+    _until(lambda: actions.get_progress(job_id)["message"].startswith("Transcribing track"))
     actions.pause(job_id)
     assert actions.get_progress(job_id)["paused"] == ("pausing: the track being transcribed (Label Track: "
                                                       "the speaker, Benchmark: the model) finishes first")
@@ -905,6 +907,7 @@ def test_an_ended_run_shows_no_pause_and_the_wording_fits_every_run(api, two_str
 
     gate.clear()
     bid = actions.run_batch([str(two_stream_file)], out=str(tmp_path), formats=["txt"])["batch_id"]
+    _until(lambda: actions.get_batch(bid)["items"][0]["message"].startswith("track "))   # held, as above
     actions.pause(bid)
     assert actions.get_batch(bid)["paused"] == "pausing: the track being transcribed finishes first"
     actions.cancel(bid)

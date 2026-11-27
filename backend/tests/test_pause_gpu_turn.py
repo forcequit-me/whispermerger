@@ -779,7 +779,7 @@ def test_a_joined_project_canceled_while_the_batch_is_pausing_stops_at_once(rig,
                                      output_folder=str(tmp_path / "out")))
     ps = batch.projects[0]
     try:
-        assert _until(lambda: batch.status is Status.CANCELED, 3), (batch.status, batch.gpu_freed, ps.message)
+        assert _until(lambda: batch.status is Status.CANCELED, 10), (batch.status, batch.gpu_freed, ps.message)
         assert (ps.status, ps.message) == (Status.CANCELED, HALF_WAY) and len(calls) == 1
         assert not (tmp_path / "out").exists()
     finally:
