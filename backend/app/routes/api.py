@@ -909,18 +909,20 @@ def restart_batch_file(request: Request, batch_id: str, pidx: int, fidx: int) ->
 @router.post("/batch/{batch_id}/retry", response_model=BatchStatusOut)
 def retry_batch(request: Request, batch_id: str,
                 body: RetryRequest | None = None) -> BatchStatusOut:
-    """Re-run projects in a batch (default: all errored/canceled), reusing the same batch +
-    its persisted run spec. Caching makes already-transcribed files instant."""
+    """Re-run projects in a batch (default: all errored/canceled ones, and the projects that
+    finished with an errored/canceled file, where only those files run again), reusing the same
+    batch + its persisted run spec. Caching makes already-transcribed files instant."""
     batch = request.app.state.batches.get(batch_id)
     if batch is None:
         raise HTTPException(404, "unknown batch")
     if body and body.projects:
         indices = [i for i in body.projects if 0 <= i < len(batch.projects)]
     else:
+        failed = (Status.ERROR, Status.CANCELED)
         indices = [i for i, p in enumerate(batch.projects)
-                   if p.status in (Status.ERROR, Status.CANCELED)]
+                   if p.status in failed or (p.status is Status.DONE and any(f.status in failed for f in p.files))]
     if not indices:
-        raise HTTPException(400, "no failed or canceled projects to retry")
+        raise HTTPException(400, "nothing failed or canceled to retry")
     busy = [i for i in indices if batch.projects[i].status in (Status.RUNNING, Status.QUEUED)]
     if busy:
         p = batch.projects[busy[0]]

@@ -253,7 +253,7 @@ whispermerger run-batch --projects batch.json --out D:\subs   :: several project
 whispermerger get-batch <batch id>                      :: every item with its project and file number
 whispermerger pause <job or batch id>                   :: frees the GPU; resume <id> carries on
 whispermerger cancel <job or batch id>                  :: or one part of a batch: --project 2, --file 3
-whispermerger retry-batch <batch id>                    :: failed and canceled projects; or --projects 1,3, or --file 3
+whispermerger retry-batch <batch id>                    :: everything failed or canceled; or --projects 1,3, or --file 3
 whispermerger transcript <batch id> --file 3            :: a batch result; edit-lines and export take --project / --file too
 whispermerger answer <job or batch id> skip             :: when a run stops to ask: download | skip | language --language en
 whispermerger models                                    :: with free disk space and the settings; also download-model, use-model
@@ -313,14 +313,17 @@ With `--projects` the paths after the command are optional. `get-batch` numbers 
 `cancel`, `retry-batch`, `get-transcript`, `edit-lines` and `export` take (`--file` alone means
 project 1); given a batch id without them, they say so and list the batch's projects and files.
 Edits to a batch result are used by later reads and exports; the files the batch already wrote
-stay as they are. `cancel`, `pause` and `resume` take a job id or a batch id. A project that is
-still running or queued can't be retried (in the app too): wait for it, or cancel it first.
+stay as they are. `cancel`, `pause` and `resume` take a job id or a batch id. A plain
+`retry-batch` runs again every failed or canceled project, and every failed or canceled file in
+the projects that finished, leaving their done files alone (the app's Retry button does the same).
+A project that is still running or queued can't be retried (in the app too): wait for it, or
+cancel it first.
 `files` and `done` in `get-batch` count source files, as `run-batch` does: a project joined into
 one transcript is one item that counts as every file in it. A file that is canceled while it is
 being transcribed is not written, whichever track it was on; the track that was running still
 finishes and stays cached, so `retry-batch` is quick. Its message says how far it got, e.g.
-`canceled · 1 of 2 tracks transcribed, kept for a retry` (a job canceled part-way says the same). A run that is waiting for another run to
-finish with the GPU pauses or cancels at once. Otherwise a pause waits for the end of the track
+`canceled · 1 of 2 tracks transcribed, kept for a retry` (a job canceled part-way says the same).
+A run that is waiting for another run to finish with the GPU pauses or cancels at once. Otherwise a pause waits for the end of the track
 being transcribed (`get-progress` / `get-batch` say "pausing" until then, "GPU released" after).
 
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.

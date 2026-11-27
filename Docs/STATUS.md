@@ -897,6 +897,22 @@ first track or its last one; a joined project likewise; rows canceled before the
 canceled while waiting for the GPU; a retried row counts again; and the job and a batch file
 through `get_progress` / `get_batch`.
 
+## Retry, all-canceled batches and paused rows (2026-11-27)
+
+Three rough edges from a live test on the real GPU.
+
+- **A plain retry picks up canceled or failed files.** In a one-transcript-per-file project, a
+  canceled (or failed) file doesn't stop the project finishing "done", so a plain `retry-batch`
+  found no failed or canceled project and was refused ("no failed or canceled projects to
+  retry"), while `--projects 1` worked. The retry route (`/api/batch/{id}/retry` with no projects)
+  now also takes every finished project that has a failed or canceled file; `_reset_ps` already
+  re-queues only those files, so the done ones are left alone. It is refused only when nothing
+  anywhere failed or was canceled ("nothing failed or canceled to retry"). The app's Retry button
+  uses the same route and now counts those projects too.
+
+Tests: 232 pass, 1 new: a canceled file, then a failed one, each run again by a plain
+`retry_batch` while the done file isn't.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

@@ -455,7 +455,7 @@ def test_a_batch_is_controlled_by_project_and_file_number(api, two_stream_file, 
     assert actions.retry_batch(bid, file=2)["batch_id"] == bid
     done(bid)
     assert rows(bid) == [(1, 1, "done"), (1, 2, "done")]
-    with pytest.raises(actions.ActionError, match="no failed or canceled projects"):
+    with pytest.raises(actions.ActionError, match="nothing failed or canceled"):
         actions.retry_batch(bid)
     with pytest.raises(actions.ActionError, match="file goes with one project"):
         actions.retry_batch(bid, projects=[1, 2], file=1)
@@ -776,3 +776,44 @@ def test_a_run_canceled_part_way_says_how_far_it_got(api, two_stream_file, monke
     _until(lambda: actions.get_batch(bid)["status"] == "done")
     item = actions.get_batch(bid)["items"][0]
     assert (item["status"], item["message"]) == ("canceled", kept.format(2))
+
+
+def test_a_plain_retry_reruns_the_canceled_or_failed_files_of_finished_projects(api, two_stream_file, monkeypatch,
+                                                                                 tmp_path):
+    """One transcript per file: file 1 canceled (or failed), file 2 done, so the project and the batch
+    finished "done". A plain retry_batch runs file 1 again and leaves file 2 alone."""
+    f, calls, gate, fail = str(two_stream_file), [], threading.Event(), []
+
+    def stub(_wav, **_kw):
+        calls.append(_wav)
+        gate.wait(5)
+        if fail and len(calls) == 1:
+            raise RuntimeError("boom")
+        return _stub_transcribe(_wav)
+
+    monkeypatch.setattr(routes.api, "transcribe_track", stub)
+    monkeypatch.setattr(routes.api, "unload_models", lambda: None)
+    done = lambda bid: _until(lambda: actions.get_batch(bid)["status"] == "done")
+    rows = lambda bid: [(i.get("file"), i["status"]) for i in actions.get_batch(bid)["items"]]
+
+    bid = actions.run_batch([f, f], out=str(tmp_path / "a"), formats=["txt"], tracks=[1])["batch_id"]
+    _until(lambda: calls)
+    actions.cancel(bid, file=1)                    # while file 1 runs
+    gate.set()
+    done(bid)
+    assert rows(bid) == [(1, "canceled"), (2, "done")] and len(calls) == 2
+    actions.retry_batch(bid)                       # no projects, no file
+    done(bid)
+    assert rows(bid) == [(1, "done"), (2, "done")] and len(calls) == 3     # only file 1 ran again
+    with pytest.raises(actions.ActionError, match="400: nothing failed or canceled to retry"):
+        actions.retry_batch(bid)
+
+    calls.clear()
+    fail.append(True)                              # file 1 fails, file 2 is done
+    bid = actions.run_batch([f, f], out=str(tmp_path / "b"), formats=["txt"], tracks=[1])["batch_id"]
+    done(bid)
+    assert rows(bid) == [(1, "error"), (2, "done")]
+    fail.clear()
+    actions.retry_batch(bid)
+    done(bid)
+    assert rows(bid) == [(1, "done"), (2, "done")] and len(calls) == 3

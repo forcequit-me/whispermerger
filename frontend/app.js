@@ -1523,7 +1523,9 @@ function pollBatch(id, btn) {
       btn.disabled = false;
       cancelBtn.style.display = "none";
       pauseBtn.style.display = "none"; pauseBtn.textContent = "Pause"; pauseBtn.disabled = false;
-      const failed = b.projects.filter((p) => p.status === "error" || p.status === "canceled").length;
+      // A project that finished with a failed/canceled file counts too: the retry re-runs just those files.
+      const bad = (s) => s === "error" || s === "canceled";
+      const failed = b.projects.filter((p) => bad(p.status) || (p.files || []).some((f) => bad(f.status))).length;
       if (failed) {
         retryBtn.style.display = "";
         retryBtn.disabled = false;
