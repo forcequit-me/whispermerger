@@ -26,7 +26,7 @@ from app.jobs import JobRegistry, JobStatus
 from app.models import InputSource, Track
 from app.pipeline import WAITING, PreparedSource, run_merge_pipeline
 
-DONE_STATES = (JobStatus.DONE, JobStatus.ERROR, JobStatus.CANCELLED)
+DONE_STATES = (JobStatus.DONE, JobStatus.ERROR, JobStatus.CANCELED)
 
 
 class _Ct2Model:
