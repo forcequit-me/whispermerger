@@ -442,8 +442,9 @@ def resume(run_id: str) -> dict:
 def retry_batch(batch_id: str, projects: Optional[list[int]] = None, file: Optional[int] = None) -> dict:
     """Run parts of a batch again, in the same batch: by default every failed or canceled project,
     and every failed or canceled file in the projects that finished (their done files are left
-    alone). While the batch is still running they queue up behind it. Files transcribed before come
-    from the cache. Returns the batch's progress, as get_batch.
+    alone). While the batch is still running they queue up behind it. Right after a cancel, until the
+    track in progress has stopped, it is refused ("the batch is still stopping"): try again in a
+    moment. Files transcribed before come from the cache. Returns the batch's progress, as get_batch.
 
     projects: project numbers from get_batch to run again, finished ones included (default: everything failed or canceled).
     file: run only this finished file again, by its number in get_batch; give its one project in projects (default 1)."""

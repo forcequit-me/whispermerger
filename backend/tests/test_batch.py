@@ -868,3 +868,106 @@ def test_a_batch_paused_then_canceled_runs_when_retried(two_stream_file, tmp_pat
     _wait_status(batch)
     assert batch.status is Status.DONE, (batch.status, batch.paused, batch.gpu_freed)
     assert [f.status for f in batch.projects[0].files] == [Status.CANCELED, Status.DONE]
+
+
+# --- a retry or restart sent while a canceled batch is still stopping ----------------------------
+
+def _stopping(two_stream_file, tmp_path, projects, held, fail=0, pause=False):
+    """Run `projects` and cancel the batch (after a pause, with `pause`) while transcription number
+    `held` (from 1) is held, as word timing is: nothing in it checks for a cancel, so the batch is
+    still stopping until the test sets the returned event. Transcription number `fail` raises."""
+    import threading
+    reg = BatchRegistry()
+    batch = reg.create(projects)
+    inside, release, calls = threading.Event(), threading.Event(), []
+
+    def stub(wav):
+        calls.append(wav)
+        if len(calls) == fail:
+            raise RuntimeError("boom")
+        if len(calls) == held:
+            inside.set()
+            release.wait(5)
+        return _stub(wav)
+
+    reg.set_spec(batch.id, _RunSpec(projects, stub, "folder", str(tmp_path), None))
+    reg.run(batch, lambda: run_batch(batch, projects, stub, output_mode="folder", output_folder=str(tmp_path)))
+    assert inside.wait(5)
+    if pause:
+        reg.pause(batch.id)
+    reg.cancel(batch.id)
+    assert batch.status is Status.RUNNING                 # the held track hasn't stopped yet
+    return reg, batch, release
+
+
+def test_a_retry_while_a_canceled_batch_is_stopping_is_refused_not_lost(two_stream_file, tmp_path):
+    """Project A failed, B is mid-track when the batch is canceled. A retry of A meanwhile used to be
+    accepted, then A was swept up as canceled with B and nothing ran. Now it is refused while the
+    batch is stopping (A untouched), and a retry once it has stopped runs A, also after a pause."""
+    for pause in (False, True):
+        projects = [ProjectInput("A", [_prepared(two_stream_file, "a.mkv", 2.0)]),
+                    ProjectInput("B", [_prepared(two_stream_file, "b.mkv", 2.0)])]
+        reg, batch, release = _stopping(two_stream_file, tmp_path / str(pause), projects, held=2, fail=1,
+                                        pause=pause)
+        assert batch.projects[0].status is Status.ERROR
+        assert not reg.retry(batch.id, [0])
+        assert batch.projects[0].status is Status.ERROR and not batch.rerun_pending
+        release.set()
+        _wait_status(batch)
+        assert batch.status is Status.CANCELED
+        assert [p.status for p in batch.projects] == [Status.ERROR, Status.CANCELED]
+
+        assert reg.retry(batch.id, [0])                   # once it has stopped: runs, not held by the pause
+        _wait_status(batch)
+        assert batch.status is Status.DONE, (batch.status, batch.paused, batch.gpu_freed)
+        assert [p.status for p in batch.projects] == [Status.DONE, Status.CANCELED]
+
+
+def test_a_restart_while_a_canceled_batch_is_stopping_is_refused_not_lost(two_stream_file, tmp_path):
+    """A one-transcript-per-file project is done, the next project is mid-track when the batch is
+    canceled. A restart of a done file meanwhile used to be accepted and then dropped, the file left
+    "queued" for good. Now it is refused while the batch is stopping, and runs once it has stopped."""
+    for pause in (False, True):
+        projects = [_perfile_project(two_stream_file),
+                    ProjectInput("B", [_prepared(two_stream_file, "b.mkv", 2.0)])]
+        reg, batch, release = _stopping(two_stream_file, tmp_path / str(pause), projects, held=3, pause=pause)
+        files = batch.projects[0].files
+        assert not reg.restart_file(batch.id, 0, 0)
+        assert [f.status for f in files] == [Status.DONE, Status.DONE] and not batch.rerun_pending
+        release.set()
+        _wait_status(batch)
+        assert batch.status is Status.CANCELED
+        assert [f.status for f in files] == [Status.DONE, Status.DONE]
+
+        assert reg.restart_file(batch.id, 0, 0)           # once it has stopped: runs
+        _wait_status(batch)
+        assert batch.status is Status.DONE, (batch.status, batch.paused, batch.gpu_freed)
+        assert [f.status for f in files] == [Status.DONE, Status.DONE] and files[0].message != ""
+
+
+def test_a_restart_queued_before_a_batch_cancel_ends_canceled_not_queued(two_stream_file, tmp_path):
+    """A restart sent while the batch runs queues behind it; a batch cancel after it cancels it too.
+    The restarted file of a finished project used to stay "queued" for good."""
+    projects = [_perfile_project(two_stream_file),
+                ProjectInput("B", [_prepared(two_stream_file, "b.mkv", 2.0)])]
+    import threading
+    reg = BatchRegistry()
+    batch = reg.create(projects)
+    inside, release = threading.Event(), threading.Event()
+
+    def stub(wav):
+        if batch.projects[1].status is Status.RUNNING:   # B's track: held
+            inside.set()
+            release.wait(5)
+        return _stub(wav)
+
+    reg.set_spec(batch.id, _RunSpec(projects, stub, "folder", str(tmp_path), None))
+    reg.run(batch, lambda: run_batch(batch, projects, stub, output_mode="folder", output_folder=str(tmp_path)))
+    assert inside.wait(5)
+    assert reg.restart_file(batch.id, 0, 0)               # queued behind B
+    assert batch.rerun_pending == [0]
+    reg.cancel(batch.id)
+    release.set()
+    _wait_status(batch)
+    assert batch.status is Status.CANCELED
+    assert [f.status for f in batch.projects[0].files] == [Status.CANCELED, Status.DONE]

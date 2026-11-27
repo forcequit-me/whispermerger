@@ -1064,6 +1064,33 @@ Tests: 248 pass, 2 new: a batch paused, parked, then canceled, run again by `ret
 one) by `restart_file`, each ends done (each half fails on the old code); a job paused, parked,
 then canceled leaves nothing behind (passes on the old code too). Not run on the real GPU.
 
+## A retry while a canceled batch is still stopping (2026-11-27)
+
+A batch canceled mid-track needs a moment to stop: the track stops at its next chunk, or at the end
+of its word timing, which can take much longer. A `retry-batch` or a restart of one file sent in
+that moment saw the batch still running and was queued, but the canceled run then dropped its
+queue. What the retry had reset was swept up as canceled (a failed project lost its error and
+said "canceled") or, for a restarted file of a finished project, stayed "queued" for good.
+
+- Now it is refused while the batch is stopping (canceled and still running, `stopping` in
+  `batch.py`): `retry` and `restart_file` in `BatchRegistry` return False, and both routes answer
+  409 "the batch is still stopping; try again in a moment" before any other check. So the CLI,
+  the MCP tool and the app's per-row Restart buttons give that message; the app's batch Retry
+  button only appears once the batch has ended. A retry once it has stopped runs as before, also
+  after a pause then a cancel.
+- Refusing was chosen over keeping the retry for later: while the batch stops, the rows being
+  canceled still read "running", so a plain retry couldn't pick them yet and a retry of them is
+  refused as still running; keeping it the same as a retry a moment later would mean postponing
+  those choices until the run stops.
+- Found while checking: a re-run queued while the batch ran, then a batch cancel, could leave rows
+  "queued" too (a restarted file of a finished project, or a project waiting behind a re-run). The
+  canceled run now marks what it drops canceled (`_cancel_queued`).
+
+Tests: 252 pass, 4 new (each fails on the old code): a retry and a restart while the batch is
+stopping are refused and run once it has stopped, with and without a pause first; a restart queued
+before a batch cancel ends canceled; and the same refusal through the CLI, MCP and the routes. Not
+run on the real GPU.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

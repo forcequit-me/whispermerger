@@ -912,3 +912,42 @@ def test_an_ended_run_shows_no_pause_and_the_wording_fits_every_run(api, two_str
     _until(lambda: actions.get_batch(bid)["status"] == "canceled")
     assert "paused" not in actions.get_batch(bid)
     assert api.get(f"/api/batch/{bid}").json()["paused"] is False
+
+
+def test_a_retry_while_a_canceled_batch_is_stopping_is_refused(api, two_stream_file, monkeypatch, tmp_path):
+    """Right after a cancel, while the track in progress is still finishing, every way to run part of
+    the batch again (CLI, MCP, the app's routes) is refused with the same message, and nothing is
+    left queued; once the batch has stopped, a retry runs."""
+    from mcp.server.mcpserver.exceptions import ToolError
+    f, calls, gate = str(two_stream_file), [], threading.Event()
+
+    def stub(_wav, **_kw):                         # project 2's track is held, as word timing is
+        calls.append(_wav)
+        if len(calls) == 2:
+            gate.wait(5)
+        return _stub_transcribe(_wav)
+
+    monkeypatch.setattr(routes.api, "transcribe_track", stub)
+    monkeypatch.setattr(routes.api, "unload_models", lambda: None)
+    rows = lambda bid: [(i["project"], i.get("file"), i["status"]) for i in actions.get_batch(bid)["items"]]
+    bid = actions.run_batch([f], out=str(tmp_path), formats=["txt"], tracks=[1],
+                            projects=[{"paths": [f], "per_file": False, "name": "Second"}])["batch_id"]
+    _until(lambda: len(calls) == 2)
+    actions.cancel(bid)
+    msg = "the batch is still stopping; try again in a moment"
+    for retry in (lambda: actions.retry_batch(bid), lambda: actions.retry_batch(bid, projects=[1]),
+                  lambda: actions.retry_batch(bid, file=1)):
+        with pytest.raises(actions.ActionError, match=f"409: {msg}"):
+            retry()
+    for args in ({"batch_id": bid}, {"batch_id": bid, "file": 1}):
+        with pytest.raises(ToolError, match=msg):
+            _mcp("retry_batch", args)
+    for path, body in ((f"/api/batch/{bid}/retry", {}), (f"/api/batch/{bid}/project/0/file/0/restart", None)):
+        r = api.post(path, json=body)              # the app's Retry and Restart buttons
+        assert r.status_code == 409 and r.json()["detail"] == msg
+    gate.set()
+    _until(lambda: actions.get_batch(bid)["status"] == "canceled")
+    assert rows(bid) == [(1, 1, "done"), (2, None, "canceled")]
+    actions.retry_batch(bid)                       # once it has stopped: the canceled project runs
+    _until(lambda: actions.get_batch(bid)["status"] == "done")
+    assert rows(bid) == [(1, 1, "done"), (2, None, "done")] and len(calls) == 3

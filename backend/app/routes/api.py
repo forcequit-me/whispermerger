@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from .. import benchmark, modelstore
-from ..batch import ProjectInput, Status, _RunSpec, run_batch
+from ..batch import STOPPING, ProjectInput, Status, _RunSpec, run_batch, stopping
 from ..diarize import detect_speech, transcribe_regions
 from ..export import ExportOptions, pad_segments, to_csv, to_json, to_srt, to_txt
 from ..extract import compute_peaks, concat_wavs, extract_clip, extract_sample, extract_track
@@ -907,9 +907,13 @@ def save_batch_result(request: Request, batch_id: str, pidx: int, body: MergedOu
 @router.post("/batch/{batch_id}/project/{pidx}/file/{fidx}/restart")
 def restart_batch_file(request: Request, batch_id: str, pidx: int, fidx: int) -> dict:
     """Re-run one finished file. Queues it to run when the GPU frees up (or starts a worker if
-    the batch is idle); only files that already finished can be restarted."""
+    the batch is idle); only files that already finished can be restarted, and not while a
+    canceled batch is still stopping."""
+    batch = request.app.state.batches.get(batch_id)
+    if batch is not None and stopping(batch):
+        raise HTTPException(409, STOPPING)
     if not request.app.state.batches.restart_file(batch_id, pidx, fidx):
-        raise HTTPException(409, "cannot restart that file")
+        raise HTTPException(409, STOPPING if batch is not None and stopping(batch) else "cannot restart that file")
     return {"restarting": True}
 
 
@@ -918,10 +922,13 @@ def retry_batch(request: Request, batch_id: str,
                 body: RetryRequest | None = None) -> BatchStatusOut:
     """Re-run projects in a batch (default: all errored/canceled ones, and the projects that
     finished with an errored/canceled file, where only those files run again), reusing the same
-    batch + its persisted run spec. Caching makes already-transcribed files instant."""
+    batch + its persisted run spec. Caching makes already-transcribed files instant. Refused while
+    a canceled batch is still stopping (its rows still read running)."""
     batch = request.app.state.batches.get(batch_id)
     if batch is None:
         raise HTTPException(404, "unknown batch")
+    if stopping(batch):
+        raise HTTPException(409, STOPPING)
     if body and body.projects:
         indices = [i for i in body.projects if 0 <= i < len(batch.projects)]
     else:
@@ -936,7 +943,7 @@ def retry_batch(request: Request, batch_id: str,
         raise HTTPException(409, f'project {busy[0] + 1} "{p.name}" is still {p.status.value}: '
                                  "wait for it to finish, or cancel it first")
     if not request.app.state.batches.retry(batch_id, indices):
-        raise HTTPException(409, "batch cannot be retried")
+        raise HTTPException(409, STOPPING if stopping(batch) else "batch cannot be retried")
     return _batch_out(batch)
 
 

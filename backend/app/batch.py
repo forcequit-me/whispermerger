@@ -581,6 +581,29 @@ def run_batch(
                   options=options, is_cancelled=lambda: _gate(batch), batch=batch)
 
 
+STOPPING = "the batch is still stopping; try again in a moment"
+
+
+def stopping(batch: BatchStatus) -> bool:
+    """Canceled, and the run hasn't stopped yet (the track in progress stops at its next chunk, or
+    at the end of its word timing). A retry or restart now is refused: the canceled run would
+    sweep it up or drop it."""
+    return batch.status is Status.RUNNING and batch.cancelled
+
+
+def _cancel_queued(ps: ProjectStatus) -> None:
+    """A re-run that was queued when the batch was canceled is canceled with it, not left queued."""
+    if ps.status is Status.QUEUED:
+        _mark_canceled(ps)
+    queued = [fs for fs in ps.files if fs.status is Status.QUEUED]   # a restarted file of a finished project
+    for fs in queued:
+        fs.status = Status.CANCELED
+        fs.finished_at = time.time()
+        fs.message = _canceled(fs)
+    if queued:
+        _recalc_project(ps)
+
+
 def _ended_canceled(batch: BatchStatus) -> bool:
     """A finished batch reads "canceled" when it was canceled, or when every project in it was."""
     return batch.cancelled or bool(batch.projects) and all(p.status is Status.CANCELED for p in batch.projects)
@@ -717,7 +740,7 @@ class BatchRegistry:
         """Re-run ONE finished file. The file goes back to QUEUED and its project is queued for a
         re-run that processes only the still-QUEUED files; if the batch is idle a worker starts.
         Only a finished file (done/failed/canceled) can be restarted — that avoids racing the
-        in-flight pass and double-exporting."""
+        in-flight pass and double-exporting — and not while a canceled batch is still stopping."""
         batch = self.get(batch_id)
         spec = self._specs.get(batch_id)
         if batch is None or spec is None or not (0 <= pindex < len(batch.projects)):
@@ -725,7 +748,7 @@ class BatchRegistry:
         ps = batch.projects[pindex]
         if not (0 <= findex < len(ps.files)):
             return False
-        if ps.files[findex].status not in (Status.DONE, Status.ERROR, Status.CANCELED):
+        if ps.files[findex].status not in (Status.DONE, Status.ERROR, Status.CANCELED) or stopping(batch):
             return False
         self._reset_fs(ps.files[findex])
         if ps.status is Status.CANCELED:         # a canceled project's cancel would cancel the file again
@@ -796,6 +819,9 @@ class BatchRegistry:
                     spec = self._specs.get(batch.id)
                     with batch.lock:
                         pending = [] if (spec is None or batch.cancelled) else batch.rerun_pending
+                        if batch.cancelled:
+                            for i in batch.rerun_pending:
+                                _cancel_queued(batch.projects[i])
                         batch.rerun_pending = []
                         if not pending:
                             # Finalize under the lock so a re-run request can't slip in after we've
@@ -813,10 +839,11 @@ class BatchRegistry:
     def retry(self, batch_id: str, indices: list[int]) -> bool:
         """Re-run the given project indices, reusing the same BatchStatus so the UI keeps polling
         one batch. If the batch is still running, the indices are queued and run when the GPU frees
-        up; if idle, a worker starts immediately. False only on unknown batch / bad indices."""
+        up; if idle, a worker starts immediately. False on unknown batch / bad indices, and while
+        the batch is canceled but still stopping (see `stopping`)."""
         batch = self.get(batch_id)
         spec = self._specs.get(batch_id)
-        if batch is None or spec is None:
+        if batch is None or spec is None or stopping(batch):
             return False
         if not all(0 <= i < len(batch.projects) for i in indices):
             return False
