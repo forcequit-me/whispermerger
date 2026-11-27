@@ -1102,9 +1102,9 @@ was looked at, and the park only ended on Resume or a whole-batch cancel.
 - `_gate` no longer parks while the project or file in progress is canceled, and a park ends when
   it is: the item stops at once ("canceled" with how many tracks were transcribed, nothing written,
   no further track), then the batch parks again before anything else starts.
-- The project's own check comes after the checkpoint where it was before it (a file between
-  tracks in `run_per_file_pipeline`, and while waiting for the GPU in `on_chunk`), so a park ended
-  by its cancel is seen.
+- A file's own cancel is now checked after the checkpoint instead of before it (between tracks in
+  `run_per_file_pipeline`, and while waiting for the GPU in `on_chunk`), so a park ended by that
+  cancel is seen.
 - With nothing left to do, the batch ends instead of parking: the end of a one-transcript-per-file
   project and the end of the queue check for a cancel without parking. So a pause asked for
   during the last track of such a project now lets the batch end "done"; a pause before the next
@@ -1118,6 +1118,14 @@ Tests: 256 pass, 4 new in `test_pause_gpu_turn.py` (each fails on the old code):
 project canceled while the batch is parked (the file: the batch stays paused and the next file runs
 after Resume; the project: the batch ends), the last file canceled while the batch is pausing ends
 the batch, and a joined project canceled while pausing after its first track stops at once.
+Live on the real GPU (large-v3, own server and cache), through the CLI: `cancel --file 1` while
+parked landed 0.7 s later (polling included), the batch stayed paused and the next file started
+only after `resume`; `cancel --project 1` of a joined project while parked ended the project and
+the batch 0.6 s later; a joined project of the 14 min file canceled while pausing, during word
+timing, ended "canceled" when that track ended (9 s) without parking. In the app (Edge, headless,
+muted), a file's cancel while "Paused · GPU released" read "canceled · 1 of 2 tracks transcribed"
+0.2 s after the click, the batch clock stayed frozen and the next file waited for Resume. While
+parked before it, that next file's row reads "running · paused", as with any pause between files.
 
 ## The batch clock on a re-run (2026-11-27)
 
@@ -1130,9 +1138,10 @@ re-run's clock counts up live from its start, leaves out only its own pauses and
 working time, as `elapsed` in `get_batch` (CLI and MCP) and the app's "elapsed" show. It is the
 re-run's time, not the total over all runs, as the per-project and per-file clocks already were.
 
-Tests: 1 new in `test_batch.py` (fails on the old code): a batch paused for a while, canceled,
+Tests: 257 pass, 1 new in `test_batch.py` (fails on the old code): a batch paused for a while, canceled,
 then run again by a retry and (another one) by a restart, counts while the re-run goes and ends
-on the re-run's time.
+on the re-run's time. Live (own server): a batch paused 5 s, canceled, then retried read 0.0, 0.5,
+1.0 ... 6.5 s during the retry, beside the project's "done in 7s".
 
 ## A canceled run left the last run's transcript on screen (2026-11-27)
 
@@ -1141,7 +1150,9 @@ and its Export button were still showing below the progress line, easy to take f
 run's result. The result panel was shown when a run finished but never hidden. Now a new run hides
 it as it starts (`runPipeline` in `app.js`), and it is shown again only when that run is done, with
 its own transcript. Label Track had the same thing and gets the same line (`runTranscribe` in
-`labeltrack.js`). Nothing else on the page changes.
+`labeltrack.js`). Nothing else on the page changes. Checked in the app (Edge, headless, muted):
+a finished run's transcript, then a second run canceled, leaves only "canceled" on screen. Label
+Track was not run in the browser (it needs regions marked on a waveform).
 
 ## A refused batch button says why in plain words (2026-11-27)
 
@@ -1151,6 +1162,9 @@ small helper in `app.js`, `errorText`, takes the sentence from `detail` (or the 
 is none), and those buttons use it. The per-row Cancel buttons (a project, a file) ignored a refusal
 and stayed on "Canceling…"; they now show "Cancel failed: ..." the same way and can be pressed
 again. A refusal there only happens for an unknown batch, for example after the server restarted.
+Checked in the app against a real server restarted mid-batch: "Restart failed: cannot restart that
+file" and "Cancel failed: unknown batch / project / file". The batch Retry button was not pressed
+into a refusal (it uses the same helper).
 
 Still raw where a request fails elsewhere: starting a batch, a run on Transcribe & Merge or Label
 Track, the folder picker and scan, and Export.
