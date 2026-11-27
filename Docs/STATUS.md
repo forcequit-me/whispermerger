@@ -1182,12 +1182,16 @@ raw.
 
 In `test_pause_gpu_turn.py`, `_until` now waits up to 10 seconds by default (was 3), after one test
 failed once on a cold start. No call there waits for something that should not happen, and calls
-with their own limit keep it.
+with their own limit keep it, except the 3-second one in
+`test_a_joined_project_canceled_while_the_batch_is_pausing_stops_at_once`, which is 10 seconds too.
 
 Tests: 257 pass in about 73 seconds, in two of three full runs after the change. In the other,
-`test_an_ended_run_shows_no_pause_and_the_wording_fits_every_run` (`test_actions.py`, not changed
-here) failed; it did not fail again in 23 further runs of that file, and which check failed was not
-recorded. Both scripts pass `node --check`; the pages were not opened in a browser.
+`test_an_ended_run_shows_no_pause_and_the_wording_fits_every_run` (`test_actions.py`) failed; it
+did not fail again in 23 further runs of that file. It had a race in the test: it paused before the
+run had reached the held transcription, so the run could park at once and report "GPU released"
+where the test expects "pausing". This was confirmed by forcing it, and fixed in 31a6479. Which
+check failed in that one run was not recorded, so the link is very likely but not proven. Both
+scripts pass `node --check`; the pages were not opened in a browser.
 
 ## Partial / outstanding (v1 polish)
 
