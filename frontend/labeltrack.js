@@ -599,6 +599,11 @@ function poll(jobId, btn) {
     let p;
     try {
       const r = await window.fetchTO(`/api/progress/${jobId}`);
+      if (r.status >= 400 && r.status < 500) {         // refused for good (e.g. "unknown job" after a server restart)
+        const gone = `the server no longer knows this run (${await window.errorText(r)}), probably because it restarted · press Transcribe labeled regions to run it again`;
+        $("#label-progress-msg").textContent = $("#label-status").textContent = gone;
+        finish(); return;
+      }
       if (!r.ok) throw new Error(await window.errorText(r));
       p = await r.json();
       fails = 0;

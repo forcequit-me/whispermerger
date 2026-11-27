@@ -943,6 +943,10 @@ function pollJob(jobId, runBtn) {
     let p;
     try {
       const r = await fetchTO(`/api/progress/${jobId}`);
+      if (r.status >= 400 && r.status < 500) {         // refused for good (e.g. "unknown job" after a server restart)
+        $("#progress-msg").textContent = `the server no longer knows this run (${await errorText(r)}), probably because it restarted · press Transcribe & Merge to run it again`;
+        finish(); return;
+      }
       if (!r.ok) throw new Error(await errorText(r));
       p = await r.json();
       fails = 0;
@@ -1515,10 +1519,19 @@ function pollBatch(id, btn) {
     pauseBtn.textContent = paused ? "Resuming…" : "Pausing… (current track finishes)";
     try { await fetch(`/api/batch/${id}/${action}`, { method: "POST" }); } catch {}
   };
+  const finish = () => {
+    btn.disabled = false;
+    cancelBtn.style.display = "none";
+    pauseBtn.style.display = "none"; pauseBtn.textContent = "Pause"; pauseBtn.disabled = false;
+  };
   const tick = async () => {
     let b;
     try {
       const r = await fetchTO(`/api/batch/${id}`);
+      if (r.status >= 400 && r.status < 500) {         // refused for good (e.g. "unknown batch" after a server restart)
+        $("#batch-err").textContent = `The server no longer knows this batch (${await errorText(r)}), probably because it restarted. Press Run batch to run it again.`;
+        finish(); return;
+      }
       if (!r.ok) throw new Error(await errorText(r));
       b = await r.json();
     } catch (e) { setTimeout(tick, 1500); return; }   // transient — keep waiting, don't die
@@ -1529,9 +1542,7 @@ function pollBatch(id, btn) {
     pauseBtn.textContent = b.paused ? "Resume" : "Pause";
     if (b.status === "done" || b.status === "canceled") {
       refreshCacheStats();
-      btn.disabled = false;
-      cancelBtn.style.display = "none";
-      pauseBtn.style.display = "none"; pauseBtn.textContent = "Pause"; pauseBtn.disabled = false;
+      finish();
       // A project that finished with a failed/canceled file counts too: the retry re-runs just those files.
       const bad = (s) => s === "error" || s === "canceled";
       const failed = b.projects.filter((p) => bad(p.status) || (p.files || []).some((f) => bad(f.status))).length;
@@ -2168,13 +2179,16 @@ $("#bench-run").onclick = async () => {
   const { job_id } = await r.json();
   run.disabled = true; cancel.style.display = ""; cancel.disabled = false;
   cancel.onclick = () => { cancel.disabled = true; fetch(`/api/cancel/${job_id}`, { method: "POST" }); };
-  let p;
+  let p, gone = "";
   do {
     await new Promise((res) => setTimeout(res, 700));
-    p = await (await fetchTO(`/api/progress/${job_id}`)).json();
+    const pr = await fetchTO(`/api/progress/${job_id}`);
+    if (pr.status >= 400 && pr.status < 500) { gone = await errorText(pr); break; }   // e.g. "unknown job" after a server restart
+    p = await pr.json();
     status.textContent = p.message || p.status;
   } while (p.status === "queued" || p.status === "running");
   run.disabled = false; cancel.style.display = "none";
+  if (gone) { status.textContent = `the server no longer knows this benchmark (${gone}), probably because it restarted · run it again`; return; }
   // A canceled or failed run still shows the models it timed before it stopped.
   const { expected, results } = await (await fetch(`/api/benchmark/${job_id}`)).json();
   const stopped = p.status === "error" ? "error: " + p.error : p.status === "canceled" ? "canceled" : "";
