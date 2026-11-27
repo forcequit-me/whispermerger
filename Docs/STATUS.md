@@ -1119,6 +1119,21 @@ project canceled while the batch is parked (the file: the batch stays paused and
 after Resume; the project: the batch ends), the last file canceled while the batch is pausing ends
 the batch, and a joined project canceled while pausing after its first track stops at once.
 
+## The batch clock on a re-run (2026-11-27)
+
+After a Retry, or a Restart of one file, the batch's clock read 0 s while the re-run went, and
+after a batch that had been paused it could stay at 0 s at the end too ("0s elapsed" beside a
+file "done in 7s"). A re-run set a new start time but kept the earlier run's end time (so the
+clock read the end before the start, shown as 0) and that run's paused time (taken off again).
+`BatchRegistry.run` now starts each run's clock afresh: start now, no end, no paused time. So a
+re-run's clock counts up live from its start, leaves out only its own pauses and ends on its own
+working time, as `elapsed` in `get_batch` (CLI and MCP) and the app's "elapsed" show. It is the
+re-run's time, not the total over all runs, as the per-project and per-file clocks already were.
+
+Tests: 1 new in `test_batch.py` (fails on the old code): a batch paused for a while, canceled,
+then run again by a retry and (another one) by a restart, counts while the re-run goes and ends
+on the re-run's time.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

@@ -822,7 +822,10 @@ class BatchRegistry:
         """Run `work` on a background thread, then keep draining any re-runs requested while it
         ran (so a single worker, single GPU, processes everything in sequence)."""
         def _target() -> None:
+            # The batch clock is this run's (a retry or restart is a new run): not the earlier
+            # run's end, nor its paused time.
             batch.started_at = time.time()
+            batch.finished_at = batch.paused_total = batch.pause_started = 0.0
             batch.status = Status.RUNNING
             try:
                 work()

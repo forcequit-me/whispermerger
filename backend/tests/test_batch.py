@@ -971,3 +971,42 @@ def test_a_restart_queued_before_a_batch_cancel_ends_canceled_not_queued(two_str
     _wait_status(batch)
     assert batch.status is Status.CANCELED
     assert [f.status for f in batch.projects[0].files] == [Status.CANCELED, Status.DONE]
+
+
+# --- the batch clock on a re-run -----------------------------------------------------------------
+
+def test_a_rerun_batch_clock_counts_that_run(two_stream_file, tmp_path):
+    """Seen live: after a pause, then a cancel, a restarted file's batch read "0s elapsed" (the earlier
+    run's pause was taken off again) and a retry's clock read 0 until it ended (the earlier run's end
+    was kept). Now the clock counts up from the re-run's start, less only its own pause."""
+    import threading
+    import time as _t
+    for rerun in ("retry", "restart"):
+        reg = BatchRegistry()
+        proj = _perfile_project(two_stream_file)
+        batch = reg.create([proj])
+        release = threading.Event()
+
+        def held(wav):                                     # the re-run's tracks wait for the test
+            release.wait(5)
+            return _stub(wav)
+
+        reg.pause(batch.id)
+        reg.set_spec(batch.id, _RunSpec([proj], held, "folder", str(tmp_path / rerun), None))
+        reg.run(batch, lambda: run_batch(batch, [proj], _stub, output_mode="folder",
+                                         output_folder=str(tmp_path / rerun)))
+        _until_true(lambda: batch.gpu_freed)
+        _t.sleep(0.6)                                      # a long pause in the first run
+        reg.cancel(batch.id)
+        _wait_status(batch)
+        assert batch.status is Status.CANCELED
+
+        t0 = _t.time()
+        assert reg.retry(batch.id, [0]) if rerun == "retry" else reg.restart_file(batch.id, 0, 0)
+        _t.sleep(0.3)
+        assert batch.status is Status.RUNNING and batch.elapsed >= 0.2, (rerun, batch.elapsed)
+        release.set()
+        _wait_status(batch)
+        took = _t.time() - t0
+        assert batch.status is Status.DONE
+        assert 0.25 <= batch.elapsed <= took + 0.05, (rerun, batch.elapsed, took)
