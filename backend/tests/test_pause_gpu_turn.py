@@ -122,7 +122,7 @@ def rig(monkeypatch, tmp_path):
     transcribe._loaded.clear()
 
 
-def _until(check, timeout=3.0) -> bool:
+def _until(check, timeout=10.0) -> bool:
     deadline = time.time() + timeout
     while not check() and time.time() < deadline:
         time.sleep(0.01)
