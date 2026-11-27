@@ -464,12 +464,13 @@ def test_a_batch_is_controlled_by_project_and_file_number(api, two_stream_file, 
     actions.retry_batch(bid, projects=[1])
     done(bid)
 
-    # one merged project: cancel it alone (the batch itself still ends "done"), retry what was canceled
+    # one merged project: cancel it alone (its only project canceled, so the batch ends "canceled"),
+    # retry what was canceled
     gate.clear()
     bid = actions.run_batch([f], out=str(tmp_path / "b"), formats=["txt"], per_file=False)["batch_id"]
     assert actions.cancel(bid, project=1) == {"canceling": True}
     gate.set()
-    done(bid)
+    done(bid, "canceled")
     assert rows(bid) == [(1, None, "canceled")]
     actions.retry_batch(bid)
     done(bid)
@@ -773,7 +774,7 @@ def test_a_run_canceled_part_way_says_how_far_it_got(api, two_stream_file, monke
     _until(lambda: len(calls) == 2)
     actions.cancel(bid, file=1)
     gate.set()
-    _until(lambda: actions.get_batch(bid)["status"] == "done")
+    _until(lambda: actions.get_batch(bid)["status"] == "canceled")      # its only file was canceled
     item = actions.get_batch(bid)["items"][0]
     assert (item["status"], item["message"]) == ("canceled", kept.format(2))
 

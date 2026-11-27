@@ -659,7 +659,9 @@ def get_batch(batch_id: str) -> dict:
     "done" count source files, as run_batch does: a project joined into one transcript is one item
     that counts as every file in it. A canceled item that had finished some of its tracks says how
     many, e.g. "canceled · 1 of 2 tracks transcribed, kept for a retry": nothing of it is written,
-    but retry_batch reuses them. When the result has "question", the batch has stopped to ask
+    but retry_batch reuses them. A finished batch is "canceled" when it was canceled or every project
+    in it was, and a one-transcript-per-file project is "canceled" when all its files were; a mix
+    is "done". When the result has "question", the batch has stopped to ask
     about the file named in it and stays put until you call answer."""
     b = _api("GET", f"/api/batch/{batch_id}")
     files, total, done = [], 0, 0

@@ -910,8 +910,24 @@ Three rough edges from a live test on the real GPU.
   anywhere failed or was canceled ("nothing failed or canceled to retry"). The app's Retry button
   uses the same route and now counts those projects too.
 
-Tests: 232 pass, 1 new: a canceled file, then a failed one, each run again by a plain
-`retry_batch` while the done file isn't.
+- **Everything canceled reads "canceled".** A batch whose only project was canceled with
+  `cancel --project` ended "done", while a whole-batch cancel ended "canceled". Now a finished
+  batch is "canceled" when it was canceled or every project in it ended canceled
+  (`_ended_canceled`, used where `BatchRegistry.run` finishes the batch). One level down, a
+  one-transcript-per-file project whose files all ended canceled, each on its own, is "canceled"
+  (its message is still the tally, e.g. "2 canceled"). A mix stays "done". Retry and restart
+  work after it as before (they start the worker whenever the batch isn't running), the `--wait`
+  loop already stopped on "canceled", and the app treats a canceled batch as ended, as it did.
+- **Restart a file of a canceled project.** Found while checking the above, and older than it:
+  restarting one file of a project canceled as a whole did nothing, because the project's cancel
+  stayed set and canceled the file again at once. `restart_file` now clears it when the project
+  is canceled.
+
+Tests: 235 pass, 4 new: a canceled file, then a failed one, each run again by a plain
+`retry_batch` while the done file isn't; batches whose projects were all canceled, some
+canceled, then retried; a per-file project with all its files canceled, then one restarted, and
+a mix; a file of a project canceled as a whole restarted. Two older tests now expect "canceled"
+for a batch whose only project, or only file, was canceled.
 
 ## Partial / outstanding (v1 polish)
 

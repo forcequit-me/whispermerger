@@ -474,6 +474,10 @@ def _process_project(
             # One source: the merged timeline is that file's, so playback lines up.
             ps.source_path = project.prepared[0].path if len(project.prepared) == 1 else None
         ps.finished_at = time.time()
+        if ps.files and all(f.status is Status.CANCELED for f in ps.files):   # each canceled on its own
+            ps.message = _file_summary(ps)
+            ps.status = Status.CANCELED
+            return
         ps.progress = 1.0
         ps.message = (_file_summary(ps) if project.per_file else
                       ("reused saved result" if reused_since(tally) else f"done in {ps.elapsed:.0f}s") + _lang(merged))
@@ -560,6 +564,11 @@ def run_batch(
     _run_projects(list(zip(projects, batch.projects)), transcribe_fn,
                   output_mode=output_mode, output_folder=output_folder,
                   options=options, is_cancelled=lambda: _gate(batch), batch=batch)
+
+
+def _ended_canceled(batch: BatchStatus) -> bool:
+    """A finished batch reads "canceled" when it was canceled, or when every project in it was."""
+    return batch.cancelled or bool(batch.projects) and all(p.status is Status.CANCELED for p in batch.projects)
 
 
 def _set(ps: ProjectStatus, frac: float, msg: str) -> None:
@@ -702,6 +711,8 @@ class BatchRegistry:
         if ps.files[findex].status not in (Status.DONE, Status.ERROR, Status.CANCELED):
             return False
         self._reset_fs(ps.files[findex])
+        if ps.status is Status.CANCELED:         # a canceled project's cancel would cancel the file again
+            ps.cancel_requested = False
         start = False
         with batch.lock:
             if pindex not in batch.rerun_pending:
@@ -772,13 +783,13 @@ class BatchRegistry:
                             # Finalize under the lock so a re-run request can't slip in after we've
                             # decided to stop (it would see RUNNING, enqueue, and never get drained).
                             batch.finished_at = time.time()
-                            batch.status = Status.CANCELED if batch.cancelled else Status.DONE
+                            batch.status = Status.CANCELED if _ended_canceled(batch) else Status.DONE
                             return
                     self._run_indices(batch, spec, pending)
             finally:
                 if batch.status is Status.RUNNING:   # safety net if work() raised unexpectedly
                     batch.finished_at = time.time()
-                    batch.status = Status.CANCELED if batch.cancelled else Status.DONE
+                    batch.status = Status.CANCELED if _ended_canceled(batch) else Status.DONE
         threading.Thread(target=_target, daemon=True).start()
 
     def retry(self, batch_id: str, indices: list[int]) -> bool:

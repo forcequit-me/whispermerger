@@ -317,7 +317,8 @@ stay as they are. `cancel`, `pause` and `resume` take a job id or a batch id. A 
 `retry-batch` runs again every failed or canceled project, and every failed or canceled file in
 the projects that finished, leaving their done files alone (the app's Retry button does the same).
 A project that is still running or queued can't be retried (in the app too): wait for it, or
-cancel it first.
+cancel it first. A finished batch reads "canceled" when it was canceled or every project in it
+was, and a one-transcript-per-file project when all its files were; a mix reads "done".
 `files` and `done` in `get-batch` count source files, as `run-batch` does: a project joined into
 one transcript is one item that counts as every file in it. A file that is canceled while it is
 being transcribed is not written, whichever track it was on; the track that was running still

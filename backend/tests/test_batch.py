@@ -694,3 +694,74 @@ def test_a_retried_row_counts_its_tracks_again(two_stream_file, tmp_path):
     assert reg.retry(batch.id, [0])
     _wait_status(batch)
     assert batch.projects[0].status is Status.DONE and batch.projects[0].transcribed == 2
+
+
+# --- a finished batch or project where everything was canceled reads "canceled" -------------------
+
+def _ran(reg, batch, projects, stub=_stub, tmp_path=None):
+    reg.set_spec(batch.id, _RunSpec(projects, stub, "folder", str(tmp_path), None))
+    reg.run(batch, lambda: run_batch(batch, projects, stub, output_mode="folder", output_folder=str(tmp_path)))
+    _wait_status(batch)
+    return batch
+
+
+def test_a_batch_whose_projects_were_all_canceled_reads_canceled(two_stream_file, tmp_path):
+    def run(n, cancel_at):
+        reg = BatchRegistry()
+        projects = [ProjectInput(f"P{k}", [_prepared(two_stream_file, f"{k}.mkv", 2.0)]) for k in range(n)]
+        batch = reg.create(projects)
+        calls = []
+
+        def stub(wav):                               # cancel project k during its own track
+            calls.append(wav)
+            if len(calls) - 1 in cancel_at:
+                reg.cancel_project(batch.id, len(calls) - 1)
+            return _stub(wav)
+
+        return reg, _ran(reg, batch, projects, stub, tmp_path / str(len(cancel_at)))
+
+    reg, batch = run(1, {0})                          # its only project canceled
+    assert batch.status is Status.CANCELED
+    assert run(2, {0, 1})[1].status is Status.CANCELED
+    assert run(2, {0})[1].status is Status.DONE       # a mix stays "done"
+
+    assert reg.retry(batch.id, [0])                   # a retry after it still works
+    _wait_status(batch)
+    assert batch.status is Status.DONE and batch.projects[0].status is Status.DONE
+
+
+def test_a_per_file_project_whose_files_were_all_canceled_reads_canceled(two_stream_file, tmp_path):
+    reg = BatchRegistry()
+    proj = _perfile_project(two_stream_file)
+    batch = reg.create([proj])
+    reg.cancel_file(batch.id, 0, 0)
+    reg.cancel_file(batch.id, 0, 1)
+    _ran(reg, batch, [proj], tmp_path=tmp_path)
+    ps = batch.projects[0]
+    assert (ps.status, ps.message) == (Status.CANCELED, "2 canceled")
+    assert batch.status is Status.CANCELED            # and so is the batch, its only project
+
+    assert reg.restart_file(batch.id, 0, 1)           # a restart of one file still works
+    _wait_status(batch)
+    assert [f.status for f in ps.files] == [Status.CANCELED, Status.DONE]
+    assert ps.status is Status.DONE and batch.status is Status.DONE     # a mix: "done"
+
+    reg = BatchRegistry()                             # one canceled, one done: "done", as before
+    batch = reg.create([proj])
+    reg.cancel_file(batch.id, 0, 0)
+    _ran(reg, batch, [proj], tmp_path=tmp_path / "mix")
+    assert batch.projects[0].status is Status.DONE and batch.status is Status.DONE
+
+
+def test_a_file_of_a_project_canceled_as_a_whole_can_be_restarted(two_stream_file, tmp_path):
+    """The project's cancel used to stay set, so the restarted file was canceled again at once."""
+    reg = BatchRegistry()
+    proj = _perfile_project(two_stream_file)
+    batch = reg.create([proj])
+    reg.cancel_project(batch.id, 0)
+    _ran(reg, batch, [proj], tmp_path=tmp_path)
+    assert batch.status is Status.CANCELED
+    assert reg.restart_file(batch.id, 0, 0)
+    _wait_status(batch)
+    assert [f.status for f in batch.projects[0].files] == [Status.DONE, Status.CANCELED]
+    assert batch.projects[0].status is Status.DONE and batch.status is Status.DONE
