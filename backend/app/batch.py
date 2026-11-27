@@ -23,7 +23,7 @@ from .export import ExportOptions, export_all, pad_segments
 from .merge import MergeOptions
 from .models import MergedOutput
 from .pipeline import WAITING, PreparedSource, run_merge_pipeline, run_per_file_pipeline
-from .jobs import WAITING_ANSWER
+from .jobs import WAITING_ANSWER, canceled_message
 from .transcribe import asking, cache_tally, holding_gpu_turn, reused_since
 
 TranscribeFn = Callable[[str], dict]
@@ -73,6 +73,7 @@ class FileStatus:
     weight: float = 0.0                          # audio seconds × selected tracks (progress weight)
     track: int = 0                               # 1-based index of the track currently transcribing
     tracks: int = 0                              # total selected tracks in this file
+    transcribed: int = 0                         # tracks finished (and cached) in this run
     extract_seconds: float = 0.0                 # real read + ffmpeg time (incl. when prefetched behind GPU)
     output_dir: Optional[str] = None
     error: Optional[str] = None
@@ -100,6 +101,8 @@ class ProjectStatus:
     message: str = ""
     weight: float = 0.0                          # total audio seconds × tracks (for batch weighting)
     sources: int = 0                             # how many source files it has
+    tracks: int = 0                              # selected tracks over all its files
+    transcribed: int = 0                         # tracks finished (and cached) in this run, joined projects
     output_dir: Optional[str] = None
     error: Optional[str] = None
     started_at: float = 0.0
@@ -321,7 +324,14 @@ def _process_project(
     ps.progress = 0.0
     ps.status = Status.RUNNING
     options = project.options or options
-    transcribe_fn = project.transcribe_fn or transcribe_fn
+    run_fn = project.transcribe_fn or transcribe_fn
+    row = [ps]                                   # the row a finished track counts for (a file, per-file)
+
+    def transcribe_fn(wav: str) -> dict:
+        out = run_fn(wav)
+        row[0].transcribed += 1                  # it returned, so it is in the cache
+        return out
+
     ex = project.export or ExportOptions()
     tally = cache_tally()                        # to tell a reused result from a fresh run
 
@@ -373,6 +383,7 @@ def _process_project(
 
             def on_track(i: int, j: int, total_tracks: int, speaker: str) -> None:
                 fs = files[i]
+                row[0] = fs
                 fs.track = j + 1
                 fs.tracks = total_tracks
                 fs.progress = j / max(total_tracks, 1)
@@ -434,7 +445,7 @@ def _process_project(
                 fs = files[i]
                 fs.status = Status.CANCELED
                 fs.finished_at = time.time()
-                fs.message = "canceled"
+                fs.message = _canceled(fs)
                 _recalc_project(ps)
 
             pending = [k for k, fs in enumerate(files) if fs.status is Status.QUEUED]
@@ -478,15 +489,20 @@ def _process_project(
         ps.status = Status.ERROR
 
 
+def _canceled(row) -> str:
+    """A canceled row's message, with how far it got (see canceled_message)."""
+    return canceled_message(row.transcribed, row.tracks)
+
+
 def _mark_canceled(ps: ProjectStatus) -> None:
     """A canceled project, and its files that hadn't finished (or started)."""
-    ps.message = "canceled"
+    ps.message = "canceled" if ps.files else _canceled(ps)
     ps.status = Status.CANCELED
     for fs in ps.files:
         if fs.status in (Status.QUEUED, Status.RUNNING):
             fs.status = Status.CANCELED
             fs.finished_at = time.time()
-            fs.message = "canceled"
+            fs.message = _canceled(fs)
 
 
 def _run_projects(
@@ -596,6 +612,7 @@ class BatchRegistry:
         batch = BatchStatus(
             id=uuid.uuid4().hex,
             projects=[ProjectStatus(name=p.name, weight=_project_weight(p), sources=len(p.prepared),
+                                    tracks=sum(_selected_count(x) for x in p.prepared),
                                     files=_file_statuses(p))
                       for p in projects])
         with self._lock:
@@ -711,6 +728,7 @@ class BatchRegistry:
         ps.cancel_requested = False
         ps.paused_total = 0.0
         ps.pause_started = 0.0
+        ps.transcribed = 0
         failed = [fs for fs in ps.files if fs.status in (Status.ERROR, Status.CANCELED)]
         for fs in failed or ps.files:
             BatchRegistry._reset_fs(fs)
@@ -723,6 +741,7 @@ class BatchRegistry:
         fs.message = ""
         fs.track = 0
         fs.tracks = 0
+        fs.transcribed = 0
         fs.extract_seconds = 0.0
         fs.started_at = 0.0
         fs.finished_at = 0.0

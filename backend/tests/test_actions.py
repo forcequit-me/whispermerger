@@ -726,3 +726,53 @@ def test_a_canceled_batch_leaves_no_file_queued(api, two_stream_file, monkeypatc
         turns.release()
         _until(lambda: actions.get_batch(bid)["status"] == "canceled")
         assert rows(bid) == [(1, "canceled"), (2, "canceled"), (2, "canceled")]
+
+
+def test_a_run_canceled_part_way_says_how_far_it_got(api, two_stream_file, monkeypatch, tmp_path):
+    """get_progress and get_batch (so the CLI and MCP) carry the canceled message: how many tracks
+    were transcribed, and kept for a retry. A job canceled before any track finished stays "canceled"."""
+    from app import transcribe
+    gate, calls, hold = threading.Event(), [], [2]
+
+    def stub(_wav, **_kw):                         # call `hold` waits for the test, then a chunk
+        calls.append(_wav)                         # report (the job's checkpoint) comes in
+        if len(calls) == hold[0]:
+            gate.wait(5)
+            if transcribe._chunk.fn:
+                transcribe._chunk.fn(0.5)
+        return _stub_transcribe(_wav)
+
+    monkeypatch.setattr(routes.api, "transcribe_track", stub)
+    monkeypatch.setattr(routes.api, "unload_models", lambda: None)
+    kept = "canceled · {} of 2 tracks transcribed, kept for a retry"
+
+    # a job, canceled during its second track: that track stops at the next chunk
+    job_id = actions.transcribe([str(two_stream_file)], tracks=[1, 2])["job_id"]
+    _until(lambda: len(calls) == 2)
+    actions.cancel(job_id)
+    gate.set()
+    _until(lambda: actions.get_progress(job_id)["status"] == "canceled")
+    assert actions.get_progress(job_id)["message"] == kept.format(1)
+
+    # canceled during its first track: nothing finished
+    gate.clear()
+    calls.clear()
+    hold[0] = 1
+    job_id = actions.transcribe([str(two_stream_file)], tracks=[1, 2])["job_id"]
+    _until(lambda: len(calls) == 1)
+    actions.cancel(job_id)
+    gate.set()
+    _until(lambda: actions.get_progress(job_id)["status"] == "canceled")
+    assert actions.get_progress(job_id)["message"] == "canceled"
+
+    # a batch file, canceled during its last track: both tracks are cached, nothing is written
+    gate.clear()
+    calls.clear()
+    hold[0] = 2
+    bid = actions.run_batch([str(two_stream_file)], out=str(tmp_path), formats=["txt"])["batch_id"]
+    _until(lambda: len(calls) == 2)
+    actions.cancel(bid, file=1)
+    gate.set()
+    _until(lambda: actions.get_batch(bid)["status"] == "done")
+    item = actions.get_batch(bid)["items"][0]
+    assert (item["status"], item["message"]) == ("canceled", kept.format(2))

@@ -28,7 +28,16 @@ class JobStatus(str, Enum):
 
 
 class JobCancelled(Exception):
-    """Raised through the progress callback when a job cancel is requested."""
+    """Raised through the progress callback when a job cancel is requested. Its text, if any, is
+    the job's message (see canceled_message)."""
+
+
+def canceled_message(transcribed: int = 0, tracks: int = 0) -> str:
+    """"canceled", and how far the run got when some of its tracks were transcribed first. Nothing
+    of it is written, but every finished track is in the cache, so running it again reuses them."""
+    if not transcribed:
+        return "canceled"
+    return f"canceled · {transcribed} of {tracks} track{'s' if tracks != 1 else ''} transcribed, kept for a retry"
 
 
 WAITING_ANSWER = "waiting for your answer"       # status line while a run has a question for the user
@@ -172,9 +181,9 @@ class JobRegistry:
                 job.message = ("reused saved result" if job.reused else f"done in {job.elapsed:.0f}s") \
                     + (f" · {job.language}" if job.language else "")
                 job.status = JobStatus.DONE
-            except JobCancelled:  # cooperative cancel at a stage boundary
+            except JobCancelled as exc:  # cooperative cancel at a stage boundary
                 job.finished_at = time.time()
-                job.message = "canceled"
+                job.message = str(exc) or canceled_message()
                 job.status = JobStatus.CANCELED
             except Exception as exc:  # surface failure via the job, not a crashed thread
                 traceback.print_exc()          # the job keeps the message; the console the whole story

@@ -318,7 +318,8 @@ still running or queued can't be retried (in the app too): wait for it, or cance
 `files` and `done` in `get-batch` count source files, as `run-batch` does: a project joined into
 one transcript is one item that counts as every file in it. A file that is canceled while it is
 being transcribed is not written, whichever track it was on; the track that was running still
-finishes and stays cached, so `retry-batch` is quick. A run that is waiting for another run to
+finishes and stays cached, so `retry-batch` is quick. Its message says how far it got, e.g.
+`canceled · 1 of 2 tracks transcribed, kept for a retry` (a job canceled part-way says the same). A run that is waiting for another run to
 finish with the GPU pauses or cancels at once. Otherwise a pause waits for the end of the track
 being transcribed (`get-progress` / `get-batch` say "pausing" until then, "GPU released" after).
 

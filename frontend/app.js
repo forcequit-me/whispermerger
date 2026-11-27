@@ -975,7 +975,7 @@ function pollJob(jobId, runBtn) {
       finish();
       return;
     }
-    if (p.status === "canceled") { setProgress(p.progress, "canceled"); finish(); return; }
+    if (p.status === "canceled") { setProgress(p.progress, p.message || "canceled"); finish(); return; }
     if (p.status === "error") { setProgress(p.progress, "error: " + p.error); finish(); return; }
     setTimeout(tick, 500);
   };

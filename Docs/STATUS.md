@@ -869,6 +869,34 @@ cancel stops that download; Label Track and the Benchmark pause and cancel at on
 for the GPU; "pausing" is seen during the track's second batch, then "paused · GPU released". Not
 yet run on the real GPU.
 
+## A canceled row says how far it got (2026-11-27)
+
+A canceled file in a batch said only "canceled", even when some of its tracks had already been
+transcribed. Nothing of it is written either way, but those tracks are in the cache (a server
+run always passes it, and a track's result is saved as soon as that track finishes), so a retry
+reuses them. The status stays "canceled"; the message now says how far it got, for example
+`canceled · 1 of 2 tracks transcribed, kept for a retry`. A row canceled before any of its tracks
+finished (before it started, or while waiting for the GPU on its first track) still says
+`canceled`.
+
+- Batch: `FileStatus.transcribed` and `ProjectStatus.transcribed` count the tracks whose
+  transcription returned in this run (a wrapper around the project's transcribe function in
+  `_process_project`); `ProjectStatus.tracks` is a joined project's track count. `_canceled` gives
+  the message, used by `on_skip` (a file canceled between tracks, during its last track, or while
+  waiting) and `_mark_canceled` (a project or whole-batch cancel). A file row and a joined project
+  say it; a one-transcript-per-file project's own row still says "canceled". A retry resets the count.
+- A single Transcribe & Merge job says the same: the `/api/transcribe` route counts its finished
+  tracks and the cancel carries the message (`canceled_message` in `jobs.py`, shared with the
+  batch). The app shows a canceled job's message instead of a fixed "canceled". Label Track and
+  the Benchmark are unchanged.
+- `get_progress` and `get_batch` pass the message through, so the CLI and MCP show it; their help
+  text and the README give the example.
+
+Tests: 231 pass, 6 new: a file canceled (by itself, its project or the whole batch) during its
+first track or its last one; a joined project likewise; rows canceled before they started; rows
+canceled while waiting for the GPU; a retried row counts again; and the job and a batch file
+through `get_progress` / `get_batch`.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

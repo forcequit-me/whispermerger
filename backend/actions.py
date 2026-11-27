@@ -378,7 +378,9 @@ def get_progress(job_id: str) -> dict:
     stage says "waiting for another run to finish" and the percent stays put; that's not stuck.
     When the result has "question", the job has stopped to ask (its message says "waiting for your
     answer") and stays put until you call answer. Once done, "language" is what Auto-detect chose
-    and how sure it was, e.g. "English 97%", with "(no word timing)" when the run went without it."""
+    and how sure it was, e.g. "English 97%", with "(no word timing)" when the run went without it.
+    A canceled job that had finished some of its tracks says how many, e.g. "canceled · 1 of 2
+    tracks transcribed, kept for a retry": nothing is written, but running it again reuses them."""
     p = _api("GET", f"/api/progress/{job_id}")
     out = {"status": p["status"], "percent": round(p["progress"] * 100), "message": p["message"],
            "elapsed": round(p["elapsed"], 1), "error": p["error"]}
@@ -654,7 +656,9 @@ def get_batch(batch_id: str) -> dict:
     went. Each item carries its project number and, in a one-transcript-per-file project, its file
     number: the numbers cancel, retry_batch, get_transcript, edit_lines and export take. "files" and
     "done" count source files, as run_batch does: a project joined into one transcript is one item
-    that counts as every file in it. When the result has "question", the batch has stopped to ask
+    that counts as every file in it. A canceled item that had finished some of its tracks says how
+    many, e.g. "canceled · 1 of 2 tracks transcribed, kept for a retry": nothing of it is written,
+    but retry_batch reuses them. When the result has "question", the batch has stopped to ask
     about the file named in it and stays put until you call answer."""
     b = _api("GET", f"/api/batch/{batch_id}")
     files, total, done = [], 0, 0

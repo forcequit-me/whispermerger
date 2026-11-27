@@ -572,3 +572,125 @@ def test_a_batch_waiting_for_the_gpu_pauses_and_cancels_at_once(two_stream_file,
     turn.set()
     assert batch.projects[0].status is Status.CANCELED and not transcribed
     assert all(f.status is Status.CANCELED for f in batch.projects[0].files)
+
+
+# --- a canceled row says how far it got ------------------------------------------------------------
+
+KEPT = "canceled · {} of {} tracks transcribed, kept for a retry"
+
+
+def _two_tracks(path, name, sequence=0):
+    src = InputSource(filename=name, duration=2.0, sequence=sequence,
+                      tracks=[Track(track_index=0, speaker="A"), Track(track_index=1, speaker="B")])
+    return PreparedSource(path=str(path), input=src)
+
+
+def _cancel_at(two_stream_file, tmp_path, name, per_file, at, cancel, files=2):
+    """Run a project of two-track files whose `cancel(reg, batch_id)` arrives during transcription
+    call `at` (counted from 1). Returns the batch."""
+    reg, calls = BatchRegistry(), []
+    proj = ProjectInput("P", [_two_tracks(two_stream_file, f"{c}.mkv", n) for n, c in enumerate("ab"[:files])],
+                        per_file=per_file, formats=["txt"])
+    batch = reg.create([proj])
+
+    def stub(wav):
+        calls.append(wav)
+        if len(calls) == at:
+            cancel(reg, batch.id)
+        return _stub(wav)
+
+    run_batch(batch, [proj], stub, output_mode="folder", output_folder=str(tmp_path / name))
+    return batch
+
+
+def test_a_canceled_file_says_how_many_of_its_tracks_were_transcribed(two_stream_file, tmp_path):
+    """One transcript per file, file a (2 tracks) then b: a cancel of the file, its project or the
+    whole batch during a's first track stops a after that track; during its last track, after both
+    (nothing written either way). A file that never started stays plain "canceled"."""
+    cancel_a = lambda reg, bid: reg.cancel_file(bid, 0, 0)
+    cancel_p = lambda reg, bid: reg.cancel_project(bid, 0)
+    cancel_b = lambda reg, bid: reg.cancel(bid)
+    msgs = lambda b: [f.message for f in b.projects[0].files]
+
+    b = _cancel_at(two_stream_file, tmp_path, "f1", True, 1, cancel_a)           # on_skip, between tracks
+    assert msgs(b)[0] == KEPT.format(1, 2) and b.projects[0].files[1].status is Status.DONE
+    b = _cancel_at(two_stream_file, tmp_path, "f2", True, 2, cancel_a)           # on_done -> on_skip, last track
+    assert msgs(b)[0] == KEPT.format(2, 2) and b.projects[0].files[0].status is Status.CANCELED
+    b = _cancel_at(two_stream_file, tmp_path, "p1", True, 1, cancel_p)           # _mark_canceled
+    assert msgs(b) == [KEPT.format(1, 2), "canceled"] and b.projects[0].message == "canceled"
+    b = _cancel_at(two_stream_file, tmp_path, "p2", True, 2, cancel_p)
+    assert msgs(b) == [KEPT.format(2, 2), "canceled"]
+    b = _cancel_at(two_stream_file, tmp_path, "b1", True, 1, cancel_b)
+    assert msgs(b) == [KEPT.format(1, 2), "canceled"]
+    b = _cancel_at(two_stream_file, tmp_path, "b2", True, 3, cancel_b)           # during b's first track
+    assert b.projects[0].files[0].status is Status.DONE and msgs(b)[1] == KEPT.format(1, 2)
+    for name in ("f1", "f2", "p1", "p2", "b1"):
+        assert not _find(tmp_path / name / "P", "a", "txt")
+
+
+def test_a_canceled_joined_project_says_how_many_tracks_were_transcribed(two_stream_file, tmp_path):
+    """A project joined into one transcript (2 files × 2 tracks): cancel it, or the batch, during
+    its first track or its last one."""
+    cancel_p = lambda reg, bid: reg.cancel_project(bid, 0)
+    cancel_b = lambda reg, bid: reg.cancel(bid)
+    for name, at, cancel in (("p1", 1, cancel_p), ("p4", 4, cancel_p), ("b2", 2, cancel_b), ("b4", 4, cancel_b)):
+        ps = _cancel_at(two_stream_file, tmp_path, name, False, at, cancel).projects[0]
+        assert (ps.status, ps.message) == (Status.CANCELED, KEPT.format(at, 4)), name
+        assert not _find(tmp_path / name / "P", "P", "txt")
+
+
+def test_a_row_canceled_before_it_started_stays_plain_canceled(two_stream_file, tmp_path):
+    reg = BatchRegistry()
+    projects = [ProjectInput("A", [_two_tracks(two_stream_file, "a.mkv")]),
+                ProjectInput("B", [_two_tracks(two_stream_file, "b.mkv")], per_file=True)]
+    batch = reg.create(projects)
+    reg.cancel_project(batch.id, 0)
+    reg.cancel_file(batch.id, 1, 0)
+    run_batch(batch, projects, _stub, output_mode="folder", output_folder=str(tmp_path))
+    assert batch.projects[0].message == "canceled"
+    assert batch.projects[1].files[0].message == "canceled"
+
+
+def test_a_row_canceled_while_waiting_for_the_gpu_says_how_far_it_got(two_stream_file, tmp_path):
+    """Canceled while its second track waits for the GPU: one track done. Waiting on its first: none."""
+    from app.transcribe import _chunk
+
+    def run(name, per_file, cancel):
+        reg, calls = BatchRegistry(), []
+        proj = ProjectInput("P", [_two_tracks(two_stream_file, "a.mkv")], per_file=per_file, formats=["txt"])
+        batch = reg.create([proj])
+
+        def stub(wav):
+            calls.append(wav)
+            if len(calls) == 2:                            # the second track waits for its turn
+                cancel(reg, batch.id)
+                _chunk.fn(0.0, waiting=True)               # the wait report: the checkpoint
+            return _stub(wav)
+
+        run_batch(batch, [proj], stub, output_mode="folder", output_folder=str(tmp_path / name))
+        return batch.projects[0]
+
+    assert run("f", True, lambda reg, bid: reg.cancel_file(bid, 0, 0)).files[0].message == KEPT.format(1, 2)
+    assert run("p", True, lambda reg, bid: reg.cancel_project(bid, 0)).files[0].message == KEPT.format(1, 2)
+    assert run("j", False, lambda reg, bid: reg.cancel_project(bid, 0)).message == KEPT.format(1, 2)
+
+
+def test_a_retried_row_counts_its_tracks_again(two_stream_file, tmp_path):
+    reg = BatchRegistry()
+    proj = ProjectInput("P", [_two_tracks(two_stream_file, "a.mkv")], formats=["txt"])
+    batch = reg.create([proj])
+    calls = []
+
+    def stub(wav):
+        calls.append(wav)
+        if len(calls) == 1:
+            reg.cancel_project(batch.id, 0)
+        return _stub(wav)
+
+    reg.set_spec(batch.id, _RunSpec([proj], stub, "folder", str(tmp_path), None))
+    reg.run(batch, lambda: run_batch(batch, [proj], stub, output_mode="folder", output_folder=str(tmp_path)))
+    _wait_status(batch)
+    assert batch.projects[0].message == KEPT.format(1, 2)
+    assert reg.retry(batch.id, [0])
+    _wait_status(batch)
+    assert batch.projects[0].status is Status.DONE and batch.projects[0].transcribed == 2

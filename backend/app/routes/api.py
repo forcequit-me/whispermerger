@@ -27,6 +27,7 @@ from ..batch import ProjectInput, Status, _RunSpec, run_batch
 from ..diarize import detect_speech, transcribe_regions
 from ..export import ExportOptions, pad_segments, to_csv, to_json, to_srt, to_txt
 from ..extract import compute_peaks, concat_wavs, extract_clip, extract_sample, extract_track
+from ..jobs import JobCancelled, canceled_message
 from ..merge import BackchannelRender, MergeOptions
 from ..models import InputSource, MergedOutput, Track
 from ..pipeline import PreparedSource, run_merge_pipeline
@@ -587,13 +588,20 @@ def transcribe(request: Request, body: TranscribeRequest) -> JobCreated:
     job = request.app.state.jobs.create()
 
     def work(progress) -> MergedOutput:
-        return run_merge_pipeline(
-            prepared,
-            lambda wav: transcribe_track(wav, cache=cache, language=body.language,
-                                         word_timing=body.word_timing),
-            options=options,
-            progress_cb=progress,
-        )
+        done = []                                 # tracks finished, so cached: a cancel says how many
+
+        def fn(wav):
+            out = transcribe_track(wav, cache=cache, language=body.language, word_timing=body.word_timing)
+            done.append(wav)
+            return out
+
+        try:
+            return run_merge_pipeline(prepared, fn, options=options, progress_cb=progress)
+        except JobCancelled:
+            if done:
+                raise JobCancelled(canceled_message(len(done), sum(
+                    1 for p in prepared for t in p.input.tracks if t.selected)))
+            raise
 
     request.app.state.jobs.run(job, work, on_pause=unload_models)
     return JobCreated(job_id=job.id)
