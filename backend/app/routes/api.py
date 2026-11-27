@@ -659,8 +659,9 @@ def answer_job(request: Request, job_id: str, body: AnswerIn) -> dict:
 
 @router.post("/pause/{job_id}")
 def pause_job(request: Request, job_id: str) -> dict:
-    """Pause a job — the in-flight stage finishes, then the GPU is freed and the clock stops
-    until /resume. The model reloads on resume."""
+    """Pause a job — the track being transcribed finishes first (Label Track: the speaker,
+    Benchmark: the model), then the GPU is freed and the clock stops until /resume; a job waiting
+    for the GPU pauses at once. The model reloads on resume."""
     job = request.app.state.jobs.get(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
@@ -816,8 +817,9 @@ def answer_batch(request: Request, batch_id: str, body: AnswerIn) -> dict:
 
 @router.post("/batch/{batch_id}/pause")
 def pause_batch(request: Request, batch_id: str) -> dict:
-    """Pause the whole batch — the file currently transcribing finishes, then the GPU is freed and
-    the queue + clocks halt until /resume. The model reloads on resume."""
+    """Pause the whole batch — the track currently transcribing finishes, then the GPU is freed and
+    the queue + clocks halt until /resume; a batch waiting for the GPU pauses at once. The model
+    reloads on resume."""
     if not request.app.state.batches.pause(batch_id):
         raise HTTPException(404, "unknown batch")
     return {"pausing": True}

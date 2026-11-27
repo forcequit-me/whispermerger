@@ -311,13 +311,23 @@ def _gpu_turn():
                     break
         finally:
             _chunk.waiting = False
+    _chunk.turn = getattr(_chunk, "turn", 0) + 1
     try:
         with gpu_user():
             if waited:
                 fn(0.0)                               # our turn: back to the normal label
             yield
     finally:
+        _chunk.turn -= 1
         GPU_TURN.release()
+
+
+def holding_gpu_turn() -> bool:
+    """Whether this thread is inside its GPU turn. A pause asked for meanwhile doesn't stop the run
+    there: it would keep every other run waiting, and unloading the model under a track part-way
+    through broke the rest of it ("The model for this translator was unloaded"). It lands at the
+    run's next checkpoint after the turn, when the track is done. Cancel still stops it at once."""
+    return getattr(_chunk, "turn", 0) > 0
 
 
 # Auto-detect listens to speech from across the file. It used to take the first 30 s, so a

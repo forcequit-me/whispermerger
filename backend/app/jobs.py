@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Callable, Optional
 
 from . import modelstore
-from .transcribe import asking, cache_tally, reused_since
+from .transcribe import asking, cache_tally, holding_gpu_turn, reused_since
 from .models import MergedOutput
 
 
@@ -66,8 +66,9 @@ class Job:
         self._wake.set()                          # wake a paused job so it can unwind
 
     def pause(self) -> None:
-        """Request a pause; takes effect at the next progress checkpoint (the in-flight stage
-        finishes first), then the GPU is freed and the clock stops until resume()."""
+        """Request a pause; takes effect at the next progress checkpoint outside the GPU turn (the
+        track being transcribed finishes first), then the GPU is freed and the clock stops until
+        resume()."""
         self.paused = True
 
     def resume(self) -> None:
@@ -115,7 +116,8 @@ class Job:
         return True
 
     def _set_progress(self, fraction: float, message: str) -> None:
-        if self.paused and not self._cancel.is_set():
+        # Never parks inside the GPU turn: the pause waits for the end of the track (see holding_gpu_turn).
+        if self.paused and not self._cancel.is_set() and not holding_gpu_turn():
             self._park(lambda: self.paused, "paused · GPU released")
         if self._cancel.is_set():
             raise JobCancelled()

@@ -826,6 +826,49 @@ and `labeltrack.js`. Internal names (`is_cancelled`, `batch.cancelled`, `Cancell
 
 Tests: 210 pass, 1 new: `transcribe --wait` still exits with code 1 when its job is canceled.
 
+## A pause waits for the end of the track (2026-11-27)
+
+A single Transcribe job, a batch project joined into one transcript, and the Benchmark checked for
+a pause while they held `GPU_TURN`, the one-run-at-a-time lock. A pause asked for mid-track then
+parked inside the lock, so every other run said "waiting for another run to finish" for the whole
+pause. Parking also unloaded the model under the track: when audio was left in that track, the job
+failed after resume with "The model for this translator was unloaded".
+
+Now a pause waits for the end of the track it is on (its transcription and word timing), as a
+batch with one transcript per file and Label Track already did. Until then the run shows
+"pausing" (`paused` true, `gpu_freed` false); then it parks outside the lock, the GPU is released,
+the clock stops and other runs can take their turn. Cancel is unchanged: it still stops a track
+part-way, at the next chunk, also while the run is pausing.
+
+- `_gpu_turn` (`transcribe.py`) marks the thread while it holds the turn, and `holding_gpu_turn()`
+  says so. `Job._set_progress` and `_gate` in `batch.py` don't park while it is true. That covers
+  every check inside the turn: the per-chunk progress, a joined project's guard, and the progress
+  of a model download mid-run (a pause there lands after the track; Cancel still stops the download).
+- The Benchmark takes the turn once per model, through `_gpu_turn`, so its check between models is
+  outside the lock. Another run can now take its turn between two models; each model still
+  starts cold, so the timings compare.
+- Waiting for the GPU is now a checkpoint for Label Track and the Benchmark too: they report
+  "waiting" every half second like the other runs, so a pause or a cancel there takes effect at
+  once instead of after they get the GPU. Label Track's line also shows what Auto-detect chose
+  ("transcribing A (1/2) · English 97%").
+- With Auto-detect, a pause asked for while the language is being detected lands before that
+  track's transcription starts (a job, a joined project, Label Track): detection and
+  transcription are two turns, and the report of the chosen language between them is outside the
+  lock. Nothing of the track is lost; its model loads again on resume.
+- Wording: `pause` and the "paused" line in `get_progress` / `get_batch` (CLI and MCP), the pause
+  routes, the app's "Pausing… (current track finishes)" and the README now say the track finishes
+  first, not the file.
+
+Tests: 225 pass, 8 new, and the 4 that were expected to fail now pass with their marks removed.
+Five tests written for "another run takes its turn the moment the job is paused mid-track" (a job,
+a joined batch project, the Benchmark, and the last-batch and second-batch cases) now check the
+chosen rule instead: the whole track runs before the pause lands, the lock is free while parked,
+and the result is complete after resume. New: cancel still stops a job and a joined project
+mid-track while pausing; a pause during a download mid-run lands after the track (job and batch);
+cancel stops that download; Label Track and the Benchmark pause and cancel at once while waiting
+for the GPU; "pausing" is seen during the track's second batch, then "paused · GPU released". Not
+yet run on the real GPU.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

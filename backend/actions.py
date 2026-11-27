@@ -144,7 +144,7 @@ def _batch_path(batch_id: str, project: Optional[int], file: Optional[int]) -> s
 
 
 def _paused(p: dict) -> str:
-    return "GPU released" if p["gpu_freed"] else "pausing: the file being transcribed finishes first"
+    return "GPU released" if p["gpu_freed"] else "pausing: the track being transcribed finishes first"
 
 
 def _wait_job(job_id: str) -> dict:
@@ -416,9 +416,11 @@ def cancel(run_id: str, project: Optional[int] = None, file: Optional[int] = Non
 
 
 def pause(run_id: str) -> dict:
-    """Pause a job or a batch. The file being transcribed finishes, then the models leave the GPU
-    and the clock stops until resume; get_progress / get_batch show "paused". A run that is still
-    waiting for another run to finish pauses at once.
+    """Pause a job or a batch. The track being transcribed finishes first (its transcription and
+    word timing; Label Track: the speaker, Benchmark: the model), then the models leave the GPU, the
+    clock stops and other runs can use the GPU until resume. get_progress / get_batch show "paused":
+    "pausing" until that track ends, then "GPU released". A run that is still waiting for another
+    run to finish pauses at once. Cancel doesn't wait for the track.
 
     run_id: the job id or batch id."""
     return _run_post(run_id, "pause")

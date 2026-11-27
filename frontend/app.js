@@ -950,7 +950,7 @@ function pollJob(jobId, runBtn) {
     pauseBtn.textContent = p.paused ? "Resume" : "Pause";
     // Two-stage feedback: pause is requested but the current stage hasn't finished (GPU still busy)
     // vs fully parked (GPU released). The backend sends "paused · GPU released" once freed.
-    const msg = (p.paused && !p.gpu_freed) ? "pausing… (finishing current stage)" : (p.message || p.status);
+    const msg = (p.paused && !p.gpu_freed) ? "pausing… (finishing current track)" : (p.message || p.status);
     setProgress(p.progress, `${msg}${p.elapsed ? " · " + fmtElapsed(p.elapsed) : ""}`);
     showQuestion($("#progress-msg"), p.question, `/api/answer/${jobId}`);
     if (p.status === "done") {
@@ -1503,7 +1503,7 @@ function pollBatch(id, btn) {
   pauseBtn.onclick = async () => {
     pauseBtn.disabled = true;
     const action = paused ? "resume" : "pause";        // toggle against the known state
-    pauseBtn.textContent = paused ? "Resuming…" : "Pausing… (current file finishes)";
+    pauseBtn.textContent = paused ? "Resuming…" : "Pausing… (current track finishes)";
     try { await fetch(`/api/batch/${id}/${action}`, { method: "POST" }); } catch {}
   };
   const tick = async () => {
@@ -1574,7 +1574,7 @@ function renderBatchStatus(b, id, btn) {
     ? ` · ${fmtAudio(doneWeight)} / ${fmtAudio(totalWeight)} audio` : "";
 
   const pauseText = (b.paused && !ended)
-    ? (b.gpu_freed ? "  ·  ⏸ Paused · GPU released" : "  ·  ⏸ Pausing… (current file finishes)")
+    ? (b.gpu_freed ? "  ·  ⏸ Paused · GPU released" : "  ·  ⏸ Pausing… (current track finishes)")
     : "";
   const summaryText = `${counts.done} of ${total} projects complete${pauseText}`;
   const overallText = ` · overall ${pct}%${audioText} · ${fmtElapsed(b.elapsed)} elapsed`;

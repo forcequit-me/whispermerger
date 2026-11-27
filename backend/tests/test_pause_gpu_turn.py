@@ -8,7 +8,10 @@ Under it sits a stand-in for the CTranslate2 model with the one behaviour that m
 unload_model() has run, the next call raises "The model for this translator was unloaded", as
 ctranslate2 4.4.0 does (checked on a tiny model on the CPU, 2026-11-27).
 
-Each test asserts what a user would expect. The ones marked xfail fail on today's code."""
+Each test asserts what a user would expect. The rule they hold every kind of run to: a pause asked
+for mid-track waits for the end of that track ("pausing"), then the run parks outside its GPU turn
+("GPU released") and another run can take its turn; the track's result is intact after resume.
+Cancel still stops a track part-way, and a run waiting for the GPU pauses and cancels at once."""
 
 import threading
 import time
@@ -58,6 +61,19 @@ class _Gate:
         if self.n == self.hold_at:
             self.reached.set()
             self.go.wait(30)
+
+
+class _Look(_Gate):
+    """A _Gate that also calls `look()` at chunk `look_at` and keeps what it returned in `seen`."""
+
+    def __init__(self, hold_at, look_at, look):
+        super().__init__(hold_at)
+        self.look_at, self.look, self.seen = look_at, look, None
+
+    def __call__(self):
+        super().__call__()
+        if self.n == self.look_at:
+            self.seen = self.look()
 
 
 class _Pipe:
@@ -165,31 +181,32 @@ def _the_other_run_finishes_while_paused(rig, paused_where: str):
 
 # --- 1. a single Transcribe job --------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="a job paused mid-track parks inside its GPU turn (transcribe.py "
-                   "_gpu_turn), so every other run waits for the whole pause")
 def test_a_job_paused_mid_track_lets_another_run_take_its_turn(rig, two_stream_file):
+    """The pause lands when the track ends, outside the GPU turn; then the other run goes."""
     job = _transcribe_job(two_stream_file)
     other = None
     try:
         landed = _pause_job_mid_chunk(rig, job)
+        assert landed == rig.chunks                          # the whole track ran first
+        assert not transcribe.GPU_TURN.locked()
         assert job.message == "paused · GPU released"
         other, ok, why = _the_other_run_finishes_while_paused(rig, f"after chunk {landed} of {rig.chunks}")
         assert ok, why
         job.resume()
         assert _until(lambda: job.status is JobStatus.DONE), job.error
+        assert len(job.result.segments) == rig.chunks        # its track is complete
     finally:
         job.resume()
         _settle(job, other)
 
 
 def test_a_pause_in_the_last_batch_of_a_track_still_finishes(rig, two_stream_file):
-    """Why the live test (2026-11-26) saw pause and resume work on a running job: when every chunk
-    left in the track is in the batch the model has already run, nothing calls the unloaded model
-    after resume. Its track then finishes, and the next track loads the model again."""
+    """The whole track runs before the pause lands; only then is its model unloaded, and the next
+    run loads it again."""
     job = _transcribe_job(two_stream_file)        # 3 chunks, one batch
     try:
-        _pause_job_mid_chunk(rig, job)
-        assert not rig.pipes[0].model.model.loaded      # the running track's own model was unloaded
+        assert _pause_job_mid_chunk(rig, job) == rig.chunks
+        assert not rig.pipes[0].model.model.loaded      # unloaded once the track was done with it
         job.resume()
         assert _until(lambda: job.status is JobStatus.DONE), job.error
         assert len(job.result.segments) == 3
@@ -200,13 +217,18 @@ def test_a_pause_in_the_last_batch_of_a_track_still_finishes(rig, two_stream_fil
 
 # --- 3. the model, unloaded under the running track ---------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="the pause unloads the model pipe.transcribe is using; after resume "
-                   "its next batch raises 'The model for this translator was unloaded'")
 def test_a_track_paused_before_its_last_batch_finishes_after_resume(rig, two_stream_file):
-    rig.chunks, rig.batch = 4, 2                   # two batches: the pause lands in the first
+    """The pause is asked for in the track's first batch. The track goes on ("pausing": paused, the
+    GPU not freed, the turn held) through its second batch, which needs the model, then parks
+    ("paused · GPU released") and finishes after resume with every chunk."""
+    rig.chunks, rig.batch = 4, 2                   # two batches: the pause is asked for in the first
+    rig.gate = _Look(1, 3, None)                   # before the job builds its model
     job = _transcribe_job(two_stream_file)
+    rig.gate.look = lambda: (job.paused, job.gpu_freed, transcribe.GPU_TURN.locked())
     try:
-        _pause_job_mid_chunk(rig, job)
+        assert _pause_job_mid_chunk(rig, job) == 4
+        assert rig.gate.seen == (True, False, True)        # pausing, during the second batch
+        assert job.message == "paused · GPU released"
         job.resume()
         _until(lambda: job.status in DONE_STATES)
         assert job.status is JobStatus.DONE, f"ended {job.status.value}: {job.error}"
@@ -244,17 +266,19 @@ def _finish_batch(reg, batch):
     _until(lambda: batch.status in (Status.DONE, Status.CANCELED, Status.ERROR), 6)
 
 
-@pytest.mark.xfail(strict=True, reason="a joined project's progress callback (_guard in batch.py) parks on "
-                   "every chunk report, inside the GPU turn")
 def test_a_joined_batch_project_paused_mid_track_lets_another_run_take_its_turn(rig, two_stream_file, tmp_path):
+    """A project joined into one transcript: the pause lands when the track ends, outside the turn."""
     reg, batch = _batch(two_stream_file, tmp_path, per_file=False)
     other = None
     try:
         landed = _pause_batch_mid_chunk(rig, reg, batch)
+        assert landed == rig.chunks                          # the whole track ran first
+        assert not transcribe.GPU_TURN.locked()
         other, ok, why = _the_other_run_finishes_while_paused(rig, f"after chunk {landed} of {rig.chunks}")
         assert ok, why
         _finish_batch(reg, batch)
         assert batch.status is Status.DONE and batch.projects[0].status is Status.DONE
+        assert len(batch.projects[0].result.segments) == rig.chunks
     finally:
         _finish_batch(reg, batch)
         _settle(other)
@@ -279,7 +303,7 @@ def test_a_per_file_batch_project_paused_mid_track_lets_another_run_take_its_tur
 
 
 def test_label_track_paused_mid_speaker_lets_another_run_take_its_turn(rig, tmp_path):
-    """POST /api/diarize: its only checkpoint is the report before each speaker, outside the turn."""
+    """POST /api/diarize: a pause lands at the report before the next speaker, outside the turn."""
     wav = tmp_path / "track.wav"
     sf.write(str(wav), np.full(32000, 0.1, dtype=np.float32), 16000)
     job = _job_run(lambda progress: transcribe_regions(
@@ -298,8 +322,6 @@ def test_label_track_paused_mid_speaker_lets_another_run_take_its_turn(rig, tmp_
         _settle(job, other)
 
 
-@pytest.mark.xfail(strict=True, reason="the benchmark holds GPU_TURN for all its models and its checkpoint "
-                   "(progress before each model) is inside it, so a pause parks holding the turn")
 def test_a_benchmark_paused_between_models_lets_another_run_take_its_turn(rig, monkeypatch):
     monkeypatch.setattr(benchmark, "_tests", lambda tmp, names: [
         ("English", benchmark.SENTENCE, np.zeros(16000, dtype=np.float32), "en", names)])
@@ -307,10 +329,177 @@ def test_a_benchmark_paused_between_models_lets_another_run_take_its_turn(rig, m
     other = None
     try:
         landed = _pause_job_mid_chunk(rig, job)
+        assert landed == rig.chunks                          # the first model's test ran to the end
+        assert not transcribe.GPU_TURN.locked()
         other, ok, why = _the_other_run_finishes_while_paused(rig, f"after {landed} chunks, before the second model")
         assert ok, why
         job.resume()
         assert _until(lambda: job.status is JobStatus.DONE), job.error
+        assert [r["model"] for r in job.result] == ["small", "medium"]
     finally:
         job.resume()
         _settle(job, other)
+
+
+# --- 4. cancel mid-track, a download inside the turn, waiting for the GPU --------------------------
+
+def test_cancel_still_stops_a_job_mid_track_even_while_it_is_pausing(rig, two_stream_file):
+    rig.chunks, rig.batch = 6, 1                   # a model call per chunk
+    job = _transcribe_job(two_stream_file)
+    try:
+        assert rig.gate.reached.wait(20)
+        job.pause()
+        job.cancel()
+        rig.gate.go.set()
+        assert _until(lambda: job.status is JobStatus.CANCELED), job.status
+        assert rig.gate.n < rig.chunks                       # stopped part-way, at the next chunk
+        assert not job.gpu_freed and not transcribe.GPU_TURN.locked()
+    finally:
+        _settle(job)
+
+
+def test_cancel_still_stops_a_joined_batch_project_mid_track(rig, two_stream_file, tmp_path):
+    rig.chunks, rig.batch = 6, 1
+    reg, batch = _batch(two_stream_file, tmp_path, per_file=False)
+    try:
+        assert rig.gate.reached.wait(20)
+        reg.pause(batch.id)
+        reg.cancel(batch.id)
+        rig.gate.go.set()
+        assert _until(lambda: batch.status is Status.CANCELED), batch.status
+        assert rig.gate.n < rig.chunks
+        assert batch.projects[0].status is Status.CANCELED
+    finally:
+        _finish_batch(reg, batch)
+
+
+class _Download:
+    """A model download in the middle of a run (modelstore.ensure, inside the GPU turn): it reports
+    its progress, which is the run's checkpoint, `reports` times (None: until the run is canceled)."""
+
+    def __init__(self, reports=3):
+        self.reports, self.n = reports, 0
+        self.reached, self.go = threading.Event(), threading.Event()
+
+    def __call__(self, entry):
+        while self.reports is None or self.n < self.reports:
+            self.n += 1
+            transcribe.modelstore.report(f"Downloading {self.n}")
+            if self.n == 1:
+                self.reached.set()
+                self.go.wait(30)
+            time.sleep(0.01)
+
+
+def test_a_pause_during_a_download_in_the_turn_lands_after_the_track(rig, two_stream_file, monkeypatch):
+    dl = _Download()
+    rig.gate.go.set()                              # no hold on the chunks: only the download stops
+    monkeypatch.setattr(transcribe.modelstore, "ensure", dl)
+    job = _transcribe_job(two_stream_file)
+    try:
+        assert dl.reached.wait(20)
+        job.pause()
+        dl.go.set()
+        assert _until(lambda: job.gpu_freed)
+        assert dl.n == 3 and rig.gate.n == rig.chunks      # the download, then the whole track, then parked
+        assert not transcribe.GPU_TURN.locked()
+        job.resume()
+        assert _until(lambda: job.status is JobStatus.DONE), job.error
+    finally:
+        job.resume()
+        dl.go.set()
+        _settle(job)
+
+
+def test_cancel_stops_a_download_in_the_turn(rig, two_stream_file, monkeypatch):
+    dl = _Download(reports=None)                   # never finishes on its own
+    monkeypatch.setattr(transcribe.modelstore, "ensure", dl)
+    job = _transcribe_job(two_stream_file)
+    try:
+        assert dl.reached.wait(20)
+        job.pause()
+        job.cancel()
+        dl.go.set()
+        assert _until(lambda: job.status is JobStatus.CANCELED), job.status
+        assert rig.gate.n == 0                               # the track never started
+    finally:
+        dl.go.set()
+        _settle(job)
+
+
+def test_a_batch_paused_during_a_download_in_the_turn_parks_after_the_track(rig, two_stream_file, tmp_path,
+                                                                          monkeypatch):
+    dl = _Download()
+    rig.gate.go.set()                              # no hold on the chunks: only the download stops
+    monkeypatch.setattr(transcribe.modelstore, "ensure", dl)
+    reg, batch = _batch(two_stream_file, tmp_path, per_file=True)
+    try:
+        assert dl.reached.wait(20)
+        reg.pause(batch.id)
+        dl.go.set()
+        assert _until(lambda: batch.gpu_freed)
+        assert dl.n == 3 and rig.gate.n == rig.chunks
+        assert not transcribe.GPU_TURN.locked()
+        _finish_batch(reg, batch)
+        assert batch.status is Status.DONE
+    finally:
+        dl.go.set()
+        _finish_batch(reg, batch)
+
+
+def _waiting_run_pauses_and_cancels_at_once(rig, job, waiting_text):
+    """With another run holding the GPU: `job` says it waits, pauses at once (nothing of the other
+    run's unloaded), resumes to waiting, and cancels at once. Never runs a chunk."""
+    assert _until(lambda: waiting_text in job.message), job.message
+    job.pause()
+    assert _until(lambda: job.gpu_freed), "a run waiting for the GPU did not pause at once"
+    assert rig.pipes == [] and rig.gate.n == 0
+    job.resume()
+    assert _until(lambda: not job.gpu_freed and waiting_text in job.message)
+    job.cancel()
+    assert _until(lambda: job.status is JobStatus.CANCELED), "a run waiting for the GPU did not cancel at once"
+    assert rig.gate.n == 0
+
+
+def test_label_track_waiting_for_the_gpu_pauses_and_cancels_at_once(rig, tmp_path):
+    wav = tmp_path / "track.wav"
+    sf.write(str(wav), np.full(32000, 0.1, dtype=np.float32), 16000)
+    transcribe.GPU_TURN.acquire()                  # another run has the GPU, to the end of this test
+    job = None
+    try:
+        job = _job_run(lambda progress: transcribe_regions(
+            str(wav), {"A": [(0.0, 1.0)], "B": [(1.0, 2.0)]}, _transcribe_fn, progress=progress))
+        _waiting_run_pauses_and_cancels_at_once(rig, job, WAITING)
+    finally:
+        transcribe.GPU_TURN.release()
+        _settle(job)
+
+
+def test_a_benchmark_waiting_for_the_gpu_pauses_and_cancels_at_once(rig, monkeypatch):
+    monkeypatch.setattr(benchmark, "_tests", lambda tmp, names: [
+        ("English", benchmark.SENTENCE, np.zeros(16000, dtype=np.float32), "en", names)])
+    transcribe.GPU_TURN.acquire()
+    job = None
+    try:
+        job = _job_run(lambda progress: benchmark.run(progress, names=["small", "medium"]))
+        _waiting_run_pauses_and_cancels_at_once(rig, job, "Waiting for the current transcription to finish")
+    finally:
+        transcribe.GPU_TURN.release()
+        _settle(job)
+
+
+def test_label_track_waiting_for_the_gpu_goes_on_when_it_gets_it(rig, tmp_path):
+    """The wait report hands back to the speaker's line once the turn comes, and the speaker runs."""
+    wav = tmp_path / "track.wav"
+    sf.write(str(wav), np.full(32000, 0.1, dtype=np.float32), 16000)
+    rig.gate.go.set()                              # no hold: just run
+    transcribe.GPU_TURN.acquire()
+    job = None
+    try:
+        job = _job_run(lambda progress: transcribe_regions(
+            str(wav), {"A": [(0.0, 1.0)]}, _transcribe_fn, progress=progress))
+        assert _until(lambda: WAITING in job.message), job.message
+    finally:
+        transcribe.GPU_TURN.release()
+    assert _until(lambda: job.status is JobStatus.DONE), job.error
+    assert len(job.result.segments) == rig.chunks

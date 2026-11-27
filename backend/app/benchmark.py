@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import modelstore
-from .transcribe import BATCH_SIZE, COMPUTE_TYPE, DEVICE, GPU_TURN, _load_model, gpu_user, unload_models
+from .transcribe import BATCH_SIZE, COMPUTE_TYPE, DEVICE, _gpu_turn, _load_model, chunk_progress, unload_models
 
 SENTENCE = ("Let's move the quarterly review to Thursday afternoon, and make sure the budget numbers "
             "are final before then. If anything changes, send me a message and I'll update the calendar.")
@@ -97,39 +97,41 @@ def _tests(tmp: Path, names: list[str]) -> list[tuple]:
 
 def run(progress: Callable[[float, str], None], names: Optional[list[str]] = None) -> list[dict]:
     """Benchmark each downloaded speech model (or `names`) on each test sentence it can handle.
-    `progress` is the job's checkpoint, so Pause/Cancel take effect between models."""
+    `progress` is the job's checkpoint, so Pause/Cancel take effect between models, and at once
+    while it waits for another run to finish with the GPU."""
     names = names or [n for n in modelstore.WHISPER_MODELS
                       if modelstore.is_installed(modelstore.whisper_entry(n))]
     with tempfile.TemporaryDirectory(prefix="wm_bench_") as tmp:
         progress(0.0, "Speaking the test sentences")
         tests = _tests(Path(tmp), names)
     results = []
-    if not GPU_TURN.acquire(blocking=False):      # one run at a time on the shared models (and fair timings)
-        progress(0.0, "Waiting for the current transcription to finish")
-        GPU_TURN.acquire()
-    busy = gpu_user()                             # so another job won't unload a model mid-benchmark
-    busy.__enter__()
-    try:
-        for i, name in enumerate(names):
-            progress(i / len(names), f"Benchmarking {modelstore.whisper_entry(name).name} ({i + 1}/{len(names)})")
-            unload_models()                       # every model starts cold, so load times compare
-            t0 = time.perf_counter()
-            model = _load_model(name, COMPUTE_TYPE, DEVICE)
-            load_s = time.perf_counter() - t0
-            for label, expected, audio, lang, models in tests:
-                if name not in models:
-                    continue
-                t1 = time.perf_counter()
-                out = model.transcribe(audio, batch_size=BATCH_SIZE, language=lang)
-                t2 = time.perf_counter()
-                heard = " ".join(s["text"].strip() for s in out["segments"])
-                audio_s = len(audio) / 16000
-                results.append({"test": label, "model": name, "load_s": round(load_s, 2),
-                                "transcribe_s": round(t2 - t1, 2), "audio_s": round(audio_s, 1),
-                                "speed_x": round(audio_s / max(t2 - t1, 1e-6), 1),
-                                "match": round(match_score(heard, expected), 3), "heard": heard})
-    finally:
-        unload_models()                           # leave VRAM free; the chosen model loads on the next run
-        busy.__exit__(None, None, None)
-        GPU_TURN.release()
+    for i, name in enumerate(names):
+        step = f"Benchmarking {modelstore.whisper_entry(name).name} ({i + 1}/{len(names)})"
+        progress(i / len(names), step)            # outside the GPU turn: a pause lands here, between models
+        # One run at a time on the shared models (and fair timings), taken per model: a pause between
+        # models then parks without the turn. While another run has it, say so; that report is a
+        # checkpoint too, so Pause and Cancel take effect at once.
+        waiting = (lambda f, waiting=False, detected=None, i=i, step=step: progress(
+            i / len(names), "Waiting for the current transcription to finish" if waiting else step))
+        with chunk_progress(waiting), _gpu_turn():
+            try:
+                unload_models()                   # every model starts cold, so load times compare
+                t0 = time.perf_counter()
+                model = _load_model(name, COMPUTE_TYPE, DEVICE)
+                load_s = time.perf_counter() - t0
+                for label, expected, audio, lang, models in tests:
+                    if name not in models:
+                        continue
+                    t1 = time.perf_counter()
+                    out = model.transcribe(audio, batch_size=BATCH_SIZE, language=lang)
+                    t2 = time.perf_counter()
+                    heard = " ".join(s["text"].strip() for s in out["segments"])
+                    audio_s = len(audio) / 16000
+                    results.append({"test": label, "model": name, "load_s": round(load_s, 2),
+                                    "transcribe_s": round(t2 - t1, 2), "audio_s": round(audio_s, 1),
+                                    "speed_x": round(audio_s / max(t2 - t1, 1e-6), 1),
+                                    "match": round(match_score(heard, expected), 3), "heard": heard})
+            finally:
+                model = None
+                unload_models()                   # leave VRAM free; the chosen model loads on the next run
     return results

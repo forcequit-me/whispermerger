@@ -74,12 +74,14 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   the GPU frees up; once the batch is done it starts immediately. Caching makes unchanged files
   instant. Single Transcribe/Label jobs are cancelable too.
 - **Pause & resume** — pause the **whole batch** or a **single Transcribe & Merge job** mid-run. The
-  file currently transcribing finishes, then the model is **unloaded from the GPU** (VRAM returns to
-  ~0, so the card is free for other work while you're paused) and the queue halts. **Resume** reloads
+  track currently transcribing finishes (its transcription and word timing), then the model is
+  **unloaded from the GPU** (VRAM returns to ~0, so the card is free for other work, and other runs
+  take their turn, while you're paused) and the queue halts. A run still waiting for the GPU pauses
+  at once; Cancel doesn't wait for the track. **Resume** reloads
   the model and continues exactly where it left off. **The clocks freeze while paused** — elapsed,
   per-file "done in Xs", and the read-vs-GPU split all exclude paused time, so the timings stay
   honest no matter how long you step away. The status line spells out which stage you're in
-  ("Pausing… (current file finishes)" → "Paused · GPU released"). The trade for freeing the card is
+  ("Pausing… (current track finishes)" → "Paused · GPU released"). The trade for freeing the card is
   a one-time model reload (a few seconds up to ~30 s) on resume.
 - **Single-track labeling (v2)** — for one mixed track with multiple speakers (interview,
   podcast, collab): silero-VAD auto-detects speech on a WaveSurfer waveform, you assign regions
@@ -317,7 +319,8 @@ still running or queued can't be retried (in the app too): wait for it, or cance
 one transcript is one item that counts as every file in it. A file that is canceled while it is
 being transcribed is not written, whichever track it was on; the track that was running still
 finishes and stays cached, so `retry-batch` is quick. A run that is waiting for another run to
-finish with the GPU pauses or cancels at once.
+finish with the GPU pauses or cancels at once. Otherwise a pause waits for the end of the track
+being transcribed (`get-progress` / `get-batch` say "pausing" until then, "GPU released" after).
 
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
 Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `cancel`, `pause`, `resume`,

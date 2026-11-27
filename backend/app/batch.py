@@ -24,7 +24,7 @@ from .merge import MergeOptions
 from .models import MergedOutput
 from .pipeline import WAITING, PreparedSource, run_merge_pipeline, run_per_file_pipeline
 from .jobs import WAITING_ANSWER
-from .transcribe import asking, cache_tally, reused_since
+from .transcribe import asking, cache_tally, holding_gpu_turn, reused_since
 
 TranscribeFn = Callable[[str], dict]
 
@@ -243,8 +243,9 @@ def _park(batch: "BatchStatus", waiting: Callable[[], bool]) -> None:
 def _gate(batch: "BatchStatus") -> bool:
     """Cooperative checkpoint, called wherever a cancel would be checked. While paused it frees the
     GPU, freezes the open clocks, and blocks here until resume or cancel. Returns True if the run
-    should stop (a cancel is pending). Zero cost when not paused."""
-    if batch.paused and not batch.cancelled:
+    should stop (a cancel is pending). Zero cost when not paused. Inside the GPU turn (a track
+    part-way through) it never parks: the pause lands at the next checkpoint after the track."""
+    if batch.paused and not batch.cancelled and not holding_gpu_turn():
         _park(batch, lambda: batch.paused)
     return batch.cancelled
 

@@ -23,6 +23,8 @@ import numpy as np
 
 from .merge import MergeOptions, merge
 from .models import MergedOutput
+from .pipeline import WAITING
+from .transcribe import chunk_progress
 
 Region = tuple[float, float]            # (start, end) seconds on the original timeline
 TranscribeFn = Callable[[str], dict]    # wav path -> WhisperX output dict
@@ -129,7 +131,8 @@ def transcribe_regions(
     """Transcribe each speaker on only their labeled regions, remap onto the original
     timeline, and merge. `track_wav` is the single track extracted to mono/16k.
     `progress(frac, msg)` fires before each speaker, weighted by labeled seconds; it is also the
-    job's pause/cancel checkpoint, so those take effect between speakers."""
+    job's pause/cancel checkpoint, so those take effect between speakers, and at once while a
+    speaker waits for another run to finish with the GPU."""
     import soundfile as sf
 
     audio, sr = sf.read(str(track_wav), dtype="float32")
@@ -143,15 +146,24 @@ def transcribe_regions(
     tmpdir = Path(tempfile.mkdtemp(prefix="wm_diar_"))
     try:
         for k, (speaker, regions) in enumerate(speaker_regions.items(), 1):
+            line = f"transcribing {speaker} ({k}/{len(speaker_regions)})"
             if progress:
-                progress(done / total, f"transcribing {speaker} ({k}/{len(speaker_regions)})")
+                progress(done / total, line)
+
+            # The wait for the GPU says so, and is a checkpoint (pause and cancel at once); Auto-detect's
+            # choice joins the line. The speaker's own chunks aren't reported: it runs to the end.
+            def on_chunk(f, waiting=False, detected=None, frac=done / total, line=line) -> None:
+                if progress and (waiting or detected or not f):
+                    progress(frac, f"{line} · {WAITING}" if waiting else
+                             f"{line} · {detected}" if detected else line)
             done += secs[speaker]
             concat, mapping = _concat_regions(audio, regions, sr)
             if len(concat) == 0:
                 continue
             clip = tmpdir / f"{_safe(speaker)}.wav"
             sf.write(str(clip), concat, sr, subtype="PCM_16")
-            wx = transcribe_fn(str(clip))
+            with chunk_progress(on_chunk):
+                wx = transcribe_fn(str(clip))
             outputs.append(_remap_output(wx, mapping))
             labels.append(speaker)
     finally:
