@@ -423,6 +423,19 @@ def test_a_job_pauses_resumes_and_cancels(api, two_stream_file, monkeypatch):
             act("nope")
 
 
+def test_transcribe_wait_fails_when_its_job_is_canceled(api, two_stream_file, monkeypatch, capsys):
+    gate, rc = _held(monkeypatch), []
+    run = threading.Thread(target=lambda: rc.append(
+        cli.main(["transcribe", str(two_stream_file), "--tracks", "1", "--wait"])))
+    run.start()
+    jobs = api.app.state.jobs._jobs
+    _until(lambda: jobs)
+    assert actions.cancel(next(iter(jobs))) == {"canceling": True}
+    gate.set()
+    run.join(10)
+    assert rc == [1] and "error: job canceled" in capsys.readouterr().err
+
+
 def test_a_batch_is_controlled_by_project_and_file_number(api, two_stream_file, monkeypatch, tmp_path):
     gate, f = _held(monkeypatch), str(two_stream_file)
     done = lambda bid, status="done": _until(lambda: actions.get_batch(bid)["status"] == status)
