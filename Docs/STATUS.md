@@ -814,6 +814,18 @@ Tests: 209 pass, 4 new (each fails on the old code). `add-files` was run through
 a server of its own; the other three were not run on the real GPU (about 8.9 of 12 GB was in use
 by other apps at the time).
 
+## One spelling for "canceled" (2026-11-27)
+
+A single transcription job reported `cancelled` (two l) as its status and message, while
+batches, model downloads and all the app's wording said `canceled`. A caller checking for a
+canceled run had to know both. Everything a user or caller sees now says `canceled`: the job
+status (`JobStatus.CANCELED`, renamed to match `Status.CANCELED` in `batch.py`) and message, the
+`get_progress` help text (CLI and MCP), the check in `_wait_job` and the app's checks in `app.js`
+and `labeltrack.js`. Internal names (`is_cancelled`, `batch.cancelled`, `Cancelled`,
+`JobCancelled`) are unchanged. There is no fallback for the old spelling.
+
+Tests: 210 pass, 1 new: `transcribe --wait` still exits with code 1 when its job is canceled.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
