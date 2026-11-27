@@ -1052,11 +1052,14 @@ def use_model(model_id: str) -> dict:
 @router.post("/benchmark", response_model=JobCreated)
 def start_benchmark(request: Request) -> JobCreated:
     """Time every downloaded speech model on a sentence spoken by the Windows voice. Job-based:
-    poll /progress/{job_id}, then read /benchmark/{job_id}."""
+    poll /progress/{job_id}, then read /benchmark/{job_id}. A canceled or failed run keeps the
+    models it timed before it stopped."""
     if not any(modelstore.is_installed(modelstore.whisper_entry(n)) for n in modelstore.WHISPER_MODELS):
         raise HTTPException(409, "download a speech model first")
     job = request.app.state.jobs.create()
-    request.app.state.jobs.run(job, benchmark.run, on_pause=unload_models)
+    results = request.app.state.benchmarks[job.id] = []
+    request.app.state.jobs.run(job, lambda progress: benchmark.run(progress, results=results),
+                               on_pause=unload_models)
     return JobCreated(job_id=job.id)
 
 
@@ -1067,4 +1070,4 @@ def benchmark_result(request: Request, job_id: str) -> dict:
         raise HTTPException(404, "unknown job")
     return {"status": job.status,
             "expected": {"English": benchmark.SENTENCE, "European Portuguese": benchmark.PT_SENTENCE},
-            "results": job.result or []}
+            "results": job.result or request.app.state.benchmarks.get(job_id, [])}

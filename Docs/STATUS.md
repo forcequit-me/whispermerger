@@ -1026,6 +1026,28 @@ track 2 ended the file 2.5 s later, the polling included; the other file was wri
 interrupted track wasn't cached (the next batch transcribed it again); a whole-batch cancel took
 the same 2.5 s.
 
+## A canceled Benchmark keeps what it timed (2026-11-27)
+
+A Benchmark canceled part-way returned no results, though some models had been timed: the list
+was only handed over when the run finished. Now `benchmark.run` fills a list the route keeps
+(`app.state.benchmarks`, by job id), so `/api/benchmark/{job_id}` (`get_benchmark`, CLI and MCP)
+returns the models timed so far, with the run's status, "canceled". The same list keeps them when
+the Benchmark fails part-way (status "error"), and it also shows the rows so far while it runs.
+
+- The app's Benchmark screen shows that partial table under "canceled · the models timed before
+  that:" (or "error: ..."); with nothing timed it says "canceled" or the error, as before.
+- `run_benchmark` with `wait`: a run canceled or failed meanwhile is still an error (exit code 1,
+  like `transcribe --wait`), and its message now gives the job id for `get_benchmark`. The
+  docstrings (CLI help, MCP descriptions) and the README say so.
+- A cancel still lands between models: the model being timed finishes and is kept.
+
+Tests: 246 pass, 1 new (fails on the old code): the real `benchmark.run` with a fake model,
+canceled after its first model, then failing on its second, then canceled during `run-benchmark
+--wait`. One older test's stand-in for `benchmark.run` takes the new argument. Live on the real
+GPU (own server and cache): canceled once two of the 17 models were timed, `get-benchmark` gave
+`canceled` and both models (English and European Portuguese rows); `run-benchmark --wait`
+canceled from outside exited 1 with the job id. The app's screen was not opened.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

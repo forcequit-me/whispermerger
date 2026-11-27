@@ -2154,10 +2154,11 @@ $("#bench-run").onclick = async () => {
     status.textContent = p.message || p.status;
   } while (p.status === "queued" || p.status === "running");
   run.disabled = false; cancel.style.display = "none";
-  if (p.status === "error") { status.textContent = "error: " + p.error; return; }
-  if (p.status === "canceled") { status.textContent = "canceled"; return; }
+  // A canceled or failed run still shows the models it timed before it stopped.
   const { expected, results } = await (await fetch(`/api/benchmark/${job_id}`)).json();
-  status.textContent = "";
+  const stopped = p.status === "error" ? "error: " + p.error : p.status === "canceled" ? "canceled" : "";
+  if (stopped && !results.length) { status.textContent = stopped; return; }
+  status.textContent = stopped && `${stopped} · the models timed before that:`;
   const t = $("#bench-results");
   t.style.display = "";
   t.innerHTML = "";

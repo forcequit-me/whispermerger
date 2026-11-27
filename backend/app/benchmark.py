@@ -95,16 +95,18 @@ def _tests(tmp: Path, names: list[str]) -> list[tuple]:
     return tests
 
 
-def run(progress: Callable[[float, str], None], names: Optional[list[str]] = None) -> list[dict]:
+def run(progress: Callable[[float, str], None], names: Optional[list[str]] = None,
+        results: Optional[list] = None) -> list[dict]:
     """Benchmark each downloaded speech model (or `names`) on each test sentence it can handle.
     `progress` is the job's checkpoint, so Pause/Cancel take effect between models, and at once
-    while it waits for another run to finish with the GPU."""
+    while it waits for another run to finish with the GPU. `results`: a list to fill as each model
+    is timed, so a run that is canceled or fails part-way still has what it measured."""
     names = names or [n for n in modelstore.WHISPER_MODELS
                       if modelstore.is_installed(modelstore.whisper_entry(n))]
     with tempfile.TemporaryDirectory(prefix="wm_bench_") as tmp:
         progress(0.0, "Speaking the test sentences")
         tests = _tests(Path(tmp), names)
-    results = []
+    results = [] if results is None else results
     for i, name in enumerate(names):
         step = f"Benchmarking {modelstore.whisper_entry(name).name} ({i + 1}/{len(names)})"
         progress(i / len(names), step)            # outside the GPU turn: a pause lands here, between models

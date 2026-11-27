@@ -58,6 +58,7 @@ def create_app() -> FastAPI:
     app.state.cache = Cache(CACHE_DIR)
     app.state.uploads = {}          # file_id -> {"path": str, "source": InputSource}
     app.state.combined = {}         # combo key -> combined file_id (Label Track sequencing)
+    app.state.benchmarks = {}       # job_id -> the Benchmark's results so far (kept on cancel or error)
     app.state.upload_dir = UPLOAD_DIR
 
     app.include_router(api_router, prefix="/api")

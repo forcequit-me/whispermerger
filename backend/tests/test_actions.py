@@ -338,7 +338,7 @@ def test_benchmark_runs_and_reports(api, monkeypatch, capsys):
     from app import modelstore
     row = {"test": "English", "model": "small", "load_s": 1.2, "transcribe_s": 0.5, "audio_s": 11.0,
            "speed_x": 22.0, "match": 1.0, "heard": "Let's move the quarterly review"}
-    monkeypatch.setattr(routes.api.benchmark, "run", lambda progress: [row])       # no GPU, no voice
+    monkeypatch.setattr(routes.api.benchmark, "run", lambda progress, results: [row])   # no GPU, no voice
     monkeypatch.setattr(modelstore, "is_installed", lambda e: False)
     with pytest.raises(actions.ActionError, match="409: download a speech model first"):
         actions.run_benchmark()
@@ -355,6 +355,63 @@ def test_benchmark_runs_and_reports(api, monkeypatch, capsys):
         actions.get_benchmark("nope")
     assert cli.main(["--json", "run-benchmark", "--wait"]) == 0
     assert json.loads(capsys.readouterr().out)["results"][0]["speed_x"] == 22.0
+
+
+def test_a_benchmark_canceled_or_failed_part_way_keeps_what_it_timed(api, monkeypatch, capsys):
+    """The real benchmark.run with a fake model: the first model is timed, then the run is canceled
+    (or the next model fails). get_benchmark has that first model and the run's status; --wait
+    is an error that points at get_benchmark."""
+    import numpy as np
+    from app import benchmark, modelstore
+    monkeypatch.setattr(modelstore, "is_installed", lambda e: True)
+    monkeypatch.setattr(benchmark, "_tests", lambda tmp, names: [
+        ("English", benchmark.SENTENCE, np.zeros(16000, dtype=np.float32), "en", names)])
+    monkeypatch.setattr(benchmark, "unload_models", lambda: None)
+    first = list(modelstore.WHISPER_MODELS)[0]
+    reached, go, fail = threading.Event(), threading.Event(), []
+
+    class Model:
+        def __init__(self, name):
+            self.name = name
+
+        def transcribe(self, audio, batch_size, language):
+            if self.name != first and fail:
+                raise RuntimeError("out of memory")
+            reached.set()
+            go.wait(5)
+            return {"segments": [{"text": " " + benchmark.SENTENCE}]}
+
+    monkeypatch.setattr(benchmark, "_load_model", lambda name, *a: Model(name))
+
+    def first_model_then(stop):
+        reached.clear(), go.clear()
+        job_id = actions.run_benchmark()["job_id"]
+        assert reached.wait(5)
+        stop(job_id)
+        go.set()
+        _until(lambda: actions.get_progress(job_id)["status"] in ("canceled", "error"))
+        return job_id, actions.get_benchmark(job_id)
+
+    job_id, out = first_model_then(actions.cancel)
+    assert out["status"] == "canceled" and [r["model"] for r in out["results"]] == [first]
+    assert out["results"][0]["match"] == 1.0
+
+    fail.append(True)                                  # the second model fails: the first is kept too
+    job_id, out = first_model_then(lambda job_id: None)
+    assert out["status"] == "error" and [r["model"] for r in out["results"]] == [first]
+
+    fail.clear()                                       # --wait on a run canceled meanwhile (from the app, say)
+    reached.clear(), go.clear()
+
+    def cancel_it():
+        reached.wait(5)
+        next(j for j in api.app.state.jobs._jobs.values() if j.status.value == "running").cancel()
+        go.set()
+
+    threading.Thread(target=cancel_it, daemon=True).start()
+    assert cli.main(["run-benchmark", "--wait"]) == 1
+    err = capsys.readouterr().err
+    assert "job canceled" in err and "the models timed before that: get_benchmark " in err
 
 
 def test_mcp_tools_match_the_actions_and_their_marks():

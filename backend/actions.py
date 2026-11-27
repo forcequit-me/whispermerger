@@ -741,17 +741,25 @@ def run_benchmark(wait: bool = False) -> dict:
     test sentence spoken by a Windows voice (a European Portuguese one too, when a model and a
     voice for it are installed). It uses the GPU, so it waits for a running transcription first.
 
-    wait: wait until it's done and return the results.
+    wait: wait until it's done and return the results. A run that is canceled or fails meanwhile
+    is an error (exit code 1 on the command line) that gives its job id: get_benchmark then has
+    the models timed before it stopped.
     Returns {job_id} at once otherwise; follow it with get_progress, then read get_benchmark."""
     job_id = _api("POST", "/api/benchmark")["job_id"]
     if not wait:
         return {"job_id": job_id}
-    _wait_job(job_id)
+    try:
+        _wait_job(job_id)
+    except ActionError as e:
+        if not str(e).startswith(("job canceled", "job error")):
+            raise
+        raise ActionError(f"{e}; the models timed before that: get_benchmark {job_id}") from None
     return get_benchmark(job_id)
 
 
 def get_benchmark(job_id: str) -> dict:
-    """Results of a benchmark started with run_benchmark, complete once "status" is done. For each
+    """Results of a benchmark started with run_benchmark, complete once "status" is done; when it is
+    "canceled" or "error", the models timed before the run stopped. For each
     test sentence and model: load_s (seconds to load the model), transcribe_s, speed_x (times
     faster than real time), match (0 to 1, how much of the sentence it got right) and heard (the
     text it wrote). "expected" is what was said."""

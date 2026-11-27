@@ -229,7 +229,8 @@ split also prints to the server console as a scrollback record (`[timing] <file>
   CAMÕES (full or compressed) isn't chosen app-wide — it's used automatically for Portuguese
   (Portugal). **Benchmark** times each downloaded model on this machine — cold load,
   transcription speed, and how much of a sentence read by a Windows voice it got right (English,
-  plus European Portuguese when CAMÕES is downloaded and a pt-PT voice is installed).
+  plus European Portuguese when CAMÕES is downloaded and a pt-PT voice is installed). A canceled
+  (or failed) Benchmark still shows the models it timed before it stopped.
 
 ## From a terminal or an AI (CLI + MCP)
 
