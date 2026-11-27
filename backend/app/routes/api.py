@@ -27,7 +27,7 @@ from ..batch import ProjectInput, Status, _RunSpec, run_batch
 from ..diarize import detect_speech, transcribe_regions
 from ..export import ExportOptions, pad_segments, to_csv, to_json, to_srt, to_txt
 from ..extract import compute_peaks, concat_wavs, extract_clip, extract_sample, extract_track
-from ..jobs import JobCancelled, canceled_message
+from ..jobs import JobCancelled, JobStatus, canceled_message
 from ..merge import BackchannelRender, MergeOptions
 from ..models import InputSource, MergedOutput, Track
 from ..pipeline import PreparedSource, run_merge_pipeline
@@ -616,7 +616,9 @@ def progress(request: Request, job_id: str) -> ProgressResponse:
         raise HTTPException(404, "unknown job")
     return ProgressResponse(status=job.status.value, progress=job.progress,
                             message=job.message, elapsed=job.elapsed, error=job.error,
-                            paused=job.paused, gpu_freed=job.gpu_freed, reused=job.reused,
+                            # an ended run isn't pausing any more, whatever was asked before it ended
+                            paused=job.paused and job.status in (JobStatus.PENDING, JobStatus.RUNNING),
+                            gpu_freed=job.gpu_freed, reused=job.reused,
                             language=job.language, question=job.question)
 
 
@@ -780,7 +782,8 @@ def start_batch(request: Request, body: BatchRequest) -> BatchCreated:
 def _batch_out(batch) -> BatchStatusOut:
     return BatchStatusOut(
         id=batch.id, status=batch.status.value, progress=batch.progress, elapsed=batch.elapsed,
-        paused=batch.paused, gpu_freed=batch.gpu_freed, question=batch.question,
+        paused=batch.paused and batch.status in (Status.QUEUED, Status.RUNNING),   # not once it has ended
+        gpu_freed=batch.gpu_freed, question=batch.question,
         projects=[ProjectStatusOut(name=p.name, status=p.status.value, progress=p.progress,
                                    message=p.message, weight=p.weight, sources=p.sources,
                                    elapsed=p.elapsed,

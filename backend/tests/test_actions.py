@@ -830,3 +830,28 @@ def test_get_batch_shows_paused_on_the_item_in_progress(api, two_stream_file, mo
     actions.resume(bid)
     _until(lambda: actions.get_batch(bid)["status"] == "done")
     assert actions.get_batch(bid)["items"][0]["message"] != "paused"
+
+
+def test_an_ended_run_shows_no_pause_and_the_wording_fits_every_run(api, two_stream_file, monkeypatch, tmp_path):
+    """Paused, then canceled before the pause landed: canceled, and no "pausing" left behind, in
+    get_progress / get_batch (CLI and MCP) and in the routes the app reads."""
+    gate = _held(monkeypatch)
+    job_id = actions.transcribe([str(two_stream_file)], tracks=[1])["job_id"]
+    actions.pause(job_id)
+    assert actions.get_progress(job_id)["paused"] == ("pausing: the track being transcribed (Label Track: "
+                                                      "the speaker, Benchmark: the model) finishes first")
+    actions.cancel(job_id)
+    gate.set()
+    _until(lambda: actions.get_progress(job_id)["status"] == "canceled")
+    assert "paused" not in actions.get_progress(job_id)
+    assert api.get(f"/api/progress/{job_id}").json()["paused"] is False
+
+    gate.clear()
+    bid = actions.run_batch([str(two_stream_file)], out=str(tmp_path), formats=["txt"])["batch_id"]
+    actions.pause(bid)
+    assert actions.get_batch(bid)["paused"] == "pausing: the track being transcribed finishes first"
+    actions.cancel(bid)
+    gate.set()
+    _until(lambda: actions.get_batch(bid)["status"] == "canceled")
+    assert "paused" not in actions.get_batch(bid)
+    assert api.get(f"/api/batch/{bid}").json()["paused"] is False

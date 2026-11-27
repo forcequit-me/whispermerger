@@ -143,8 +143,8 @@ def _batch_path(batch_id: str, project: Optional[int], file: Optional[int]) -> s
     return f"/api/batch/{batch_id}/project/{(project or 1) - 1}" + (f"/file/{file - 1}" if file else "")
 
 
-def _paused(p: dict) -> str:
-    return "GPU released" if p["gpu_freed"] else "pausing: the track being transcribed finishes first"
+def _paused(p: dict, step: str) -> str:
+    return "GPU released" if p["gpu_freed"] else f"pausing: {step} finishes first"
 
 
 def _wait_job(job_id: str) -> dict:
@@ -387,7 +387,7 @@ def get_progress(job_id: str) -> dict:
     if p.get("language"):
         out["language"] = p["language"]
     if p["paused"]:
-        out["paused"] = _paused(p)
+        out["paused"] = _paused(p, "the track being transcribed (Label Track: the speaker, Benchmark: the model)")
     if p.get("question"):
         out.update(_asked(job_id, p["question"]), status=p["status"])
     return out
@@ -678,7 +678,7 @@ def get_batch(batch_id: str) -> dict:
     out = {"batch_id": batch_id, "status": b["status"], "percent": round(b["progress"] * 100), "files": total,
            "done": done, "items": files}
     if b["paused"]:
-        out["paused"] = _paused(b)
+        out["paused"] = _paused(b, "the track being transcribed")
     if b.get("question"):
         out.update(_asked(batch_id, b["question"]), status=b["status"])
     return out

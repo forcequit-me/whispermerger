@@ -975,6 +975,25 @@ same model; the other run finishes, nothing is left loaded while the first stays
 resume there is one copy, the cached one. The test for a run paused while waiting now also checks
 that it asked for nothing to be unloaded.
 
+## An ended run no longer says "pausing" (2026-11-27)
+
+A run paused and then canceled before the pause landed (seen with a Benchmark) ended "canceled"
+but `get-progress` still showed `paused: "pausing: ..."`, and the app's Transcribe and Label Track
+lines would have shown "pausing…" instead of the canceled message. The pause request stays set on
+the run; the routes now report `paused` only while the run is queued or running
+(`/api/progress/{id}` for a job, `/api/batch/{id}` for a batch), so `get_progress`, `get_batch`
+(CLI and MCP) and the app all stop showing it once the run is done, failed or canceled.
+
+Wording: a job's "pausing" line said "the track being transcribed finishes first", which is wrong
+for Label Track (the speaker finishes) and the Benchmark (the model it is timing finishes). It now
+reads "pausing: the track being transcribed (Label Track: the speaker, Benchmark: the model)
+finishes first"; a batch only runs tracks, so its line is unchanged. The app's lines were already
+right (Transcribe: the track, Label Track: the speaker; the Benchmark has no Pause button there),
+and the README says it as `pause` does.
+
+Tests: 240 pass, 1 new: a job and a batch paused then canceled show no pause in `get_progress` /
+`get_batch` or the routes, and the "pausing" wording of each.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
