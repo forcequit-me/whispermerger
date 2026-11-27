@@ -126,6 +126,7 @@ async function errorText(r) {
   try { const d = JSON.parse(text).detail; if (typeof d === "string") return d; } catch {}
   return text || r.statusText;
 }
+window.errorText = errorText;   // labeltrack.js (module) reuses it
 
 // A run stopped to ask before a big word-timing download (Auto-detect chose a language outside
 // "Languages I use"): show the question after `anchor`, with its three answers posted to `url`.
@@ -729,7 +730,7 @@ async function downloadExport(merged, format, filename, options) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ merged, options, filename }),
   });
-  if (!res.ok) { alert("Export failed: " + (await res.text())); return; }
+  if (!res.ok) { alert("Export failed: " + (await errorText(res))); return; }
   const blob = await res.blob();
   const a = el("a", { href: URL.createObjectURL(blob), download: `${filename}.${format.includes(",") ? "zip" : format}` });
   document.body.append(a); a.click(); a.remove();
@@ -770,7 +771,7 @@ async function browseFiles(btn) {
   btn.textContent = "Opening file picker…";
   try {
     const res = await fetch("/api/browse", { method: "POST" });
-    if (!res.ok) { err.textContent = "Could not open picker: " + (await res.text()); return; }
+    if (!res.ok) { err.textContent = "Could not open picker: " + (await errorText(res)); return; }
     const items = await res.json();
     if (items.length) registerItems(items);
   } finally {
@@ -911,7 +912,7 @@ async function runPipeline() {
     setProgress(0, "couldn't reach the server to start — is it still running?");
     runBtn.disabled = false; return;
   }
-  if (!res.ok) { setProgress(0, "error: " + (await res.text())); runBtn.disabled = false; return; }
+  if (!res.ok) { setProgress(0, "error: " + (await errorText(res))); runBtn.disabled = false; return; }
   const { job_id } = await res.json();
   pollJob(job_id, runBtn);
 }
@@ -942,7 +943,7 @@ function pollJob(jobId, runBtn) {
     let p;
     try {
       const r = await fetchTO(`/api/progress/${jobId}`);
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(await errorText(r));
       p = await r.json();
       fails = 0;
     } catch (e) {
@@ -1399,7 +1400,7 @@ function addToProject(proj, btn) {
 async function pickFiles(proj) {
   $("#batch-err").textContent = "";
   const res = await fetch("/api/browse", { method: "POST" });
-  if (!res.ok) { $("#batch-err").textContent = "Picker failed: " + (await res.text()); return; }
+  if (!res.ok) { $("#batch-err").textContent = "Picker failed: " + (await errorText(res)); return; }
   proj.files.push(...(await res.json()));
   renderProjects();
 }
@@ -1410,7 +1411,7 @@ async function pickFolder(proj) {
   try {
     res = await fetchTO("/api/add-folder", { method: "POST" }, 600000);
   } catch (e) { $("#batch-err").textContent = "Folder scan timed out."; return; }
-  if (!res.ok) { $("#batch-err").textContent = "Folder scan failed: " + (await res.text()); return; }
+  if (!res.ok) { $("#batch-err").textContent = "Folder scan failed: " + (await errorText(res)); return; }
   const found = await res.json();
   $("#batch-err").textContent = found.length ? "" : "No audio/video files found in that folder.";
   proj.files.push(...found);
@@ -1492,7 +1493,7 @@ async function startBatch(body) {
   } catch (e) {
     $("#batch-err").textContent = "couldn't reach the server to start the batch."; btn.disabled = false; return;
   }
-  if (!res.ok) { $("#batch-err").textContent = "Batch failed: " + (await res.text()); btn.disabled = false; return; }
+  if (!res.ok) { $("#batch-err").textContent = "Batch failed: " + (await errorText(res)); btn.disabled = false; return; }
   const { batch_id } = await res.json();
   $("#batch-status-panel").style.display = "";
   pollBatch(batch_id, btn);
@@ -1518,7 +1519,7 @@ function pollBatch(id, btn) {
     let b;
     try {
       const r = await fetchTO(`/api/batch/${id}`);
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(await errorText(r));
       b = await r.json();
     } catch (e) { setTimeout(tick, 1500); return; }   // transient — keep waiting, don't die
     renderBatchStatus(b, id, btn);

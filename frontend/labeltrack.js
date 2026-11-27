@@ -117,7 +117,7 @@ document.addEventListener("keydown", (e) => {
 async function addFiles() {
   $("#label-err").textContent = "";
   const res = await fetch("/api/browse", { method: "POST" });
-  if (!res.ok) { $("#label-err").textContent = "Picker failed: " + (await res.text()); return; }
+  if (!res.ok) { $("#label-err").textContent = "Picker failed: " + (await window.errorText(res)); return; }
   for (const it of await res.json()) {
     files.push({ file_id: it.file_id, track_index: 0, filename: it.source.filename,
                  duration: it.source.duration, tracks: it.source.tracks });
@@ -187,7 +187,7 @@ async function rebuild() {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ files: files.map((f) => ({ file_id: f.file_id, track_index: f.track_index })) }),
     });
-    if (!res.ok) { busy(null); $("#label-err").textContent = "Combine failed: " + (await res.text()); return; }
+    if (!res.ok) { busy(null); $("#label-err").textContent = "Combine failed: " + (await window.errorText(res)); return; }
     const r = await res.json();
     if (token !== buildToken) return;  // a newer change superseded this build
     fid = r.file_id; track = 0; dur = r.duration; bounds = r.boundaries;
@@ -517,7 +517,7 @@ async function runVad() {
   if (fid !== activeFileId || track !== activeTrack) return;   // user moved to another track meanwhile
   busy(null);
   if (!res.ok) {
-    $("#label-status").textContent = "Speech detection failed: " + (await res.text()) + " · Detect again to retry";
+    $("#label-status").textContent = "Speech detection failed: " + (await window.errorText(res)) + " · Detect again to retry";
     return;
   }
   const spans = await res.json();
@@ -569,7 +569,7 @@ async function runTranscribe() {
                              language: $("#label-language").value || null }),
     }, 30000);
   } catch (e) { $("#label-status").textContent = "couldn't reach the server to start."; btn.disabled = false; return; }
-  if (!res.ok) { $("#label-status").textContent = "Failed: " + (await res.text()); btn.disabled = false; return; }
+  if (!res.ok) { $("#label-status").textContent = "Failed: " + (await window.errorText(res)); btn.disabled = false; return; }
   const { job_id } = await res.json();
   poll(job_id, btn);
 }
@@ -599,7 +599,7 @@ function poll(jobId, btn) {
     let p;
     try {
       const r = await window.fetchTO(`/api/progress/${jobId}`);
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(await window.errorText(r));
       p = await r.json();
       fails = 0;
     } catch (e) {
