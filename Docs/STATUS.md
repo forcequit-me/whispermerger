@@ -939,6 +939,42 @@ a mix; a file of a project canceled as a whole restarted; a batch paused between
 the file row, each back to its line on resume; and the same through `get_batch`. Two older tests now expect "canceled"
 for a batch whose only project, or only file, was canceled.
 
+## A pause with another run waiting left a model on the GPU (2026-11-27)
+
+Found in a live test on the real GPU (large-v3, 12 GB card). An idle server normally holds one
+speech model plus the word-timing model (about 4.6 GB). After a run was paused mid-track while
+another waited for the GPU, the idle server held about 8.2 GB until shutdown, and the next model
+load had so little room that its batch size dropped from 14 to 2.
+
+Cause: a run now parks outside its GPU turn, so the waiting run takes the turn the moment the
+paused run's track ends and becomes a GPU user before the paused run unloads. `unload_models` then
+took its fallback for "another thread is transcribing": it dropped the speech model from `_loaded`
+and the model cache without `unload_model()`. CTranslate2 keeps a model's GPU memory until
+`unload_model()`, so that model stayed on the GPU, unused and forgotten, and the next load made a
+second copy.
+
+- `unload_models` (`transcribe.py`) now frees the models only while it holds the turn: at once
+  when the turn is free (or is its own: the pt-PT second pass, the Benchmark), otherwise it leaves
+  everything loaded for the run on the GPU and `_gpu_turn` frees them when that run's turn ends.
+  Asking for it and ending a turn are one step (`_unload_lock`), so the request can't be missed.
+- So after the other run's track nobody uses them and they come off the GPU, and "paused · GPU
+  released" holds. If that run has another track, it loads the model again for it (one load, a
+  few seconds); what it loads stays cached after it ends, as after any run, and the paused run
+  reuses it on resume.
+- A pause while waiting for the GPU still leaves the running run's models alone (`_chunk.waiting`).
+  Choosing another speech model (`use-model`) while a run is mid-track also goes through this, so
+  it no longer leaves the old model behind either.
+
+Live check on the real GPU, same sequence (a two-track job paused mid-track while a two-track job
+waits, the second finishes, the first resumes and finishes), used memory with about 1.8 GB used by
+other apps: before, 6.7 GB after one plain transcription and 10.3 GB idle after the sequence; now,
+6.5 GB and 6.5 GB, batch size 14 for every load. A pause with no other run still drops to 2.1 GB.
+
+Tests: 239 pass, 1 new: the paused run parks while the other run is already transcribing on the
+same model; the other run finishes, nothing is left loaded while the first stays paused, and after
+resume there is one copy, the cached one. The test for a run paused while waiting now also checks
+that it asked for nothing to be unloaded.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

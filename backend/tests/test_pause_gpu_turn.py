@@ -134,17 +134,17 @@ def _transcribe_fn(wav):
     return transcribe.transcribe_track(wav, language="is", word_timing=False)
 
 
-def _job_run(work):
+def _job_run(work, on_pause=transcribe.unload_models):
     job = JobRegistry().create()
-    JobRegistry().run(job, work, on_pause=transcribe.unload_models)    # as the routes do
+    JobRegistry().run(job, work, on_pause=on_pause)    # as the routes do
     return job
 
 
-def _transcribe_job(two_stream_file):
+def _transcribe_job(two_stream_file, on_pause=transcribe.unload_models):
     """POST /api/transcribe: run_merge_pipeline on one track of a file, in a job."""
     src = InputSource(filename="a.mkv", duration=2.0, tracks=[Track(track_index=0, speaker="A")])
     return _job_run(lambda progress: run_merge_pipeline(
-        [PreparedSource(str(two_stream_file), src)], _transcribe_fn, progress_cb=progress))
+        [PreparedSource(str(two_stream_file), src)], _transcribe_fn, progress_cb=progress), on_pause)
 
 
 def _other_run(tmp_path):
@@ -213,6 +213,55 @@ def test_a_pause_in_the_last_batch_of_a_track_still_finishes(rig, two_stream_fil
     finally:
         job.resume()
         _settle(job)
+
+
+class _TwoHolds(_Gate):
+    """A _Gate that also stops at chunk `then_at` (the next run's first chunk) until `go2`."""
+
+    def __init__(self, hold_at, then_at):
+        super().__init__(hold_at)
+        self.then_at = then_at
+        self.reached2, self.go2 = threading.Event(), threading.Event()
+
+    def __call__(self):
+        super().__call__()
+        if self.n == self.then_at:
+            self.reached2.set()
+            self.go2.wait(30)
+
+
+def test_a_pause_never_leaves_a_model_behind_on_the_gpu(rig, two_stream_file):
+    """The run waiting for the GPU takes its turn the moment the paused run's track ends, and is
+    already transcribing on the same cached model when the paused run parks and frees the GPU.
+    That model must stay usable for the other run, and come off the GPU for real once nobody uses
+    it, so "GPU released" holds; after resume there is one copy of it, never a second one."""
+    rig.gate = _TwoHolds(1, rig.chunks + 1)
+    src = InputSource(filename="a.mkv", duration=2.0,
+                      tracks=[Track(track_index=0, speaker="A"), Track(track_index=1, speaker="B")])
+    # The paused run parks only once the other run is mid-track (what the live test hit by timing).
+    job = _job_run(lambda progress: run_merge_pipeline(
+        [PreparedSource(str(two_stream_file), src)], _transcribe_fn, progress_cb=progress),
+        on_pause=lambda: (rig.gate.reached2.wait(10), transcribe.unload_models()))
+    other = None
+    try:
+        assert rig.gate.reached.wait(20)
+        other = _other_run(rig.tmp)
+        assert _until(lambda: WAITING in other.message), other.message
+        job.pause()
+        rig.gate.go.set()
+        assert _until(lambda: job.gpu_freed), "the paused run never parked"
+        assert rig.gate.reached2.is_set() and len(rig.pipes) == 1      # the other run is on the same model
+        rig.gate.go2.set()
+        assert _until(lambda: other.status is JobStatus.DONE), other.error   # not unloaded under it
+        assert not [p for p in rig.pipes if p.model.model.loaded], "a model was left on the GPU"
+        job.resume()
+        assert _until(lambda: job.status is JobStatus.DONE), job.error
+        loaded = [p for p in rig.pipes if p.model.model.loaded]
+        assert len(loaded) == 1 and transcribe._loaded == loaded      # one copy, the cached one
+    finally:
+        rig.gate.go2.set()
+        job.resume()
+        _settle(job, other)
 
 
 # --- 3. the model, unloaded under the running track ---------------------------------------------
@@ -454,6 +503,7 @@ def _waiting_run_pauses_and_cancels_at_once(rig, job, waiting_text):
     job.pause()
     assert _until(lambda: job.gpu_freed), "a run waiting for the GPU did not pause at once"
     assert rig.pipes == [] and rig.gate.n == 0
+    assert not transcribe._unload_after_turn       # nor freed when the other run's turn ends
     job.resume()
     assert _until(lambda: not job.gpu_freed and waiting_text in job.message)
     job.cancel()

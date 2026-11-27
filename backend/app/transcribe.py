@@ -300,6 +300,7 @@ def _gpu_turn():
     another thread can't unload them under it. While another run has the GPU, say so, every half
     second: that report is also where a waiting run is paused (it blocks) or canceled (it raises),
     while it holds nothing yet."""
+    global _unload_after_turn
     fn = getattr(_chunk, "fn", None)
     waited = not GPU_TURN.acquire(blocking=not fn)
     if waited:
@@ -319,7 +320,13 @@ def _gpu_turn():
             yield
     finally:
         _chunk.turn -= 1
-        GPU_TURN.release()
+        with _unload_lock:                            # a run parked meanwhile asked for the GPU back
+            try:
+                if _unload_after_turn:
+                    _unload_after_turn = False
+                    _free_models()
+            finally:
+                GPU_TURN.release()
 
 
 def holding_gpu_turn() -> bool:
@@ -437,12 +444,38 @@ def _note_detected(language: str, confidence: float) -> None:
         modelstore.report(f"detected {text}")
 
 
+# A run parks for a pause outside its GPU turn, so the run that was waiting may already have the
+# turn and be transcribing on the cached models. Unloading then left them working but forgotten:
+# their VRAM was never freed and the next load made a second copy (~4 GB more on a 12 GB card,
+# 2026-11-27). So the models are freed only by whoever holds the turn: at once if it is free,
+# otherwise by that run when its turn ends. _unload_lock makes "ask" and "end of turn" one step.
+_unload_lock = threading.Lock()
+_unload_after_turn = False
+
+
 def unload_models() -> None:
     """Drop the cached ASR + alignment models and hand their VRAM back to CUDA. Called when a run
     is paused so a paused job stops occupying the GPU; the models reload lazily on the next
-    transcribe. Must run on the worker thread that owns the GPU (where the models were created)."""
+    transcribe. While another run has its GPU turn, they are freed when that turn ends."""
+    global _unload_after_turn
     if getattr(_chunk, "waiting", False):  # paused while waiting for its turn: nothing on the GPU is
         return                             # this run's, the models there belong to the run using them
+    if holding_gpu_turn():
+        return _free_models()
+    with _unload_lock:
+        mine = GPU_TURN.acquire(blocking=False)
+        if not mine:
+            _unload_after_turn = True
+    if mine:
+        try:
+            _free_models()
+        finally:
+            with _unload_lock:
+                _unload_after_turn = False            # anyone asking meanwhile: done just now
+                GPU_TURN.release()
+
+
+def _free_models() -> None:
     _release_loaded()
     _load_model.cache_clear()
     _load_align.cache_clear()
