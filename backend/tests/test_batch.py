@@ -836,3 +836,35 @@ def test_a_batch_paused_while_waiting_for_the_gpu_shows_paused_on_the_file(two_s
         turn.set()
         _wait_status(batch)
     assert batch.status is Status.DONE
+
+
+# --- paused, then canceled, then run again --------------------------------------------------------
+
+def _paused_then_canceled(two_stream_file, tmp_path):
+    reg = BatchRegistry()
+    proj = _perfile_project(two_stream_file)
+    batch = reg.create([proj])
+    reg.pause(batch.id)                                   # parks at its first checkpoint
+    reg.set_spec(batch.id, _RunSpec([proj], _stub, "folder", str(tmp_path), None))
+    reg.run(batch, lambda: run_batch(batch, [proj], _stub, output_mode="folder", output_folder=str(tmp_path)))
+    _until_true(lambda: batch.gpu_freed)
+    reg.cancel(batch.id)
+    _wait_status(batch)
+    assert batch.status is Status.CANCELED
+    return reg, batch
+
+
+def test_a_batch_paused_then_canceled_runs_when_retried(two_stream_file, tmp_path):
+    """A retry, or a restart of one file, is a new run: it isn't held by the pause of the run that
+    was canceled (it parked, "paused · GPU released", until Resume), and runs to the end."""
+    reg, batch = _paused_then_canceled(two_stream_file, tmp_path / "retry")
+    assert reg.retry(batch.id, [0])
+    _wait_status(batch)
+    assert batch.status is Status.DONE, (batch.status, batch.paused, batch.gpu_freed)
+    assert [f.status for f in batch.projects[0].files] == [Status.DONE, Status.DONE]
+
+    reg, batch = _paused_then_canceled(two_stream_file, tmp_path / "restart")
+    assert reg.restart_file(batch.id, 0, 1)
+    _wait_status(batch)
+    assert batch.status is Status.DONE, (batch.status, batch.paused, batch.gpu_freed)
+    assert [f.status for f in batch.projects[0].files] == [Status.CANCELED, Status.DONE]

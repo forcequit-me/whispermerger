@@ -1048,6 +1048,22 @@ GPU (own server and cache): canceled once two of the 17 models were timed, `get-
 `canceled` and both models (English and European Portuguese rows); `run-benchmark --wait`
 canceled from outside exited 1 with the job id. The app's screen was not opened.
 
+## A batch paused, then canceled, runs when retried (2026-11-27)
+
+A batch paused and then canceled kept its pause request (`BatchStatus.paused`), which is only
+reported while a run is going. A `retry-batch`, or a restart of one file, started a new run that
+parked at its first checkpoint: "paused · GPU released", with nothing running until Resume was
+pressed, although nothing showed a pause before the retry. `retry` and `restart_file` in
+`BatchRegistry` now clear the pause along with the cancel when they start a new run, so it runs
+to the end. A retry queued while the batch is still running keeps that run's pause, as before.
+
+A single job paused and then canceled needs no change: it ends "canceled" with its thread gone,
+the GPU turn free, nothing loaded and its clock stopped; there is nothing to retry.
+
+Tests: 248 pass, 2 new: a batch paused, parked, then canceled, run again by `retry` and (another
+one) by `restart_file`, each ends done (each half fails on the old code); a job paused, parked,
+then canceled leaves nothing behind (passes on the old code too). Not run on the real GPU.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

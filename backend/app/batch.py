@@ -737,6 +737,7 @@ class BatchRegistry:
             if batch.status is not Status.RUNNING:
                 batch.status = Status.RUNNING
                 batch.cancelled = False
+                batch.paused = False                 # a new run: a pause the canceled run had doesn't hold it
                 start = True
         if start:
             self.run(batch, lambda: None)            # worker drains rerun_pending
@@ -829,6 +830,7 @@ class BatchRegistry:
             if batch.status is not Status.RUNNING:   # claim it so a second caller won't also start
                 batch.status = Status.RUNNING
                 batch.cancelled = False
+                batch.paused = False                 # a new run: a pause the canceled run had doesn't hold it
                 start = True
         if start:
             self.run(batch, lambda: None)            # worker drains rerun_pending

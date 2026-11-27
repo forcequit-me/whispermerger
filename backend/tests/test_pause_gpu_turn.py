@@ -677,3 +677,20 @@ def test_a_file_canceled_mid_track_while_the_batch_is_pausing_reads_canceled_at_
         assert batch.status is Status.DONE and ps.files[1].status is Status.DONE
     finally:
         _finish_batch(reg, batch)
+
+
+def test_a_job_paused_then_canceled_leaves_nothing_hanging(rig, two_stream_file):
+    """Parked for its pause ("GPU released"), then canceled: the job ends canceled, its thread is
+    gone, the turn is free, no model is left loaded and its clock isn't counting paused time."""
+    job = _transcribe_job(two_stream_file)
+    try:
+        _pause_job_mid_chunk(rig, job)
+        job.cancel()
+        assert _until(lambda: job.status is JobStatus.CANCELED), job.status
+        job._thread.join(3)
+        assert not job._thread.is_alive()
+        assert not job.gpu_freed and not job.pause_started and not transcribe.GPU_TURN.locked()
+        assert not [p for p in rig.pipes if p.model.model.loaded] and transcribe._loaded == []
+    finally:
+        job.resume()
+        _settle(job)
