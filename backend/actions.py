@@ -410,6 +410,8 @@ def cancel(run_id: str, project: Optional[int] = None, file: Optional[int] = Non
     seconds; word timing (at the end of each track) has no such steps, so a cancel during it lands
     when the track ends, and Label Track finishes the speaker, the Benchmark the model. Nothing of a
     canceled job or file is written; its finished tracks stay cached, the interrupted one is not.
+    While a batch is paused (or pausing), a project or file that is in progress is canceled at once,
+    and the rest of the batch stays paused until resume.
     What was canceled in a batch can be run again with retry_batch.
 
     run_id: the job id or batch id.

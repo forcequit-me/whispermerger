@@ -331,7 +331,8 @@ so `retry-batch` reuses them. Its message says how far it got, e.g.
 A run that is waiting for another run to finish with the GPU pauses or cancels at once. Otherwise a pause waits for the end of the track
 being transcribed (Label Track: the speaker, Benchmark: the model; `get-progress` / `get-batch`
 say "pausing" until then, "GPU released" after, and the batch item that was in progress says
-"paused"). A run that has ended shows no pause.
+"paused"). A run that has ended shows no pause. While a batch is paused (or pausing), canceling the
+project or file in progress takes effect at once; the rest of the batch stays paused until resume.
 
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
 Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `cancel`, `pause`, `resume`,

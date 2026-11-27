@@ -225,7 +225,7 @@ def _open_timed(batch: "BatchStatus"):
 
 def _park(batch: "BatchStatus", waiting: Callable[[], bool]) -> None:
     """Block the worker here while `waiting()`: GPU freed, open clocks frozen. A batch cancel ends
-    the wait too."""
+    the wait too (a project or file cancel is part of `waiting`, see _gate and _asker)."""
     if batch.on_pause:
         batch.on_pause()                         # free the GPU (runs on the worker thread)
     batch.gpu_freed = True
@@ -247,18 +247,22 @@ def _gate(batch: "BatchStatus") -> bool:
     """Cooperative checkpoint, called wherever a cancel would be checked. While paused it frees the
     GPU, freezes the open clocks, and blocks here until resume or cancel. Returns True if the run
     should stop (a cancel is pending). Zero cost when not paused. Inside the GPU turn (a track
-    part-way through) it never parks: the pause lands at the next checkpoint after the track."""
+    part-way through) it never parks: the pause lands at the next checkpoint after the track.
+    A cancel of the project or file mid-run also skips the park, or ends it: that item stops at
+    once (the caller checks its own flag next) and the batch parks again before anything else."""
     if batch.paused and not batch.cancelled and not holding_gpu_turn():
         # The row mid-run (a file, or a joined project) says so meanwhile, as the batch does, and
         # gets its line back on resume (as _asker does for a question).
         running = [p for p in batch.projects if p.status is Status.RUNNING]
         rows = [r for p in running for r in ([f for f in p.files if f.status is Status.RUNNING] if p.files else [p])]
+        if any(r.cancel_requested for r in (*running, *rows)):
+            return batch.cancelled
         before = [(r, r.message) for r in rows]
         for r in rows:
             r.message = "paused"
         for p in running:
             _recalc_project(p)
-        _park(batch, lambda: batch.paused)
+        _park(batch, lambda: batch.paused and not any(r.cancel_requested for r in (*running, *rows)))
         for r, message in before:
             r.message = message
         for p in running:
@@ -414,8 +418,9 @@ def _process_project(
                 # Waiting for the GPU is a checkpoint too (it reports every half second): a pause
                 # or a cancel takes effect now, not after the other run and then this track.
                 # Mid-track, every chunk is a cancel check, as for a job; it asks cancel_pending,
-                # which never parks, so a pause still waits for the end of the track.
-                if files[i].cancel_requested or (is_cancelled() if waiting else cancel_pending()):
+                # which never parks, so a pause still waits for the end of the track. The file's own
+                # cancel is looked at last: a park while waiting ends when the file is canceled.
+                if (is_cancelled() if waiting else cancel_pending()) or files[i].cancel_requested:
                     raise Cancelled()
 
             def on_done(i: int, src: PreparedSource, merged, seen=seen) -> None:
@@ -469,7 +474,7 @@ def _process_project(
                 on_start=on_start, on_track=on_track, on_done=on_done, on_error=on_error,
                 on_skip=on_skip, is_file_cancelled=lambda i: files[i].cancel_requested,
                 on_wait=on_wait, on_chunk=on_chunk)
-            if is_cancelled():
+            if cancel_pending():                 # not a park: a pause holds the next work, not this end
                 raise Cancelled()
             ps.output_dir = str(parent if output_mode == "source" else out_dir)
         else:
@@ -536,6 +541,9 @@ def _run_projects(
 ) -> None:
     """Process (project, status) pairs in order; stop at the next boundary on cancel and
     mark any not-yet-finished ones CANCELED. `batch`: where a run's questions for the user go."""
+    def batch_cancelled() -> bool:                    # the same, without stopping for a pause
+        return batch.cancelled if batch else is_cancelled()
+
     for project, ps in pairs:
         if is_cancelled():
             break
@@ -556,10 +564,11 @@ def _run_projects(
                                  output_folder=output_folder, options=options,
                                  is_cancelled=proj_cancelled, cancel_pending=cancel_pending)
         except Cancelled:
-            if is_cancelled():                        # whole-batch cancel stops the queue
+            if batch_cancelled():                     # whole-batch cancel stops the queue
                 break
-            # single-item cancel: this project is marked CANCELED, the queue continues
-    if is_cancelled():
+            # single-item cancel: this project is marked CANCELED, the queue continues (a pause
+            # parks at the top of the loop, before the next project; with none left, it ends)
+    if batch_cancelled():
         for _, ps in pairs:
             if ps.status in (Status.QUEUED, Status.RUNNING):
                 _mark_canceled(ps)
@@ -705,7 +714,8 @@ class BatchRegistry:
     def cancel_project(self, batch_id: str, index: int) -> bool:
         """Cancel ONE project — the queue continues to the next. Takes effect at that project's
         next chunk of a track (word timing: the end of the track), at its next stage boundary
-        otherwise, or immediately if it hasn't started yet."""
+        otherwise (at once while the batch is parked for a pause, which then holds the rest), or
+        when the queue reaches it if it hasn't started yet."""
         batch = self.get(batch_id)
         if batch is None or not (0 <= index < len(batch.projects)):
             return False
@@ -715,7 +725,8 @@ class BatchRegistry:
 
     def cancel_file(self, batch_id: str, pindex: int, findex: int) -> bool:
         """Cancel ONE file inside a per-file project — the other files keep going. Stops at the
-        next chunk of its track (word timing: the end of the track), or immediately if it hasn't started."""
+        next chunk of its track (word timing: the end of the track; at once while the batch is
+        parked for a pause), or is skipped when the queue reaches it if it hasn't started."""
         batch = self.get(batch_id)
         if batch is None or not (0 <= pindex < len(batch.projects)):
             return False

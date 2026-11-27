@@ -184,11 +184,11 @@ def run_per_file_pipeline(
                 profiles: list = []
                 completed = True
                 for j, track in enumerate(selected):
-                    if is_file_cancelled(i):
-                        raise _FileCancelled()
                     if cancelled():
                         completed = False
                         break
+                    if is_file_cancelled(i):         # after: a pause parks above until the file is canceled
+                        raise _FileCancelled()
                     on_track(i, j, len(selected), track.speaker)
                     # on_chunk(i, j, tracks, share of this track's chunks done) while it transcribes
                     report_chunk = (lambda f, waiting=False, detected=None, i=i, j=j, n=len(selected):

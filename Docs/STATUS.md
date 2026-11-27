@@ -1091,6 +1091,34 @@ stopping are refused and run once it has stopped, with and without a pause first
 before a batch cancel ends canceled; and the same refusal through the CLI, MCP and the routes. Not
 run on the real GPU.
 
+## Canceling one project or file while the batch is paused (2026-11-27)
+
+A cancel of one project or one file of a batch that was paused, or still pausing, was answered but
+did nothing until Resume: the row kept saying "Canceling…", and a canceled file could even start
+its next track before it stopped. A whole-batch cancel already worked at once. The batch's
+checkpoint (`_gate` in `batch.py`) parked for the pause before the project's or file's own cancel
+was looked at, and the park only ended on Resume or a whole-batch cancel.
+
+- `_gate` no longer parks while the project or file in progress is canceled, and a park ends when
+  it is: the item stops at once ("canceled" with how many tracks were transcribed, nothing written,
+  no further track), then the batch parks again before anything else starts.
+- The project's own check comes after the checkpoint where it was before it (a file between
+  tracks in `run_per_file_pipeline`, and while waiting for the GPU in `on_chunk`), so a park ended
+  by its cancel is seen.
+- With nothing left to do, the batch ends instead of parking: the end of a one-transcript-per-file
+  project and the end of the queue check for a cancel without parking. So a pause asked for
+  during the last track of such a project now lets the batch end "done"; a pause before the next
+  project, or before a joined project's merge step, still parks.
+- A project or file that has not started yet and is canceled while the batch is paused still
+  shows "canceled" when the queue reaches it (after Resume). Marking it at once would let a
+  Restart or Retry re-queue it while the current pass still holds it, so it could run twice.
+- Wording: `cancel` (CLI and MCP), the README and the `BatchRegistry` docstrings say so.
+
+Tests: 256 pass, 4 new in `test_pause_gpu_turn.py` (each fails on the old code): a file and a
+project canceled while the batch is parked (the file: the batch stays paused and the next file runs
+after Resume; the project: the batch ends), the last file canceled while the batch is pausing ends
+the batch, and a joined project canceled while pausing after its first track stops at once.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
