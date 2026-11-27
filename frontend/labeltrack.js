@@ -632,7 +632,7 @@ function poll(jobId, btn) {
       finish();
       return;
     }
-    if (p.status === "cancelled") { setLabelBar(p.progress, "canceled"); $("#label-status").textContent = "canceled"; finish(); return; }
+    if (p.status === "canceled") { setLabelBar(p.progress, "canceled"); $("#label-status").textContent = "canceled"; finish(); return; }
     if (p.status === "error") { setLabelBar(p.progress, "error"); $("#label-status").textContent = "error: " + p.error; finish(); return; }
     setTimeout(tick, 600);
   };

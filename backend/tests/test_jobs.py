@@ -71,7 +71,7 @@ def test_cancel_sets_cancelled_status():
 
     reg.run(job, work)
     _wait(job)
-    assert job.status is JobStatus.CANCELLED
+    assert job.status is JobStatus.CANCELED
     assert job.result is None
 
 
@@ -122,7 +122,7 @@ def test_cancel_while_paused_unwinds():
     assert job.gpu_freed is True
     job.cancel()                         # cancel while paused -> wakes and unwinds
     _wait(job)
-    assert job.status is JobStatus.CANCELLED
+    assert job.status is JobStatus.CANCELED
 
 
 def test_job_waits_for_an_answer_like_a_pause():
@@ -162,4 +162,4 @@ def test_cancel_while_waiting_for_an_answer():
     assert job.question is not None
     job.cancel()
     _wait(job)
-    assert job.status is JobStatus.CANCELLED and job.question is None
+    assert job.status is JobStatus.CANCELED and job.question is None

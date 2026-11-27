@@ -417,7 +417,7 @@ def test_a_job_pauses_resumes_and_cancels(api, two_stream_file, monkeypatch):
     assert "paused" not in actions.get_progress(job_id)
     assert actions.cancel(job_id) == {"canceling": True}
     gate.set()
-    _until(lambda: actions.get_progress(job_id)["status"] == "cancelled")
+    _until(lambda: actions.get_progress(job_id)["status"] == "canceled")
     for act in (actions.pause, actions.resume, actions.cancel):
         with pytest.raises(actions.ActionError, match="404"):
             act("nope")

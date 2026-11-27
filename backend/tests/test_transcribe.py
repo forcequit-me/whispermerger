@@ -248,7 +248,7 @@ def test_a_run_waiting_for_the_gpu_pauses_and_cancels_at_once(monkeypatch, tmp_p
         job.resume()
         until(lambda: job.message == "waiting")        # back to waiting
         job.cancel()
-        until(lambda: job.status is JobStatus.CANCELLED)
+        until(lambda: job.status is JobStatus.CANCELED)
     finally:
         transcribe.GPU_TURN.release()
         transcribe._loaded.clear()

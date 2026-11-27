@@ -24,7 +24,7 @@ class JobStatus(str, Enum):
     RUNNING = "running"
     DONE = "done"
     ERROR = "error"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
 
 
 class JobCancelled(Exception):
@@ -172,8 +172,8 @@ class JobRegistry:
                 job.status = JobStatus.DONE
             except JobCancelled:  # cooperative cancel at a stage boundary
                 job.finished_at = time.time()
-                job.message = "cancelled"
-                job.status = JobStatus.CANCELLED
+                job.message = "canceled"
+                job.status = JobStatus.CANCELED
             except Exception as exc:  # surface failure via the job, not a crashed thread
                 traceback.print_exc()          # the job keeps the message; the console the whole story
                 job.finished_at = time.time()

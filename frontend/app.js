@@ -975,7 +975,7 @@ function pollJob(jobId, runBtn) {
       finish();
       return;
     }
-    if (p.status === "cancelled") { setProgress(p.progress, "canceled"); finish(); return; }
+    if (p.status === "canceled") { setProgress(p.progress, "canceled"); finish(); return; }
     if (p.status === "error") { setProgress(p.progress, "error: " + p.error); finish(); return; }
     setTimeout(tick, 500);
   };
@@ -2153,7 +2153,7 @@ $("#bench-run").onclick = async () => {
   } while (p.status === "queued" || p.status === "running");
   run.disabled = false; cancel.style.display = "none";
   if (p.status === "error") { status.textContent = "error: " + p.error; return; }
-  if (p.status === "cancelled") { status.textContent = "canceled"; return; }
+  if (p.status === "canceled") { status.textContent = "canceled"; return; }
   const { expected, results } = await (await fetch(`/api/benchmark/${job_id}`)).json();
   status.textContent = "";
   const t = $("#bench-results");

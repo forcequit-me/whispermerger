@@ -348,7 +348,7 @@ backend/app/
   probe.py      # ffprobe: enumerate audio streams + duration
   extract.py    # ffmpeg: stream -> mono/16k/pcm_s16le (+ audition samples)
   transcribe.py # WhisperX (chosen model) + wav2vec2 align (GPU), cache-aware
-  modelstore.py # model catalog, downloads (resumable, cancellable), chosen speech model
+  modelstore.py # model catalog, downloads (resumable, cancelable), chosen speech model
   benchmark.py  # times each downloaded speech model on a Windows-voice sentence
   merge.py      # pure-python merge + conflict hierarchy
   cache.py      # SHA-256-keyed WhisperX-JSON cache

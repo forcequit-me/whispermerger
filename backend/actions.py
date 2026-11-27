@@ -158,7 +158,7 @@ def _wait_job(job_id: str) -> dict:
             last = msg
         if p["status"] == "done" or p.get("question"):
             return p
-        if p["status"] in ("error", "cancelled"):
+        if p["status"] in ("error", "canceled"):
             raise ActionError(f"job {p['status']}: {p.get('error') or p['message']}")
         time.sleep(1)
 
@@ -372,7 +372,7 @@ def transcribe(paths: list[str], names: Optional[list[str]] = None, tracks: Opti
 
 
 def get_progress(job_id: str) -> dict:
-    """Progress of a transcription job: status (queued, running, done, error, cancelled), percent and
+    """Progress of a transcription job: status (queued, running, done, error, canceled), percent and
     stage. Poll every few seconds until status is done, then call get_transcript. One transcription
     runs on the GPU at a time: while another is running (in the app, a batch or another job), the
     stage says "waiting for another run to finish" and the percent stays put; that's not stuck.
