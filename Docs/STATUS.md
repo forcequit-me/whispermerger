@@ -1169,6 +1169,26 @@ into a refusal (it uses the same helper).
 Still raw where a request fails elsewhere: starting a batch, a run on Transcribe & Merge or Label
 Track, the folder picker and scan, and Export.
 
+## Every refusal in plain words, and a longer wait in one test file (2026-11-27)
+
+The remaining thirteen places that read a refused request's raw answer now use `errorText` too, with
+the same words in front as before. On screen these are Export, the file pickers (Transcribe & Merge,
+Batch, Label Track), the folder scan, starting a run or a batch, and on Label Track combining files
+and speech detection (`labeltrack.js` gets the helper as `window.errorText`). Three of the thirteen
+are the progress checks on Transcribe & Merge, Batch and Label Track: their message is never shown.
+The first and last show their own waiting line and Batch changes nothing, and all three try again.
+A request the server rejects as badly formed has no single sentence in `detail`, so it still shows
+raw.
+
+In `test_pause_gpu_turn.py`, `_until` now waits up to 10 seconds by default (was 3), after one test
+failed once on a cold start. No call there waits for something that should not happen, and calls
+with their own limit keep it.
+
+Tests: 257 pass in about 73 seconds, in two of three full runs after the change. In the other,
+`test_an_ended_run_shows_no_pause_and_the_wording_fits_every_run` (`test_actions.py`, not changed
+here) failed; it did not fail again in 23 further runs of that file, and which check failed was not
+recorded. Both scripts pass `node --check`; the pages were not opened in a browser.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
