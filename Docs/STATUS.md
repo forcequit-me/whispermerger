@@ -1193,6 +1193,23 @@ where the test expects "pausing". This was confirmed by forcing it, and fixed in
 check failed in that one run was not recorded, so the link is very likely but not proven. Both
 scripts pass `node --check`; the pages were not opened in a browser.
 
+## A run the server no longer knows ends the wait (2026-11-27)
+
+When the server was restarted during a run, the page kept asking for that run's progress, got
+"unknown job" (404) every time and treated it like a busy server: Transcribe & Merge and Label
+Track showed "working… waiting for the server" for ever and Batch changed nothing, with the Run
+button disabled. Now a refused progress check (any 4xx answer) ends the wait the way an ended run
+does: Run is usable again and Pause and Cancel are hidden. The page says, for example, "the server
+no longer knows this run (unknown job), probably because it restarted · press Transcribe & Merge
+to run it again", and on Batch "The server no longer knows this batch (unknown batch), probably
+because it restarted. Press Run batch to run it again." No answer, a timeout or a 5xx answer still
+means a busy server and keeps the waiting lines. The Benchmark did not hang on a refusal but showed
+nothing and stopped on a script error; it now says the same thing. In `app.js` the batch loop's
+ending is now one `finish` used for both endings. Checked in the app (Edge, headless, muted, own
+server on its own port and cache): with the server stopped, Transcribe & Merge kept "working…
+waiting for the server" and Batch kept its buttons; after the restart both showed the sentence with
+Run usable again. Label Track and the Benchmark were not run in the browser. Tests: 257 pass.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked
