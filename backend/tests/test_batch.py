@@ -765,3 +765,74 @@ def test_a_file_of_a_project_canceled_as_a_whole_can_be_restarted(two_stream_fil
     _wait_status(batch)
     assert [f.status for f in batch.projects[0].files] == [Status.DONE, Status.CANCELED]
     assert batch.projects[0].status is Status.DONE and batch.status is Status.DONE
+
+
+# --- a paused batch shows "paused" on the row in progress -----------------------------------------
+
+def _until_true(check, timeout=3.0):
+    import time as _t
+    deadline = _t.time() + timeout
+    while not check() and _t.time() < deadline:
+        _t.sleep(0.01)
+    assert check()
+
+
+def test_a_paused_batch_shows_paused_on_the_row_in_progress(two_stream_file, tmp_path):
+    """Paused between tracks: the file row (one transcript per file) or the project row (joined)
+    says "paused" while the batch is parked, and the batch's line is back on resume."""
+    for per_file in (True, False):
+        reg = BatchRegistry()
+        proj = ProjectInput("P", [_two_tracks(two_stream_file, "a.mkv")], per_file=per_file, formats=["txt"])
+        batch = reg.create([proj])
+        calls = []
+
+        def stub(wav):                                     # pause during the first track
+            calls.append(wav)
+            if len(calls) == 1:
+                reg.pause(batch.id)
+            return _stub(wav)
+
+        reg.run(batch, lambda: run_batch(batch, [proj], stub, output_mode="folder",
+                                         output_folder=str(tmp_path / str(per_file))))
+        _until_true(lambda: batch.gpu_freed)
+        ps = batch.projects[0]
+        if per_file:
+            assert (ps.files[0].message, ps.message) == ("paused", "a.mkv · paused")
+        else:
+            assert ps.message == "paused"
+        reg.resume(batch.id)
+        _wait_status(batch)
+        assert batch.status is Status.DONE and len(calls) == 2
+        assert "paused" not in ps.message and all("paused" not in f.message for f in ps.files)
+
+
+def test_a_batch_paused_while_waiting_for_the_gpu_shows_paused_on_the_file(two_stream_file, tmp_path):
+    """Seen live: the batch said "GPU released" while the file still said "waiting for another run
+    to finish". Now the file says "paused", and "waiting" again on resume."""
+    import threading
+    import time as _t
+    from app.transcribe import _chunk
+    turn = threading.Event()
+
+    def waiting_stub(wav):
+        while not turn.is_set():
+            _chunk.fn(0.0, waiting=True)
+            _t.sleep(0.01)
+        return _stub(wav)
+
+    reg, proj = BatchRegistry(), _perfile_project(two_stream_file)
+    batch = reg.create([proj])
+    reg.run(batch, lambda: run_batch(batch, [proj], waiting_stub,
+            output_mode="folder", output_folder=str(tmp_path)))
+    a = batch.projects[0].files[0]
+    try:
+        _until_true(lambda: a.message.endswith("waiting for another run to finish"))
+        reg.pause(batch.id)
+        _until_true(lambda: batch.gpu_freed)
+        assert (a.message, batch.projects[0].message) == ("paused", "a.mkv · paused")
+        reg.resume(batch.id)
+        _until_true(lambda: not batch.gpu_freed and a.message.endswith("waiting for another run to finish"))
+    finally:
+        turn.set()
+        _wait_status(batch)
+    assert batch.status is Status.DONE

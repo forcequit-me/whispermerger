@@ -421,8 +421,9 @@ def pause(run_id: str) -> dict:
     """Pause a job or a batch. The track being transcribed finishes first (its transcription and
     word timing; Label Track: the speaker, Benchmark: the model), then the models leave the GPU, the
     clock stops and other runs can use the GPU until resume. get_progress / get_batch show "paused":
-    "pausing" until that track ends, then "GPU released". A run that is still waiting for another
-    run to finish pauses at once. Cancel doesn't wait for the track.
+    "pausing" until that track ends, then "GPU released", and then the batch item that was in
+    progress says "paused" until resume. A run that is still waiting for another run to finish
+    pauses at once. Cancel doesn't wait for the track.
 
     run_id: the job id or batch id."""
     return _run_post(run_id, "pause")

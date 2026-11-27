@@ -923,10 +923,20 @@ Three rough edges from a live test on the real GPU.
   stayed set and canceled the file again at once. `restart_file` now clears it when the project
   is canceled.
 
-Tests: 235 pass, 4 new: a canceled file, then a failed one, each run again by a plain
+- **The row in progress says "paused".** A batch paused while its file waited for the GPU said
+  "GPU released", but the file's row kept saying "waiting for another run to finish". Now, while
+  the batch is parked for a pause (`_gate` in `batch.py`), the row mid-run says "paused": the
+  running file of a one-transcript-per-file project (and so that project's line, "a.mkv ·
+  paused"), or a joined project. On resume it gets its previous line back, as `_asker` does for
+  a question. This holds for every pause of a batch, between tracks as well as while waiting.
+  `get_batch` passes it through (CLI and MCP), and the app already shows a row's message.
+
+Tests: 238 pass, 7 new: a canceled file, then a failed one, each run again by a plain
 `retry_batch` while the done file isn't; batches whose projects were all canceled, some
 canceled, then retried; a per-file project with all its files canceled, then one restarted, and
-a mix; a file of a project canceled as a whole restarted. Two older tests now expect "canceled"
+a mix; a file of a project canceled as a whole restarted; a batch paused between tracks shows
+"paused" on the file row and on a joined project, and a batch paused while waiting for the GPU on
+the file row, each back to its line on resume; and the same through `get_batch`. Two older tests now expect "canceled"
 for a batch whose only project, or only file, was canceled.
 
 ## Partial / outstanding (v1 polish)

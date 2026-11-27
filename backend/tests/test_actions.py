@@ -818,3 +818,15 @@ def test_a_plain_retry_reruns_the_canceled_or_failed_files_of_finished_projects(
     actions.retry_batch(bid)
     done(bid)
     assert rows(bid) == [(1, "done"), (2, "done")] and len(calls) == 3
+
+
+def test_get_batch_shows_paused_on_the_item_in_progress(api, two_stream_file, monkeypatch, tmp_path):
+    gate = _held(monkeypatch)
+    bid = actions.run_batch([str(two_stream_file)], out=str(tmp_path), formats=["txt"])["batch_id"]
+    actions.pause(bid)                             # lands after the track that is running
+    gate.set()
+    _until(lambda: actions.get_batch(bid).get("paused") == "GPU released")
+    assert actions.get_batch(bid)["items"][0]["message"] == "paused"
+    actions.resume(bid)
+    _until(lambda: actions.get_batch(bid)["status"] == "done")
+    assert actions.get_batch(bid)["items"][0]["message"] != "paused"

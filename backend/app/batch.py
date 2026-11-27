@@ -249,7 +249,20 @@ def _gate(batch: "BatchStatus") -> bool:
     should stop (a cancel is pending). Zero cost when not paused. Inside the GPU turn (a track
     part-way through) it never parks: the pause lands at the next checkpoint after the track."""
     if batch.paused and not batch.cancelled and not holding_gpu_turn():
+        # The row mid-run (a file, or a joined project) says so meanwhile, as the batch does, and
+        # gets its line back on resume (as _asker does for a question).
+        running = [p for p in batch.projects if p.status is Status.RUNNING]
+        rows = [r for p in running for r in ([f for f in p.files if f.status is Status.RUNNING] if p.files else [p])]
+        before = [(r, r.message) for r in rows]
+        for r in rows:
+            r.message = "paused"
+        for p in running:
+            _recalc_project(p)
         _park(batch, lambda: batch.paused)
+        for r, message in before:
+            r.message = message
+        for p in running:
+            _recalc_project(p)
     return batch.cancelled
 
 

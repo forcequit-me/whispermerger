@@ -325,7 +325,8 @@ being transcribed is not written, whichever track it was on; the track that was 
 finishes and stays cached, so `retry-batch` is quick. Its message says how far it got, e.g.
 `canceled · 1 of 2 tracks transcribed, kept for a retry` (a job canceled part-way says the same).
 A run that is waiting for another run to finish with the GPU pauses or cancels at once. Otherwise a pause waits for the end of the track
-being transcribed (`get-progress` / `get-batch` say "pausing" until then, "GPU released" after).
+being transcribed (`get-progress` / `get-batch` say "pausing" until then, "GPU released" after,
+and the batch item that was in progress says "paused").
 
 **MCP server** (`backend/mcp_server.py`, stdio), for Claude Code, Claude Desktop or any MCP client.
 Tools: `add_files`, `transcribe`, `get_progress`, `answer`, `cancel`, `pause`, `resume`,
