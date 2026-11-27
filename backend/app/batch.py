@@ -413,13 +413,15 @@ def _process_project(
                 _recalc_project(ps)
                 # Waiting for the GPU is a checkpoint too (it reports every half second): a pause
                 # or a cancel takes effect now, not after the other run and then this track.
-                if waiting and (files[i].cancel_requested or is_cancelled()):
+                # Mid-track, every chunk is a cancel check, as for a job; it asks cancel_pending,
+                # which never parks, so a pause still waits for the end of the track.
+                if files[i].cancel_requested or (is_cancelled() if waiting else cancel_pending()):
                     raise Cancelled()
 
             def on_done(i: int, src: PreparedSource, merged, seen=seen) -> None:
                 fs = files[i]
-                # Canceled during its last track: nothing is written, as when it is canceled between
-                # tracks. What was transcribed is cached, so running it again is immediate.
+                # Canceled after its last track's last chunk (during word timing): nothing is written,
+                # as when it is canceled between tracks. That track is cached, so a retry reuses it.
                 if fs.cancel_requested or cancel_pending():
                     return on_skip(i, src)
                 dest = Path(src.path).parent if output_mode == "source" else out_dir
@@ -650,7 +652,8 @@ class BatchRegistry:
             self._specs[batch_id] = spec
 
     def cancel(self, batch_id: str) -> bool:
-        """Request cancellation; the worker stops at the next file/project boundary."""
+        """Request cancellation; the track being transcribed stops at its next chunk (word timing: at
+        the end of the track), otherwise the worker stops at the next file/project boundary."""
         batch = self.get(batch_id)
         if batch is None:
             return False
@@ -678,7 +681,8 @@ class BatchRegistry:
 
     def cancel_project(self, batch_id: str, index: int) -> bool:
         """Cancel ONE project — the queue continues to the next. Takes effect at that project's
-        next stage boundary (or immediately if it hasn't started yet)."""
+        next chunk of a track (word timing: the end of the track), at its next stage boundary
+        otherwise, or immediately if it hasn't started yet."""
         batch = self.get(batch_id)
         if batch is None or not (0 <= index < len(batch.projects)):
             return False
@@ -687,8 +691,8 @@ class BatchRegistry:
         return True
 
     def cancel_file(self, batch_id: str, pindex: int, findex: int) -> bool:
-        """Cancel ONE file inside a per-file project — the other files keep going. Stops at that
-        file's next track boundary, or immediately if it hasn't started."""
+        """Cancel ONE file inside a per-file project — the other files keep going. Stops at the
+        next chunk of its track (word timing: the end of the track), or immediately if it hasn't started."""
         batch = self.get(batch_id)
         if batch is None or not (0 <= pindex < len(batch.projects)):
             return False

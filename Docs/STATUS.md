@@ -994,6 +994,38 @@ and the README says it as `pause` does.
 Tests: 240 pass, 1 new: a job and a batch paused then canceled show no pause in `get_progress` /
 `get_batch` or the routes, and the "pausing" wording of each.
 
+## A canceled file stops part-way through its track (2026-11-27)
+
+A single job and a joined batch project stopped at the next chunk of audio after a cancel, but a
+project with one transcript per file only checked while the file waited for the GPU: otherwise
+the cancel landed between tracks or after the last one, and the row went on saying "running ·
+track 2/2" (about 22 s in a live test). Now a cancel of the file, its project or the whole batch
+stops the track being transcribed at its next chunk there too, as for a job.
+
+- `on_chunk` in `_process_project` (`batch.py`) checks on every chunk. Mid-track it asks
+  `cancel_pending`, which never parks, so a pause still waits for the end of the track; while
+  waiting for the GPU it still asks `is_cancelled`, which pauses or cancels at once, as before.
+- The file ends "canceled" with nothing written. The interrupted track isn't counted or cached;
+  the finished ones are, and the message says so (`canceled · 1 of 2 tracks transcribed, kept for
+  a retry`). A file cancel lets the other files go on; a project or batch cancel stops as before.
+- A file canceled while the batch is pausing now reads "canceled" at once: in
+  `run_per_file_pipeline` (`pipeline.py`) a file cancel is looked at before the project / batch
+  check, which parks on a pause. The batch then parks before the next file.
+- Word timing has no per-chunk report, so a cancel during it still lands when the track ends (the
+  check in `on_done` covers the last track), as for a job. Wording: `cancel` (CLI and MCP), the
+  cancel routes and `BatchRegistry` docstrings, the README, and the app's batch Cancel button,
+  which said "current file finishes" and now says "Canceling…", like the job's.
+
+Tests: 245 pass, 5 new, in `test_pause_gpu_turn.py` with a fake model that reports every chunk: a
+file, a project and a batch canceled in the second track's second chunk stop at that chunk (the
+first three fail on the old code), a pause mid-track still waits for the end of the track, and a
+file canceled while the batch is pausing. One older test in `test_actions.py` expected the running
+track to finish and count ("2 of 2"); it now expects "1 of 2". Live on the real GPU (large-v3, a
+14 min and a 2 min two-track file, own server and cache): `cancel --file 1` four seconds into
+track 2 ended the file 2.5 s later, the polling included; the other file was written; the
+interrupted track wasn't cached (the next batch transcribed it again); a whole-batch cancel took
+the same 2.5 s.
+
 ## Partial / outstanding (v1 polish)
 
 - **FR-MG-4 bleed (P1):** detection flags `bleed_suspected`; the louder mic's line is marked

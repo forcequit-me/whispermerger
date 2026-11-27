@@ -206,10 +206,10 @@ def run_per_file_pipeline(
             except _FileCancelled:
                 on_skip(i, p)
             except Exception as exc:                 # per-file isolation — keep the rest going
-                if cancelled():                      # e.g. a model download stopped by Cancel
-                    raise
-                if is_file_cancelled(i):             # canceled while it waited for the user's answer
+                if is_file_cancelled(i):             # canceled mid-track, or while it waited for the user's answer
                     on_skip(i, p)
+                elif cancelled():                    # e.g. a model download stopped by Cancel
+                    raise
                 else:
                     on_error(i, p, exc)
     finally:

@@ -766,7 +766,7 @@ def test_a_run_canceled_part_way_says_how_far_it_got(api, two_stream_file, monke
     _until(lambda: actions.get_progress(job_id)["status"] == "canceled")
     assert actions.get_progress(job_id)["message"] == "canceled"
 
-    # a batch file, canceled during its last track: both tracks are cached, nothing is written
+    # a batch file, canceled during its last track: that track stops at the next chunk, nothing is written
     gate.clear()
     calls.clear()
     hold[0] = 2
@@ -776,7 +776,7 @@ def test_a_run_canceled_part_way_says_how_far_it_got(api, two_stream_file, monke
     gate.set()
     _until(lambda: actions.get_batch(bid)["status"] == "canceled")      # its only file was canceled
     item = actions.get_batch(bid)["items"][0]
-    assert (item["status"], item["message"]) == ("canceled", kept.format(2))
+    assert (item["status"], item["message"]) == ("canceled", kept.format(1))
 
 
 def test_a_plain_retry_reruns_the_canceled_or_failed_files_of_finished_projects(api, two_stream_file, monkeypatch,

@@ -647,8 +647,8 @@ def save_result(request: Request, job_id: str, body: MergedOutput) -> MergedOutp
 
 @router.post("/cancel/{job_id}")
 def cancel_job(request: Request, job_id: str) -> dict:
-    """Request job cancellation — takes effect at the next stage boundary (the in-flight
-    extract/transcribe/merge stage finishes first)."""
+    """Request job cancellation — takes effect at the next checkpoint: the next chunk of a track
+    being transcribed, or the end of its word timing (Label Track: the speaker, Benchmark: the model)."""
     job = request.app.state.jobs.get(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
@@ -809,8 +809,9 @@ def batch_status(request: Request, batch_id: str) -> BatchStatusOut:
 
 @router.post("/batch/{batch_id}/cancel")
 def cancel_batch(request: Request, batch_id: str) -> dict:
-    """Request batch cancellation — stops at the next file/project boundary (the file
-    currently transcribing finishes); remaining projects are marked canceled."""
+    """Request batch cancellation — the track being transcribed stops at its next chunk (word
+    timing: at the end of the track); nothing of the item in progress is written, and the
+    remaining projects are marked canceled."""
     if not request.app.state.batches.cancel(batch_id):
         raise HTTPException(404, "unknown batch")
     return {"canceling": True}
@@ -846,8 +847,9 @@ def resume_batch(request: Request, batch_id: str) -> dict:
 
 @router.post("/batch/{batch_id}/project/{idx}/cancel")
 def cancel_batch_project(request: Request, batch_id: str, idx: int) -> dict:
-    """Cancel one project in a batch — the file currently transcribing finishes, that project is
-    marked canceled, and the queue continues to the next project (unlike whole-batch cancel)."""
+    """Cancel one project in a batch — its track being transcribed stops at the next chunk (word
+    timing: at the end of the track), that project is marked canceled, and the queue continues to
+    the next project (unlike whole-batch cancel)."""
     if not request.app.state.batches.cancel_project(batch_id, idx):
         raise HTTPException(404, "unknown batch or project")
     return {"canceling": True}
@@ -855,7 +857,9 @@ def cancel_batch_project(request: Request, batch_id: str, idx: int) -> dict:
 
 @router.post("/batch/{batch_id}/project/{pidx}/file/{fidx}/cancel")
 def cancel_batch_file(request: Request, batch_id: str, pidx: int, fidx: int) -> dict:
-    """Cancel one file inside a per-file project — the other files keep going."""
+    """Cancel one file inside a per-file project — its track being transcribed stops at the next
+    chunk (word timing: at the end of the track), nothing of it is written, and the other files
+    keep going."""
     if not request.app.state.batches.cancel_file(batch_id, pidx, fidx):
         raise HTTPException(404, "unknown batch / project / file")
     return {"canceling": True}

@@ -69,7 +69,8 @@ frontend handles input, labeling, editing, and export. Runs fully offline.
   accents.
 - **Cancel & restart, per item** — cancel the **whole batch**, a **single project** (the queue
   continues to the next), or a **single file** inside a one-transcript-per-file project (the other
-  files keep going) — all cooperative, stopping at the next boundary so the in-flight file finishes.
+  files keep going). The track being transcribed stops within a few seconds (during its word
+  timing, when that ends); nothing of the canceled item is written, and its finished tracks stay cached.
   **Restart** any finished project or file: while the batch is still running it re-queues to run when
   the GPU frees up; once the batch is done it starts immediately. Caching makes unchanged files
   instant. Single Transcribe/Label jobs are cancelable too.
@@ -321,8 +322,9 @@ cancel it first. A finished batch reads "canceled" when it was canceled or every
 was, and a one-transcript-per-file project when all its files were; a mix reads "done".
 `files` and `done` in `get-batch` count source files, as `run-batch` does: a project joined into
 one transcript is one item that counts as every file in it. A file that is canceled while it is
-being transcribed is not written, whichever track it was on; the track that was running still
-finishes and stays cached, so `retry-batch` is quick. Its message says how far it got, e.g.
+being transcribed is not written, whichever track it was on: that track stops at its next stretch of
+audio (during word timing, when the track ends) and is not cached, while its finished tracks are,
+so `retry-batch` reuses them. Its message says how far it got, e.g.
 `canceled · 1 of 2 tracks transcribed, kept for a retry` (a job canceled part-way says the same).
 A run that is waiting for another run to finish with the GPU pauses or cancels at once. Otherwise a pause waits for the end of the track
 being transcribed (Label Track: the speaker, Benchmark: the model; `get-progress` / `get-batch`

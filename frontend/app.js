@@ -1495,7 +1495,7 @@ function pollBatch(id, btn) {
   cancelBtn.style.display = ""; cancelBtn.disabled = false; cancelBtn.textContent = "Cancel batch";
   retryBtn.style.display = "none";
   cancelBtn.onclick = async () => {
-    cancelBtn.disabled = true; cancelBtn.textContent = "Canceling… (current file finishes)";
+    cancelBtn.disabled = true; cancelBtn.textContent = "Canceling…";
     try { await fetch(`/api/batch/${id}/cancel`, { method: "POST" }); } catch {}
   };
   let paused = false;                                  // last-known server pause state

@@ -553,3 +553,127 @@ def test_label_track_waiting_for_the_gpu_goes_on_when_it_gets_it(rig, tmp_path):
         transcribe.GPU_TURN.release()
     assert _until(lambda: job.status is JobStatus.DONE), job.error
     assert len(job.result.segments) == rig.chunks
+
+
+# --- 5. a one-transcript-per-file project canceled mid-track --------------------------------------
+
+def _per_file_batch(rig, two_stream_file, files=2):
+    """A per-file project of `files` two-track files (the same audio, so a later file reuses what an
+    earlier one cached), run with a cache as the /api/batch route does. Six chunks a track, a model
+    call per chunk: chunks 1-6 are the first file's track 1, 7-12 its track 2."""
+    from app.cache import Cache
+    rig.chunks, rig.batch = 6, 1
+    cache = Cache(rig.tmp / "cache")
+    fn = lambda wav: transcribe.transcribe_track(wav, language="is", word_timing=False, cache=cache)
+    tracks = [Track(track_index=0, speaker="A"), Track(track_index=1, speaker="B")]
+    proj = ProjectInput("P", [PreparedSource(str(two_stream_file), InputSource(
+        filename=f"f{k}.mkv", duration=2.0, tracks=tracks)) for k in range(files)], per_file=True)
+    reg = BatchRegistry()
+    batch = reg.create([proj])
+    batch.on_pause = transcribe.unload_models
+    reg.run(batch, lambda: run_batch(batch, [proj], fn, output_mode="folder",
+                                     output_folder=str(rig.tmp / "out")))
+    return reg, batch, cache
+
+
+HALF_WAY = "canceled · 1 of 2 tracks transcribed, kept for a retry"
+
+
+def test_a_file_canceled_mid_track_stops_at_the_next_chunk_and_the_others_go_on(rig, two_stream_file):
+    """Canceled during its second track's second chunk: it stops at that chunk, writes nothing, keeps
+    the finished track in the cache (not the interrupted one), and the next file runs."""
+    rig.gate = _TwoHolds(8, 9)                     # chunk 9 is only reached by the next file
+    reg, batch, cache = _per_file_batch(rig, two_stream_file)
+    ps = batch.projects[0]
+    try:
+        assert rig.gate.reached.wait(20)
+        assert reg.cancel_file(batch.id, 0, 0)
+        rig.gate.go.set()
+        assert rig.gate.reached2.wait(5), "the next file never started"
+        f0 = ps.files[0]
+        assert f0.status is Status.CANCELED and f0.message == HALF_WAY, (f0.status, f0.message)
+        assert f0.output_dir is None and f0.result is None             # nothing written
+        assert cache.stats()["entries"] == 1                           # track 1 only
+        assert ps.files[1].status is Status.RUNNING and ps.files[1].track == 2   # its track 1 reused
+        rig.gate.go2.set()
+        assert _until(lambda: batch.status is Status.DONE), batch.status
+        assert ps.files[1].status is Status.DONE and ps.message == "1 done · 1 canceled"
+        assert not list((rig.tmp / "out").rglob("f0*"))
+    finally:
+        rig.gate.go2.set()
+        _finish_batch(reg, batch)
+
+
+def test_a_project_canceled_mid_track_stops_at_the_next_chunk(rig, two_stream_file):
+    rig.gate = _Gate(8)
+    reg, batch, cache = _per_file_batch(rig, two_stream_file)
+    ps = batch.projects[0]
+    try:
+        assert rig.gate.reached.wait(20)
+        assert reg.cancel_project(batch.id, 0)
+        rig.gate.go.set()
+        assert _until(lambda: batch.status is Status.CANCELED), batch.status
+        assert rig.gate.n == 8                                         # stopped at that chunk
+        assert ps.status is Status.CANCELED
+        assert [(f.status, f.message) for f in ps.files] == [(Status.CANCELED, HALF_WAY),
+                                                             (Status.CANCELED, "canceled")]
+        assert cache.stats()["entries"] == 1 and not (rig.tmp / "out").exists()
+    finally:
+        _finish_batch(reg, batch)
+
+
+def test_a_batch_canceled_mid_track_stops_at_the_next_chunk(rig, two_stream_file):
+    rig.gate = _Gate(8)
+    reg, batch, cache = _per_file_batch(rig, two_stream_file)
+    ps = batch.projects[0]
+    try:
+        assert rig.gate.reached.wait(20)
+        assert reg.cancel(batch.id)
+        rig.gate.go.set()
+        assert _until(lambda: batch.status is Status.CANCELED), batch.status
+        assert rig.gate.n == 8
+        assert ps.status is Status.CANCELED
+        assert [(f.status, f.message) for f in ps.files] == [(Status.CANCELED, HALF_WAY),
+                                                             (Status.CANCELED, "canceled")]
+        assert cache.stats()["entries"] == 1 and not (rig.tmp / "out").exists()
+        assert not transcribe.GPU_TURN.locked()
+    finally:
+        _finish_batch(reg, batch)
+
+
+def test_a_per_file_project_paused_mid_track_still_waits_for_the_end_of_the_track(rig, two_stream_file):
+    """The cancel check on every chunk doesn't park: a pause asked for at chunk 2 goes on through
+    the track ("pausing", the turn held) and lands only once its sixth chunk is done."""
+    rig.gate = _Look(2, 4, None)
+    reg, batch, cache = _per_file_batch(rig, two_stream_file, files=1)
+    rig.gate.look = lambda: (batch.paused, batch.gpu_freed, transcribe.GPU_TURN.locked())
+    try:
+        assert _pause_batch_mid_chunk(rig, reg, batch) == 6
+        assert rig.gate.seen == (True, False, True)                    # pausing, mid-track
+        assert batch.projects[0].files[0].track == 1                   # track 2 hasn't started
+        assert not transcribe.GPU_TURN.locked() and cache.stats()["entries"] == 1
+        _finish_batch(reg, batch)
+        assert batch.status is Status.DONE and batch.projects[0].files[0].status is Status.DONE
+        assert rig.gate.n == 12
+    finally:
+        _finish_batch(reg, batch)
+
+
+def test_a_file_canceled_mid_track_while_the_batch_is_pausing_reads_canceled_at_once(rig, two_stream_file):
+    """The file stops at the next chunk and says so; then the batch parks for its pause, before the
+    next file, and that file runs after resume."""
+    rig.gate = _Gate(8)
+    reg, batch, cache = _per_file_batch(rig, two_stream_file)
+    ps = batch.projects[0]
+    try:
+        assert rig.gate.reached.wait(20)
+        reg.pause(batch.id)
+        reg.cancel_file(batch.id, 0, 0)
+        rig.gate.go.set()
+        assert _until(lambda: batch.gpu_freed), "the paused batch never parked"
+        assert (ps.files[0].status, ps.files[0].message) == (Status.CANCELED, HALF_WAY)
+        assert ps.files[1].status is not Status.DONE
+        _finish_batch(reg, batch)
+        assert batch.status is Status.DONE and ps.files[1].status is Status.DONE
+    finally:
+        _finish_batch(reg, batch)
